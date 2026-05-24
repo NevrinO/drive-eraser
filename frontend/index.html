@@ -1,0 +1,127 @@
+<!-- --- START OF FILE index.html --- -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drive Sanitization Station</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <h1>Drive Sanitization Station</h1>
+      <div class="header-actions">
+        <div class="reliability-badge">SECURE MODE</div>
+        <button id="refreshButton" type="button">Refresh Bays</button>
+      </div>
+    </header>
+
+    <section class="status-bar">
+      <span id="lastUpdated">Last updated: never</span>
+      <span id="apiStatus">API status: unknown</span>
+    </section>
+
+    <nav class="tabs" id="mainTabs">
+      <button type="button" class="tab-button active" data-tab="workbenchPanel">Active Workbench</button>
+      <button type="button" class="tab-button" data-tab="auditPanel">Compliance Audit Vault</button>
+    </nav>
+
+    <!-- TAB A: WORKBENCH -->
+    <section id="workbenchPanel" class="tab-panel active">
+      <div class="workbench-controls-header">
+        <div class="section-title">Drive Bay Layout Overview</div>
+        <!-- Safety Toggle: Defaults to clean inactive state -->
+        <button type="button" id="batchSelectToggleBtn" class="btn-toggle">Sanitize Mode: OFF</button>
+      </div>
+      
+      <div id="baysGrid" class="bays-grid"></div>
+
+      <!-- Action Footer for selected drives -->
+      <div id="batchActionFooter" class="batch-action-footer hidden">
+        <div class="footer-meta-info">
+          <span id="selectedCountLabel">0 Bays Staged</span>
+        </div>
+        <button type="button" id="openBatchWipeModalBtn" class="btn-primary">Configure Sanitization</button>
+      </div>
+    </section>
+
+    <!-- TAB B: AUDIT VAULT -->
+    <section id="auditPanel" class="tab-panel">
+      <div class="section-title">Compliance Search Index</div>
+      <div class="control-bar history-controls">
+        <label>
+          Search Ledger Filter
+          <input type="text" id="historyQuery" placeholder="Type serial, ticket, model, tech, SANI-****** to find records instantly...">
+        </label>
+        <label>
+          Filter Wipes
+          <select id="historyStatusFilter">
+            <option value="all">All Statuses</option>
+            <option value="completed">Wiped & Verified (PASSED)</option>
+            <option value="failed">Failed Operations</option>
+            <option value="running">In Progress (Active)</option>
+            <option value="queued">Queued in Line</option>
+          </select>
+        </label>
+        <button type="button" id="historyRefreshButton" class="btn-primary">Reload Ledger</button>
+      </div>
+      <div id="historyList" class="audit-vault-list"></div>
+    </section>
+
+  </div>
+
+  <!-- SANITIZATION CONFIGURATION MODAL -->
+  <div id="batchWipeModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="batchWipeTitle">
+      <header class="modal-header">
+        <h3 id="batchWipeTitle">Configure Sanitization</h3>
+        <button type="button" id="batchWipeClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <form id="batchEraseForm" novalidate> <!-- Disabled native browser validation tooltips to use clean JS alerts -->
+          <div class="form-fields-stack">
+            <label>
+              Technician Name
+              <input type="text" id="technician" name="technician" placeholder="Enter full name or ID">
+            </label>
+            <label>
+              Ticket Number
+              <input type="text" id="ticketNumber" name="ticketNumber" placeholder="e.g. TKT-49201">
+            </label>
+          </div>
+
+          <div class="section-title" style="margin-top: 16px; margin-bottom: 8px;">Staged Drives Configurations</div>
+          <div id="selectedDrivesConfigList" class="batch-config-list"></div>
+
+          <div class="confirmation-section">
+            <label>
+              Typed Confirmation
+              <span id="dynamicConfirmationHint" class="confirmation-hint-label">Type "erase X drives" below:</span>
+              <input type="text" id="confirmationText" name="confirmationText" autocomplete="off" placeholder="Type exactly as shown above">
+            </label>
+          </div>
+
+          <button type="submit" id="batchEraseSubmit" class="btn-primary" style="width: 100%; padding: 12px; margin-top: 16px;">Validate & Execute Sanitization</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- GENERAL DETAIL MODAL -->
+  <div id="bayDetailModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="bayDetailTitle">
+      <header class="modal-header">
+        <h3 id="bayDetailTitle">Details Viewer</h3>
+        <button type="button" id="bayDetailClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div id="bayDetailContent" class="modal-content"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+<!-- --- END OF FILE index.html --- -->

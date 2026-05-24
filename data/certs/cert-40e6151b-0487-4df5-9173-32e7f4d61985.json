@@ -1,0 +1,22 @@
+{
+  "id": "cert-40e6151b-0487-4df5-9173-32e7f4d61985",
+  "job_id": "40e6151b-0487-4df5-9173-32e7f4d61985",
+  "issued_at": "2026-05-17T18:50:46.309040+00:00",
+  "finished_at": "2026-05-17T18:50:46.309025+00:00",
+  "technician": "tech",
+  "ticket_number": "T2",
+  "bay": "bay3",
+  "device": "/dev/sdb",
+  "serial": "W1",
+  "model": "WDRV",
+  "interface_type": "sata",
+  "method": "overwrite",
+  "verification": {
+    "ok": true,
+    "status": "verified",
+    "error": null,
+    "details": {
+      "mock": true
+    }
+  }
+}

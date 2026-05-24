@@ -1,0 +1,16 @@
+{
+  "prewipe_spot_check": true,
+  "post_erase_marker": true,
+  "allow_method_override": true,
+  "method_priority": {
+    "nvme": ["crypto", "block", "overwrite"],
+    "sas": ["crypto", "block", "overwrite"],
+    "sata": ["enhanced_secure_erase", "secure_erase", "overwrite"]
+  },
+  "crypto_fail_retry_block": true,
+  "health_soft_stop": true,
+  "port": 5000,
+  "bind_address": "0.0.0.0",
+  "station_id": "wipe-station-01",
+  "wipe_passphrase": "your_secure_shared_secret_passphrase_here"
+}

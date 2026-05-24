@@ -1,0 +1,43 @@
+[Unit]
+Description=Drive Wipe Station
+Documentation=https://github.com/NevrinO/drive-eraser
+After=network.target
+Wants=network.target
+
+[Service]
+# Run as dedicated system user
+User=wipestation
+Group=wipestation
+
+# Application location
+WorkingDirectory=/opt/drive-eraser
+
+# Start command
+ExecStart=/opt/drive-eraser/venv/bin/python backend/app.py
+
+# Restart behavior
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=drive-eraser
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+
+# Prefixing with '-' prevents systemd from crashing if folders are temporarily missing
+ReadWritePaths=-/opt/drive-eraser/data
+ReadWritePaths=-/opt/drive-eraser/logs
+
+# Environment
+Environment=FLASK_ENV=production
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
