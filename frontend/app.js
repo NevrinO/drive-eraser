@@ -388,7 +388,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
 
   const payload = {
     technician: tech,
-    ticket_number: tech, // Fallback align for tech representation in payload
+    ticket_number: ticket,
     bays: Array.from(selectedBays),
     confirmation_text: confirmTextVal,
     methods: {}
