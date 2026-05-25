@@ -15,6 +15,22 @@ HDD_HIGH_POH_THRESHOLD = 40000
 SSD_NEW_POH_THRESHOLD = 500
 HDD_NEW_POH_THRESHOLD = 500
 
+def safe_int(val, default=0):
+    if val is None:
+        return default
+    try:
+        return int(val)
+    except (ValueError, TypeError):
+        return default
+
+def safe_float(val, default=0.0):
+    if val is None:
+        return default
+    try:
+        return float(val)
+    except (ValueError, TypeError):
+        return default
+
 def resolve_command_path(command_name, candidates, env_var_name=None):
     env_value = os.getenv(env_var_name) if env_var_name else None
     if env_value and os.path.exists(env_value) and os.access(env_value, os.X_OK):
@@ -299,7 +315,6 @@ def get_smart_data(device, diagnostics=None):
     nvme_log = data.get("nvme_smart_health_information_log", {})
     scsi_log = data.get("scsi_error_counter_log", {})
 
-    # 1. Resolve exact bytes written by examining specific Attribute Names
     written_bytes = None
     written_raw = None
     sata_write_details = get_sata_attr_details(241)
@@ -326,7 +341,6 @@ def get_smart_data(device, diagnostics=None):
             written_bytes = int(float(gb_processed) * 10**9)
             written_raw = int(written_bytes / 512)
 
-    # 2. Resolve exact bytes read by examining specific Attribute Names
     read_bytes = None
     read_raw = None
     sata_read_details = get_sata_attr_details(242)
@@ -373,7 +387,8 @@ def get_smart_data(device, diagnostics=None):
         wear = None
 
     poh = get_sata_attr(9) or data.get("power_on_time", {}).get("hours")
-    poh_days = round(poh / 24, 1) if poh else None
+    poh_val = safe_int(poh, None)
+    poh_days = round(poh_val / 24, 1) if poh_val is not None else None
     temp = get_sata_attr(194) or get_sata_attr(190) or data.get("temperature", {}).get("current")
     sata_realloc = get_sata_attr(5)
     sas_realloc = data.get("scsi_grown_defect_list")
@@ -405,7 +420,7 @@ def get_smart_data(device, diagnostics=None):
         "status": status_str, "model": model, "serial": serial, "capacity_str": capacity_str,
         "capacity_bytes": capacity_bytes, "wear_level": wear, "reallocated_sectors": realloc,
         "reallocated_normalized": realloc_normalized, "reallocated_threshold": realloc_threshold,
-        "pending_sectors": pend, "power_on_hours": poh, "power_on_days": poh_days, "temperature": temp,
+        "pending_sectors": pend, "power_on_hours": poh_val, "power_on_days": poh_days, "temperature": temp,
         "interface_errors": errs, "data_written_raw": written_raw, "data_written_bytes": written_bytes,
         "data_read_raw": read_raw, "data_read_bytes": read_bytes, "raw": raw_output
     }
@@ -577,13 +592,14 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     is_ssd = "ssd" in model_lower or "nvme" in iface or smart_data.get("wear_level") is not None
 
     wear = smart_data.get("wear_level")
-    poh = smart_data.get("power_on_hours") or 0
+    poh = safe_int(smart_data.get("power_on_hours"), 0)
     
     if is_ssd and wear is not None:
+        wear_val = safe_int(wear, 0)
         if iface in {"nvme", "sas"}:
-            base_score = max(0, 100 - int(wear))
+            base_score = max(0, 100 - wear_val)
         else:
-            base_score = int(wear)
+            base_score = wear_val
             
         if poh > 40000:
             ssd_poh_penalty = min(20, max(0, (poh - 40000) / 40000 * 20))
@@ -597,30 +613,29 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
         if written_bytes is None:
             raw_written = smart_data.get("data_written_raw")
             if raw_written is not None:
-                try:
-                    written_bytes = int(raw_written) * 512
-                except Exception:
-                    pass
-        capacity = smart_data.get("capacity_bytes") or 0
+                written_bytes = safe_int(raw_written, 0) * 512
+            else:
+                written_bytes = 0
+        else:
+            written_bytes = safe_int(written_bytes, 0)
+
+        capacity = safe_int(smart_data.get("capacity_bytes"), 0)
         fdw = (written_bytes / capacity) if capacity > 0 else 0.0
         
         fdw_penalty = min(30, max(0, (fdw / 150.0) * 30))
         base_score = max(40, 100 - poh_penalty - fdw_penalty)
 
-    reallocated = smart_data.get("reallocated_sectors") or 0
-    pending = smart_data.get("pending_sectors") or 0
-    errs = smart_data.get("interface_errors") or 0
+    reallocated = safe_int(smart_data.get("reallocated_sectors"), 0)
+    pending = safe_int(smart_data.get("pending_sectors"), 0)
+    errs = safe_int(smart_data.get("interface_errors"), 0)
 
     realloc_penalty = 0
     if is_ssd:
         realloc_normalized = smart_data.get("reallocated_normalized")
         if realloc_normalized is not None:
-            try:
-                norm_val = int(realloc_normalized)
-                if norm_val < 100:
-                    realloc_penalty = min(40, (100 - norm_val) * 1)
-            except Exception:
-                pass
+            norm_val = safe_int(realloc_normalized, 100)
+            if norm_val < 100:
+                realloc_penalty = min(40, (100 - norm_val) * 1)
     else:
         if reallocated > 0:
             if reallocated == 1:
@@ -638,7 +653,7 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
         try:
             data = json.loads(raw_json)
             nvme_log = data.get("nvme_smart_health_information_log", {})
-            media_errors = nvme_log.get("media_errors") or 0
+            media_errors = safe_int(nvme_log.get("media_errors"), 0)
             nvme_media_penalty = min(80, media_errors * 20)
         except Exception:
             pass
@@ -658,14 +673,16 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
             data = json.loads(raw_json)
             exit_status = data.get("smartctl", {}).get("exit_status")
             if exit_status is not None:
-                if (exit_status & 8 != 0) or (exit_status & 16 != 0):
+                exit_status_val = safe_int(exit_status, 0)
+                if (exit_status_val & 8 != 0) or (exit_status_val & 16 != 0):
                     failed_override = True
                     
             if iface == "nvme":
                 nvme_log = data.get("nvme_smart_health_information_log", {})
                 crit_warn = nvme_log.get("critical_warning")
                 if crit_warn is not None:
-                    if (crit_warn & 0x04 != 0) or (crit_warn & 0x08 != 0):
+                    crit_warn_val = safe_int(crit_warn, 0)
+                    if (crit_warn_val & 0x04 != 0) or (crit_warn_val & 0x08 != 0):
                         failed_override = True
         except Exception:
             pass
@@ -678,31 +695,38 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
 def get_drive_recommendation(interface_type, smart, health_score=None):
     iface = str(interface_type or "unknown").lower()
     is_ssd = "ssd" in str(smart.get("model") or "").lower() or "nvme" in iface or smart.get("wear_level") is not None
-    poh = smart.get("power_on_hours") or 0
+    poh = safe_int(smart.get("power_on_hours"), 0)
     status = str(smart.get("status") or "UNKNOWN").upper()
-    pending = smart.get("pending_sectors") or 0
-    realloc_raw = smart.get("reallocated_sectors") or 0
+    pending = safe_int(smart.get("pending_sectors"), 0)
+    realloc_raw = safe_int(smart.get("reallocated_sectors"), 0)
+    
     realloc_norm = smart.get("reallocated_normalized")
+    realloc_norm = safe_int(realloc_norm, 100) if realloc_norm is not None else 100
+    
     realloc_thresh = smart.get("reallocated_threshold")
-
-    if realloc_norm is None: realloc_norm = 100
-    if realloc_thresh is None: realloc_thresh = 10
+    realloc_thresh = safe_int(realloc_thresh, 10) if realloc_thresh is not None else 10
 
     written_bytes = smart.get("data_written_bytes")
     if written_bytes is None:
         raw_written = smart.get("data_written_raw")
         if raw_written is not None:
-            written_bytes = int(raw_written) * 512000 if "nvme" in iface else int(raw_written) * 512
-    capacity = smart.get("capacity_bytes") or 0
+            written_bytes = safe_int(raw_written, 0) * (512000 if "nvme" in iface else 512)
+        else:
+            written_bytes = 0
+    else:
+        written_bytes = safe_int(written_bytes, 0)
+
+    capacity = safe_int(smart.get("capacity_bytes"), 0)
     fdw = (written_bytes / capacity) if capacity > 0 else 0.0
 
     remaining_life = 100
     wear = smart.get("wear_level")
     if wear is not None:
+        wear_val = safe_int(wear, 0)
         if "nvme" in iface or "sas" in iface:
-            remaining_life = max(0, 100 - int(wear))
+            remaining_life = max(0, 100 - wear_val)
         else:
-            remaining_life = int(wear)
+            remaining_life = wear_val
 
     if health_score is not None:
         if status == "FAILED" or health_score <= 20:
@@ -736,7 +760,6 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
             return {"status": "USED_HEAVY", "comment": "High workload or raw sector writes history. Monitor closely."}
         return {"status": "USED_GOOD", "comment": "Used but has clean write history and moderate runtime."}
 
-# Added running_devices filter support to prevent concurrent active query locking issues
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     with open(bay_map_path, 'r', encoding='utf-8') as f:
         bay_map = json.load(f)
@@ -773,7 +796,6 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
         if dev_node:
             bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
             
-            # Skip any physical queries on currently running/sanitizing device nodes to prevent thread lock-ups
             if running_devices and dev_node in running_devices:
                 bay_info.update({
                     "resolved_by_path": matched_by_path,
@@ -834,3 +856,4 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if target_path else "missing_by_path"}
         results.append(bay_info)
     return results
+# --- END OF FILE backend/disk_ops.py ---
