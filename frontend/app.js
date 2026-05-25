@@ -199,7 +199,7 @@ function renderBays(drives) {
     const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
     
     let stateClass = "healthy";
-    let bannerLabel = "Ready / Unused";
+    let bannerLabel = "READY / UNPROCESSED";
 
     if (isEmpty) {
       stateClass = "empty";
@@ -262,7 +262,7 @@ function renderBays(drives) {
           
           <div class="drive-meta">
             <span>${escapeHtml(drive.capacity_str)}</span>
-            <span>${escapeHtml((drive.role || "Wipe").toUpperCase())}</span>
+            <span>${escapeHtml(drive.device || "-")}</span>
           </div>
         `}
       </article>
@@ -431,7 +431,28 @@ batchEraseForm.addEventListener("submit", async (event) => {
 
 function renderLiveDetails(drive) {
   if (!drive) return;
-  const statusClass = drive.status === "FAILED" ? "status-failed" : drive.status === "RUNNING" ? "status-ready" : "status-empty";
+  
+  // Clean separation of operational state from hardware health (Option A)
+  const opStatusText = String(drive.status || "READY").toUpperCase();
+  const isRunning = opStatusText === "RUNNING";
+  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  
+  let displayStatus = "IDLE / READY";
+  let statusClass = "status-empty";
+
+  if (opStatusText === "FAILED") {
+    displayStatus = "WIPE FAILED";
+    statusClass = "status-failed";
+  } else if (isRunning) {
+    displayStatus = "WIPING";
+    statusClass = "status-ready";
+  } else if (opStatusText === "QUEUED") {
+    displayStatus = "QUEUED";
+    statusClass = "status-ready";
+  } else if (isCompleted) {
+    displayStatus = "SANITIZED";
+    statusClass = "status-complete";
+  }
   
   let markerStatusText = "NO PRIOR SANITIZATION MARKER DETECTED";
   let markerClass = "status-empty";
@@ -443,7 +464,6 @@ function renderLiveDetails(drive) {
     markerStatusText = "PRISTINE (UNAUTHENTICATED PASS)";
     markerClass = "status-view-only";
   } else if (drive.marker?.status === "written_since_wipe") {
-    // Neutralized language to denote standard post-wipe production wear safely
     markerStatusText = "ACTIVE USE (POST-WIPE WRITES DETECTED)";
     markerClass = "status-view-only";
   } else if (drive.marker?.status === "corrupted") {
@@ -456,7 +476,7 @@ function renderLiveDetails(drive) {
   const recClass = rec.status === "NEW_STOCK" ? "status-complete" : rec.status === "USED_GOOD" ? "status-view-only" : "status-warning";
 
   let terminalSection = "";
-  if (String(drive.status).toUpperCase() === "RUNNING") {
+  if (isRunning) {
     const runPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const runPhase = drive.current_phase || "Initializing...";
     terminalSection = `
@@ -472,10 +492,27 @@ function renderLiveDetails(drive) {
   const pending = smart.pending_sectors ?? 0;
   const interfaceErrors = smart.interface_errors ?? 0;
 
+  // SMART Health Evaluation: Clean separation of physical health from wipe state
+  let smartHealthText = "SMART: PASSED";
+  let smartHealthClass = "status-complete";
+  if (drive.health_score <= 40 || (opStatusText === "FAILED" && !drive.marker)) {
+    smartHealthText = "SMART: FAILING";
+    smartHealthClass = "status-failed";
+  }
+
+  // Standardize remaining wear level conditional math across drive interfaces
+  let remainingLife = "N/A";
+  if (smart.wear_level !== null) {
+    const iface = String(drive.interface_type || "").toLowerCase();
+    const score = (iface.includes("nvme") || iface.includes("sas")) ? (100 - smart.wear_level) : smart.wear_level;
+    remainingLife = Math.max(0, Math.min(100, Math.round(score))) + "%";
+  }
+
   let smartDetailsHtml = `
-    <div class="kv"><span>Wear Level / Life Remaining:</span><span>${smart.wear_level !== null ? (100 - smart.wear_level) + "%" : "N/A"}</span></div>
-    <div class="kv"><span>Total Read Traffic:</span><span>${formatTraffic(drive, 'read')}</span></div>
-    <div class="kv"><span>Total Written Traffic:</span><span>${formatTraffic(drive, 'written')}</span></div>
+    <div class="kv"><span>SMART Health Status:</span><span class="status-chip ${smartHealthClass}">${smartHealthText}</span></div>
+    <div class="kv"><span>Estimated Remaining Life:</span><span>${remainingLife}</span></div>
+    <div class="kv"><span>Total Lifetime Reads:</span><span>${formatTraffic(drive, 'read')}</span></div>
+    <div class="kv"><span>Total Lifetime Writes:</span><span>${formatTraffic(drive, 'written')}</span></div>
     <div class="kv"><span>Power-On Time:</span><span>${formatPowerOnTime(smart.power_on_hours)}</span></div>
     <div class="kv"><span>Reallocated Sectors count:</span><span>${realloc}</span></div>
     <div class="kv"><span>Pending/Unstable Sectors:</span><span>${pending}</span></div>
@@ -486,7 +523,7 @@ function renderLiveDetails(drive) {
     <div class="detail-section">
       <div class="detail-head">
         <strong>${escapeHtml(drive.bay.toUpperCase())} · ${escapeHtml(drive.model)}</strong>
-        <span class="status-chip ${statusClass}">${escapeHtml(drive.status)}</span>
+        <span class="status-chip ${statusClass}">${escapeHtml(displayStatus)}</span>
       </div>
       <div class="kv"><span>Mount Path:</span><span>${escapeHtml(drive.device || "none")}</span></div>
       <div class="kv"><span>Serial:</span><span>${escapeHtml(drive.serial || "-")}</span></div>
@@ -791,8 +828,28 @@ document.querySelectorAll("[data-close-modal='true']").forEach(elem => {
 
 refreshButton.addEventListener("click", () => loadDrives(false));
 
+async function loadSecurityStatus() {
+  const badge = document.getElementById("securityBadge");
+  if (!badge) return;
+  try {
+    const response = await fetch("/api/status");
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    if (data.passphrase_enabled) {
+      badge.textContent = "SECURE MODE";
+      badge.className = "reliability-badge secure";
+    } else {
+      badge.textContent = "UNSECURED MODE";
+      badge.className = "reliability-badge unsecured";
+    }
+  } catch (error) {
+    badge.textContent = "UNSECURED MODE";
+    badge.className = "reliability-badge unsecured";
+  }
+}
+
 (async () => {
+  await loadSecurityStatus();
   await loadDrives(false);
   pollActiveWipes();
 })();
-// --- END OF FILE frontend/app.js ---

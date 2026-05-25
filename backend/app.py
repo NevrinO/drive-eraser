@@ -583,6 +583,24 @@ def get_drives():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/status")
+def get_status():
+    try:
+        config_dir = get_config_dir()
+        policy = load_policy(config_dir)
+        passphrase = policy.get("wipe_passphrase")
+        # Check that the passphrase is set, non-empty, and has been updated from the default placeholder
+        has_passphrase = bool(
+            passphrase and 
+            passphrase.strip() and 
+            passphrase != "your_secure_shared_secret_passphrase_here"
+        )
+        return jsonify({
+            "passphrase_enabled": has_passphrase
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/erase/start", methods=["POST"])
 def start_erase():
     try:

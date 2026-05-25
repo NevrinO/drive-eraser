@@ -682,4 +682,58 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Dynamic Global Security Badge Colors */
+.reliability-badge.secure {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.reliability-badge.unsecured {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+/* Details Viewer Status Chip Styles */
+.status-chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.status-chip.status-complete {
+  background: rgba(16, 185, 129, 0.15);
+  color: var(--color-success);
+  border: 1px solid var(--color-success);
+}
+.status-chip.status-failed {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+.status-chip.status-ready {
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--color-primary);
+  border: 1px solid var(--color-primary);
+}
+.status-chip.status-view-only {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid #c084fc;
+}
+.status-chip.status-warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+.status-chip.status-empty {
+  background: rgba(107, 114, 128, 0.15);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
 /* --- END OF FILE styles.css --- */
