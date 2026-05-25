@@ -5,6 +5,7 @@ import json
 import subprocess
 import hashlib
 import hmac
+import time
 from datetime import datetime, timezone
 from common import load_policy
 
@@ -92,8 +93,13 @@ def extract_command_output(result):
     return stdout if stdout else stderr
 
 def extract_sata_security_section(output):
-    match = re.search(r"security:\s*(.*?)(?:\n\s*\n|$)", output, re.IGNORECASE | re.DOTALL)
-    return (match.group(1) if match else "").lower()
+    # Match the "Security:" header and extract all subsequent indented lines
+    match = re.search(r"^[ \t]*Security:[ \t]*\n((?:[ \t]+.*\n?)+)", output, re.IGNORECASE | re.MULTILINE)
+    if match:
+        return match.group(1).lower()
+    # Fallback to the blank-line or end-of-string bounded check if indentation parsing fails
+    fallback_match = re.search(r"security:\s*(.*?)(?:\n\s*\n|$)", output, re.IGNORECASE | re.DOTALL)
+    return (fallback_match.group(1) if fallback_match else "").lower()
 
 def verify_nvme_sanitize(device, method):
     nvme_cmd = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
@@ -151,14 +157,31 @@ def verify_sata_secure_erase(device, method):
             }
         return {"ok": False, "status": "verification_error", "error": "sata_security_section_missing", "details": {"method": method}}
 
-    has_disabled = any(marker in security_section for marker in ["not enabled", "not\tenabled", "disabled", "frozen", "not\tlocked"])
-    has_enabled = bool(re.search(r"\benabled\b", security_section))
-    has_locked = bool(re.search(r"\blocked\b", security_section))
+    # Parse individual flags precisely using word boundaries to avoid false substring matches (e.g., 'not frozen' matching 'frozen')
+    sec_lines = [line.strip() for line in security_section.splitlines()]
+    is_enabled = any(re.search(r"\benabled\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
+    is_locked = any(re.search(r"\blocked\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
+    is_frozen = any(re.search(r"\bfrozen\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
 
-    if has_enabled and not has_disabled:
-        return {"ok": False, "status": "verification_failed", "error": "sata_security_still_enabled", "details": {"method": method, "locked": has_locked}}
+    if is_enabled:
+        return {
+            "ok": False,
+            "status": "verification_failed",
+            "error": "sata_security_still_enabled",
+            "details": {"method": method, "locked": is_locked, "frozen": is_frozen},
+        }
 
-    return {"ok": True, "status": "verified", "error": None, "details": {"mode": "post_hdparm_identify", "method": method, "security_disabled_marker": has_disabled, "locked": has_locked}}
+    return {
+        "ok": True,
+        "status": "verified",
+        "error": None,
+        "details": {
+            "mode": "post_hdparm_identify",
+            "method": method,
+            "locked": is_locked,
+            "frozen": is_frozen,
+        },
+    }
 
 def verify_sata_sanitize(device, method):
     hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])

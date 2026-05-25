@@ -389,6 +389,37 @@ def execute_erase_method(device, interface_type, method):
         if not HDPARM_CMD: return {"ok": False, "error": "hdparm_not_available", "command": None, "stdout": "", "stderr": "", "exit_code": None}
         if iface != "sata": return {"ok": False, "error": "secure_erase_requires_sata", "command": None, "stdout": "", "stderr": "", "exit_code": None}
         user_password = "wipestation"
+
+        # Check if security is already enabled on the drive
+        security_enabled = False
+        try:
+            init_output = run_command([HDPARM_CMD, "-I", device])
+            if init_output:
+                # Find the indented security section
+                sec_match = re.search(r"^[ \t]*Security:[ \t]*\n((?:[ \t]+.*\n?)+)", init_output, re.IGNORECASE | re.MULTILINE)
+                if not sec_match:
+                    sec_match = re.search(r"security:\s*(.*?)(?:\n\s*\n|$)", init_output, re.IGNORECASE | re.DOTALL)
+                if sec_match:
+                    sec_sec = sec_match.group(1).lower()
+                    sec_lines = [line.strip() for line in sec_sec.splitlines()]
+                    security_enabled = any(re.search(r"\benabled\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
+        except Exception:
+            pass
+
+        if security_enabled:
+            # Try to disable security first using our default password to return to a clean slate
+            disable_res = run_destructive_command([HDPARM_CMD, "--user-master", "u", "--security-disable", user_password, device])
+            if disable_res.get("ok"):
+                security_enabled = False
+            else:
+                # If disabling failed (e.g. password matches but disable is blocked), 
+                # try to proceed directly to the erase command using the password.
+                erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
+                second = run_destructive_command([HDPARM_CMD, "--user-master", "u", erase_flag, user_password, device])
+                second["command"] = f"hdparm {erase_flag} (direct)"
+                return second
+
+        # Standard flow if security was not enabled or was successfully disabled
         first = run_destructive_command([HDPARM_CMD, "--user-master", "u", "--security-set-pass", user_password, device])
         if not first.get("ok"): return first
         erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
