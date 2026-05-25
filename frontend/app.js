@@ -322,6 +322,12 @@ openBatchWipeModalBtn.addEventListener("click", () => {
 });
 
 function renderBatchModalForm() {
+  // Clear any stale inputs from previous wipe sessions to ensure fresh audit entry
+  const techInput = document.getElementById("technician");
+  const ticketInput = document.getElementById("ticketNumber");
+  if (techInput) techInput.value = "";
+  if (ticketInput) ticketInput.value = "";
+
   const listHtml = Array.from(selectedBays).map(bay => {
     const drive = currentDrives.find(d => d.bay === bay);
     const recommended = computeRecommendedMethod(drive);
