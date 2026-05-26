@@ -74,6 +74,17 @@ FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 
 # --- LOCALHOST-BYPASSED SECURITY MIDDLEWARE ---
+def get_local_ip():
+    try:
+        # Resolves the local interface IP routing to the internet
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0)
+        s.connect(('8.8.8.8', 1))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
 
 def calculate_session_token(passphrase):
     return hmac.new(passphrase.encode('utf-8'), b"dws_admin_session", hashlib.sha256).hexdigest()
@@ -1051,7 +1062,8 @@ def get_admin_metrics():
             "disk_str": disk_str,
             "ram_pct": get_ram_usage(),
             "cpu_pct": get_cpu_usage(),
-            "uptime": get_system_uptime()
+            "uptime": get_system_uptime(),
+            "ip_address": get_local_ip()  # <-- Added
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500

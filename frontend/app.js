@@ -948,8 +948,14 @@ async function loadAdminMetrics() {
     metricCpuText.textContent = `${data.cpu_pct}%`;
     
     metricUptimeText.textContent = data.uptime;
+    
+    // Populate the IP Address
+    const ipLabel = document.getElementById("metricIpText");
+    if (ipLabel) {
+      ipLabel.textContent = data.ip_address || "Unknown";
+    }
   } catch (err) {
-    // Suppress console alerts on background poll failures
+    // Suppress background poll failures quietly
   }
 }
 

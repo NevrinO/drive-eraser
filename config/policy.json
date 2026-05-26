@@ -13,5 +13,6 @@
   "bind_address": "0.0.0.0",
   "station_id": "wipe-station-01",
   "wipe_passphrase": "",
-  "slack_webhook_url": ""
+  "slack_webhook_url": "",
+  "lan_passphrase": "eraser123"
 }
