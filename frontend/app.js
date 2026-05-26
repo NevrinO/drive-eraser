@@ -1162,7 +1162,7 @@ saveBayMapBtn.addEventListener("click", async () => {
       }
     });
     
-    const response = await safeFetch("/api/save-bay-map", {
+    const response = await safeFetch("/api/admin/save-bay-map", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(localBayMapCopy)
