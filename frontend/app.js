@@ -34,6 +34,7 @@ const exportCsvBtn = document.getElementById("exportCsvBtn");
 const downloadBundleBtn = document.getElementById("downloadBundleBtn");
 const bayMappingContainer = document.getElementById("bayMappingContainer");
 const saveBayMapBtn = document.getElementById("saveBayMapBtn");
+const addBayBtn = document.getElementById("addBayBtn");
 
 // Metric Elements
 const metricDiskBar = document.getElementById("metricDiskBar");
@@ -84,7 +85,6 @@ function formatTraffic(drive, type) {
   const smart = drive.smart || {};
   let totalBytes = type === 'read' ? smart.data_read_bytes : smart.data_written_bytes;
   
-  // Fallback to sector/unit math if backend pre-calculated bytes are missing
   if (totalBytes === null || totalBytes === undefined || isNaN(totalBytes)) {
     const raw = type === 'read' ? smart.data_read_raw : smart.data_written_raw;
     if (raw === null || raw === undefined || isNaN(raw)) return "N/A";
@@ -150,7 +150,7 @@ function calculateDriveHealthScore(drive) {
     const fdw = writtenBytes / capacityBytes;
     const fdwPenalty = Math.min(30, (fdw / 150.0) * 30);
 
-    health = Math.max(40, 100 - pohPenalty - fdw_penalty);
+    health = Math.max(40, 100 - poh_penalty - fdwPenalty);
   }
 
   const reallocated = smart.reallocated_sectors || 0;
@@ -193,7 +193,6 @@ function calculateDriveHealthScore(drive) {
 async function safeFetch(url, options = {}) {
   const response = await fetch(url, options);
   if (response.status === 401) {
-    // Exclude the verify hook itself to prevent recursive loop blocks
     if (!url.includes("/api/auth/verify")) {
       showAuthOverlay();
       throw new Error("Authorization Required");
@@ -240,7 +239,6 @@ async function pollActiveWipes() {
   while (true) {
     await loadDrives(true); 
     
-    // Also poll admin metrics if tab is currently focused
     const adminTab = document.querySelector('[data-tab="adminPanel"]');
     if (adminTab && adminTab.classList.contains("active")) {
       await loadAdminMetrics();
@@ -305,12 +303,18 @@ function renderBays(drives) {
     const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const phaseLabel = drive.current_phase || "Sanitizing...";
 
+    // Dynamically append display labels adjacent to headers
+    const displayLabel = drive.label && drive.label !== drive.bay ? ` (${drive.label})` : "";
+
     return `
       <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
         <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
         <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
         <div class="bay-header-row">
-          <div class="bay-number">${escapeHtml(drive.bay.toUpperCase())}</div>
+          <div class="bay-number">
+            ${escapeHtml(drive.bay.toUpperCase())}
+            <span style="font-size: 0.72rem; font-weight: normal; opacity: 0.7;">${escapeHtml(displayLabel)}</span>
+          </div>
           ${isEmpty ? "" : `<div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>`}
         </div>
         ${isEmpty ? `<div class="empty-label">— Empty slot —</div>` : `
@@ -446,7 +450,6 @@ batchEraseForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  // Dual-Mode alert warning prompts instead of hard field blockades
   if (!tech || !ticket) {
     let missingInfo = [];
     if (!tech) missingInfo.push("Technician Name");
@@ -719,7 +722,6 @@ function renderExpandedAuditRow(job) {
     `;
   }
 
-  // Permissive print validation enables printing of both destruction reports and physical failure slips
   const isPrintable = job.status === "completed" || job.status === "failed";
 
   return `
@@ -791,7 +793,6 @@ historyList.addEventListener("click", async (event) => {
   renderAuditLedger(currentHistoryJobs);
 });
 
-// Clipboard helper with synchronous fallbacks for unauthenticated/unsecure HTTP contexts
 async function copyTextToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
@@ -799,7 +800,7 @@ async function copyTextToClipboard(text) {
       alert("Compliance fields copied to clipboard.");
       return;
     } catch (err) {
-      // Fall through to manual iframe / DOM copy on write failure
+      // Fallback
     }
   }
 
@@ -843,7 +844,6 @@ async function openPrintWindow(friendlyId) {
     return;
   }
 
-  // Pre-render a safe off-line styling placeholder
   printWindow.document.open();
   printWindow.document.write(`
     <!doctype html>
@@ -949,7 +949,6 @@ async function loadAdminMetrics() {
     
     metricUptimeText.textContent = data.uptime;
     
-    // Populate the IP Address
     const ipLabel = document.getElementById("metricIpText");
     if (ipLabel) {
       ipLabel.textContent = data.ip_address || "Unknown";
@@ -1002,8 +1001,17 @@ async function loadBayMappingConfig() {
     let html = "";
     localBayMapCopy = {};
 
-    currentDrives.forEach(drive => {
-      // Reconstruct local configurations map
+    // Sort bays chronologically by extracting numerical indices
+    const sortedBayKeys = Object.keys(currentDrives.reduce((acc, d) => { acc[d.bay] = true; return acc; }, {})).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      return numA - numB;
+    });
+
+    sortedBayKeys.forEach(bayKey => {
+      const drive = currentDrives.find(d => d.bay === bayKey);
+      if (!drive) return;
+
       localBayMapCopy[drive.bay] = {
         role: drive.role,
         locked: drive.locked,
@@ -1024,23 +1032,123 @@ async function loadBayMappingConfig() {
       });
 
       const lockStatusText = drive.locked ? "Locked" : "Editable";
+      
+      // Conditionally append Delete button only on non-locked bays
+      const deleteBtnHtml = drive.locked ? "" : `
+        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(drive.bay)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
+          Delete
+        </button>
+      `;
 
       html += `
-        <div class="mapping-row">
+        <div class="mapping-row" data-mapping-row-id="${escapeHtml(drive.bay)}">
           <span>${escapeHtml(drive.bay.toUpperCase())}</span>
           <select class="bay-path-select" data-bay-id="${escapeHtml(drive.bay)}" ${drive.locked ? "disabled" : ""}>
             ${options}
           </select>
-          <small style="font-size: 0.7rem; color: #888; min-width: 60px; text-align: right;">${lockStatusText}</small>
+          <div style="display: flex; align-items: center; justify-content: flex-end; min-width: 140px;">
+            <small style="font-size: 0.7rem; color: #888;">${lockStatusText}</small>
+            ${deleteBtnHtml}
+          </div>
         </div>
       `;
     });
 
     bayMappingContainer.innerHTML = html;
+    bindDeleteBayButtons();
   } catch (err) {
     bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
   }
 }
+
+function bindDeleteBayButtons() {
+  document.querySelectorAll(".btn-delete-bay").forEach(button => {
+    button.addEventListener("click", (event) => {
+      const bayId = event.target.getAttribute("data-delete-bay-id");
+      
+      // Constraint check: At least 1 active bay must always remain
+      if (Object.keys(localBayMapCopy).length <= 1) {
+        alert("Delete Blocked: A minimum threshold of 1 active bay configuration is required.");
+        return;
+      }
+
+      // Check current drives array to verify run-state status of this specific bay
+      const drive = currentDrives.find(d => d.bay === bayId);
+      if (drive && (String(drive.status).toUpperCase() === "RUNNING" || String(drive.status).toUpperCase() === "QUEUED")) {
+        alert(`Delete Blocked: Cannot delete ${bayId.toUpperCase()} while an active or queued sanitization job is running on it.`);
+        return;
+      }
+
+      const proceed = confirm(`Are you sure you want to stage the removal of ${bayId.toUpperCase()}?\n\nThis change will take effect only after you click 'Save Mapping Configuration'.`);
+      if (!proceed) return;
+
+      // Delete locally (staged)
+      delete localBayMapCopy[bayId];
+      
+      // Clean selected lists and trigger direct staged redrawing
+      selectedBays.delete(bayId);
+      
+      // Temporarily override the currentDrives array so re-rendering redraws the UI without the deleted card
+      currentDrives = currentDrives.filter(d => d.bay !== bayId);
+      renderBays(currentDrives);
+      loadBayMappingConfig();
+    });
+  });
+}
+
+addBayBtn.addEventListener("click", () => {
+  // Constraint check: Maximum 128 active bays limit safeguard
+  if (Object.keys(localBayMapCopy).length >= 128) {
+    alert("Add Blocked: Maximum threshold of 128 active bay configurations has been reached.");
+    return;
+  }
+
+  const label = prompt("Enter a descriptive label for the new physical bay (e.g., shelf1_slot5):");
+  if (label === null) return; // Technician cancelled
+  
+  const cleanLabel = label.trim() || "Work Bay Extension";
+  const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'nvme'):", "sas_sata");
+  if (typeSelection === null) return;
+  
+  const cleanType = typeSelection.trim().toLowerCase() === "nvme" ? "nvme" : "sas_sata";
+
+  // Calculate highest numeric bay key index dynamically to auto-increment sequentially
+  const bayKeys = Object.keys(localBayMapCopy);
+  let highestNum = 0;
+  bayKeys.forEach(k => {
+    const num = parseInt(k.replace(/\D/g, ""), 10);
+    if (!isNaN(num) && num > highestNum) {
+      highestNum = num;
+    }
+  });
+  
+  const nextBayId = `bay${highestNum + 1}`;
+
+  // Stage local addition
+  localBayMapCopy[nextBayId] = {
+    role: "wipe",
+    locked: false,
+    label: cleanLabel,
+    type: cleanType,
+    by_path: ""
+  };
+
+  // Push custom mock drive structure so the staged card shows up in Active Workbench instantly
+  currentDrives.push({
+    bay: nextBayId,
+    label: cleanLabel,
+    role: "wipe",
+    locked: false,
+    present: false,
+    status: "EMPTY",
+    interface_type: cleanType === "nvme" ? "nvme" : "sata",
+    capacity_str: "-",
+    marker: { status: "none" }
+  });
+
+  renderBays(currentDrives);
+  loadBayMappingConfig();
+});
 
 saveBayMapBtn.addEventListener("click", async () => {
   saveBayMapBtn.disabled = true;
@@ -1054,7 +1162,7 @@ saveBayMapBtn.addEventListener("click", async () => {
       }
     });
     
-    const response = await safeFetch("/api/admin/save-bay-map", {
+    const response = await safeFetch("/api/save-bay-map", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(localBayMapCopy)

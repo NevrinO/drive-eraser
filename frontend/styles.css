@@ -140,7 +140,7 @@ body {
 
 .bays-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));  /* Enforce exactly 4 columns */
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -237,6 +237,10 @@ body {
   font-size: 1rem;
   font-weight: 800;
   color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 
 .drive-type-badge {
@@ -674,11 +678,23 @@ button:disabled {
   color: #38bdf8;
 }
 
+@media (max-width: 1200px) {
+  .bays-grid {
+    grid-template-columns: repeat(2, 1fr);  /* Spills cleanly on smaller displays */
+  }
+}
+
 @media (max-width: 900px) {
   .history-controls {
     grid-template-columns: 1fr;
   }
   .form-fields-stack {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .bays-grid {
     grid-template-columns: 1fr;
   }
 }

@@ -105,13 +105,13 @@
           </div>
         </div>
 
-<!-- Zone B: Connectivity & Webhook Testing -->
+        <!-- Zone B: Connectivity & Webhook Testing -->
         <div class="admin-card">
           <div class="card-title">Network & Alerts Integration</div>
           <p class="admin-desc">Verify background system alerts and active configurations.</p>
           <div class="kv" style="margin-bottom: 8px;">
             <span>Station IP:</span>
-            <span id="metricIpText">-</span>  <!-- <-- Added -->
+            <span id="metricIpText">-</span>
           </div>
           <div class="kv">
             <span>Alert Target:</span>
@@ -133,7 +133,10 @@
 
         <!-- Zone D: Interactive Bay Mapping -->
         <div class="admin-card" style="grid-column: span 2;">
-          <div class="card-title">Interactive Physical Bay Mapping</div>
+          <div class="card-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div class="card-title" style="margin-bottom: 0;">Interactive Physical Bay Mapping</div>
+            <button type="button" id="addBayBtn" class="btn-primary" style="padding: 6px 12px; font-size: 0.75rem;">+ Add Bay</button>
+          </div>
           <p class="admin-desc">Correlate physical workstation slots with backend device disk-by-path references.</p>
           
           <div id="bayMappingContainer" class="bay-mapping-list">
