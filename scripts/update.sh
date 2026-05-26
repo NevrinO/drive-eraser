@@ -17,7 +17,9 @@ SERVICE_NAME="drive-eraser"
 VENV_DIR="$INSTALL_DIR/venv"
 CONFIG_DIR="$INSTALL_DIR/config"
 DATA_DIR="$INSTALL_DIR/data"
-LOG_DIR="$INSTALL_DIR/logs"
+LOG_DIR="$DATA_DIR/logs"
+ACTIVE_LOG_DIR="$LOG_DIR/active"
+FAILED_LOG_DIR="$LOG_DIR/failed"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(dirname "$SCRIPT_DIR")"
 BACKUP_DIR="$INSTALL_DIR/backups"
@@ -30,6 +32,8 @@ SG_SANITIZE_PATH=""
 SG_INQ_PATH=""
 DD_PATH=""
 LSBLK_PATH=""
+LSHW_PATH=""
+SYSTEMCTL_PATH=""
 
 DRY_RUN=false
 NO_RESTART=false
@@ -115,6 +119,8 @@ resolve_command_paths() {
     SG_INQ_PATH="$(find_cmd_path sg_inq)"
     DD_PATH="$(find_cmd_path dd)"
     LSBLK_PATH="$(find_cmd_path lsblk)"
+    LSHW_PATH="$(find_cmd_path lshw)"
+    SYSTEMCTL_PATH="$(find_cmd_path systemctl)"
 
     success "Command paths resolved."
 }
@@ -184,7 +190,9 @@ write_command_paths_config() {
   "sg_sanitize": "$SG_SANITIZE_PATH",
   "sg_inq": "$SG_INQ_PATH",
   "dd": "$DD_PATH",
-  "lsblk": "$LSBLK_PATH"
+  "lsblk": "$LSBLK_PATH",
+  "lshw": "$LSHW_PATH",
+  "systemctl": "$SYSTEMCTL_PATH"
 }
 EOF
     fi
@@ -199,8 +207,8 @@ setup_python() {
         error "Virtual environment python binary not found at $VENV_DIR/bin/python"
     fi
 
-    run_cmd "$VENV_DIR/bin/pip" install --upgrade pip
-    run_cmd "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+    run_cmd "$VENV_DIR/bin/pip" install --upgrade pip -q
+    run_cmd "$VENV_DIR/bin/pip" install -r "$INSTALL_DIR/requirements.txt" -q
 
     if [ "$DRY_RUN" = false ] && ! "$VENV_DIR/bin/python" -c "import flask, flask_cors" >/dev/null 2>&1; then
         error "Virtual environment validation failed: cannot import flask/flask_cors"
@@ -226,6 +234,8 @@ $APP_USER ALL=(root) NOPASSWD: $SG_SANITIZE_PATH
 $APP_USER ALL=(root) NOPASSWD: $SG_INQ_PATH
 $APP_USER ALL=(root) NOPASSWD: $DD_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSBLK_PATH
+$APP_USER ALL=(root) NOPASSWD: $LSHW_PATH
+$APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH
 EOF
 
     run_cmd chmod 440 "$TMP_SUDOERS_FILE"
@@ -250,7 +260,7 @@ EOF
 set_permissions() {
     info "Setting file permissions..."
 
-    run_cmd mkdir -p "$DATA_DIR" "$LOG_DIR"
+    run_cmd mkdir -p "$DATA_DIR" "$LOG_DIR" "$ACTIVE_LOG_DIR" "$FAILED_LOG_DIR"
     run_cmd chown -R "$APP_USER":"$APP_USER" "$INSTALL_DIR"
     run_cmd chmod -R 750 "$INSTALL_DIR"
     run_cmd chmod -R 770 "$DATA_DIR"
@@ -318,7 +328,6 @@ print_summary() {
 main() {
     parse_args "$@"
 
-    echo ""
     echo "==============================================="
     echo "  Drive Wipe Station - Update"
     echo "==============================================="

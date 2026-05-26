@@ -14,9 +14,9 @@
 ## Deployment Model
 - Official deployment path should use **HTTPS Git clone**, not personal SSH keys
 - Reason:
-  - any technician should be able to rebuild a server
-  - deployment must not depend on one person's GitHub SSH setup
-  - supports disaster recovery and handoff better
+  - Any technician should be able to rebuild a server
+  - Deployment must not depend on one person's GitHub SSH setup
+  - Supports disaster recovery and handoff better
 
 ## Service / Privilege Model
 - Run application as dedicated service user: `wipestation`
@@ -25,9 +25,7 @@
 - Command paths should be resolved at install/update time and persisted for runtime use
 - Systemd must allow controlled sudo escalation for this architecture:
   - `NoNewPrivileges=false` in service unit
-- Current real-world path validation matters more than assumptions:
-  - `smartctl` path confirmed as `/usr/sbin/smartctl` on test Ubuntu 26.04
-  - `nvme` path also confirmed under `/usr/sbin/` on the test system
+- Command scopes include `/usr/sbin/smartctl`, `/usr/sbin/hdparm`, `/usr/sbin/nvme`, `/usr/bin/sg_sanitize`, `/usr/bin/sg_inq`, `/usr/bin/dd`, `/usr/bin/lsblk`, `/usr/sbin/lshw`, and `/usr/bin/systemctl`.
 
 ## Backend Runtime Configuration
 - Backend should resolve config directory in this order:
@@ -157,7 +155,7 @@
 - Marker write/read is best-effort and warning-scoped:
   - marker result is captured in job payload for audit visibility
   - marker failures do not invalidate a successful erase+verification outcome
-- Current marker implementation writes a structured JSON marker at LBA0 using `dd`
+- Current implementation writes a structured JSON marker at LBA0 using `dd`
 - Marker readback parsing should extract the first marker payload line, isolate JSON object boundaries, then validate marker signature
 
 ## Certificate Strategy
@@ -190,7 +188,7 @@
 - **Problem**: Simple threshold checks or linear raw bad sector counts caused inaccurate drive life expectancy bars (e.g., used SSDs with harmless retired blocks showing 60% health).
 - **Decision**: Implemented a comprehensive multi-vector scoring engine in `backend/disk_ops.py` to calculate a single `health_score` (0-100) returned via `/api/drives`:
   - **Mutually Exclusive Wear-Life**: SSD base health starts at remaining flash wear life. HDD base health starts at 100% and ages gracefully via Power-On Hours (POH) and workload Full Drive Writes (FDW).
-  - **Differentiated Bad Sectors**: HDDs are penalized strictly on raw bad sector counts (immediate warning). SSDs are ignored for raw bad blocks and are only penalized if their over-provisioned "Available Spare" pool deplets below 100%.
+  - **Differentiated Bad Sectors**: HDDs are penalized strictly on raw bad sector counts (immediate warning). SSDs are ignored for raw bad blocks and are only penalized if their available spare pool deplets below 100%.
   - **Pre-Fail Overrides**: Bit 3 and Bit 4 of `smartctl`'s exit status immediately force the health score to a maximum of 5%. Bit 5 (usage warnings) is explicitly ignored to prevent POH double-dipping.
 
 ## Byte-Accurate Disk Traffic Calculation
@@ -208,3 +206,23 @@
 ## Active Query Lockup Bypass
 - **Problem**: Performing query-intensive commands (`smartctl`, `hdparm`, or LBA check reads) on drives actively performing hardware sanitization resets can block the Flask worker threads, causing API hangs and browser timeouts.
 - **Decision**: Implemented strict runtime state tracking in both `/api/erase/start` and `/api/drives`. Devices undergoing background `RUNNING` or `QUEUED` tasks bypass physical probes entirely. Their operational details are populated from the job's request cache.
+
+## Hybrid Logging Subsystem & Process Redirection
+- Technical runtime debugging should be separated from high-volume subprocess execution logs.
+- Synchronous process stdout/stderr streams should write directly to disk files to prevent buffer deadlocks and maintain flat memory utilization.
+- Failed sanitizations must automatically compile a post-mortem dump containing the full plain-text attributes of the target drive.
+- The logs directory must possess a self-cleaning mechanism executing at job completion to prevent log-bloat on the OS partition.
+
+## Localhost-Bypassed Network Security Gate
+- Local physical access is considered fully trusted. Direct TTY browser connections (originating on localhost `127.0.0.1` or `::1`) bypass all authentication gates.
+- Remote network connections (originating over the LAN) require a secure token. This is handled via a signed HTTP-Only session cookie (`admin_session`) matched against the passcode defined in `/config/policy.json`.
+
+## Interactive Bay Mapping & Memory-Safe Staging
+- Technicians must be able to scale the station dynamically (bays capped at a minimum of 1 and maximum of 128).
+- Naming of new bays must follow an auto-incremented pattern (`bay1`, `bay2`, ..., `bayX`) to prevent dictionary key conflicts.
+- **Staging Rule:** To prevent active background UI refresh pollers from wiping client-side edits during long async network operations, all adding, deleting, and drop-down mapping must happen strictly in-memory in the browser first. Changes are only committed to `/config/bay_map.json` when the technician explicitly clicks "Save Mapping Configuration".
+- A bay cannot be deleted if a sanitization job is currently running or queued on it.
+
+## Workbench Display Layout
+- To ensure optimal viewing on standard 1080p and touch-screen monitors, the Workbench Tab bay layout is constrained to exactly **4 columns per row** maximum, with excess cards spilling down to subsequent rows.
+- Workbench cards must display their physical descriptive labels next to their machine IDs (e.g. `BAY3 (Workbench Slot A)`).

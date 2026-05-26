@@ -1,4 +1,3 @@
-// --- START OF FILE frontend/app.js ---
 const baysGrid = document.getElementById("baysGrid");
 const refreshButton = document.getElementById("refreshButton");
 const apiStatus = document.getElementById("apiStatus");
@@ -28,11 +27,36 @@ const historyQuery = document.getElementById("historyQuery");
 const historyStatusFilter = document.getElementById("historyStatusFilter");
 const historyRefreshButton = document.getElementById("historyRefreshButton");
 
+// Admin Panel Elements
+const testWebhookBtn = document.getElementById("testWebhookBtn");
+const webhookTestResult = document.getElementById("webhookTestResult");
+const exportCsvBtn = document.getElementById("exportCsvBtn");
+const downloadBundleBtn = document.getElementById("downloadBundleBtn");
+const bayMappingContainer = document.getElementById("bayMappingContainer");
+const saveBayMapBtn = document.getElementById("saveBayMapBtn");
+const addBayBtn = document.getElementById("addBayBtn");
+
+// Metric Elements
+const metricDiskBar = document.getElementById("metricDiskBar");
+const metricDiskText = document.getElementById("metricDiskText");
+const metricRamBar = document.getElementById("metricRamBar");
+const metricRamText = document.getElementById("metricRamText");
+const metricCpuBar = document.getElementById("metricCpuBar");
+const metricCpuText = document.getElementById("metricCpuText");
+const metricUptimeText = document.getElementById("metricUptimeText");
+
+// Auth Overlay Elements
+const authOverlay = document.getElementById("authOverlay");
+const authForm = document.getElementById("authForm");
+const authPassphrase = document.getElementById("authPassphrase");
+const authErrorMsg = document.getElementById("authErrorMsg");
+
 let currentDrives = [];
 let currentHistoryJobs = [];
 let selectedBays = new Set();
 let isBatchMode = false;
 let ledgerExpandedJobs = new Set(); 
+let localBayMapCopy = {};
 
 const POLL_INTERVAL_MS = 2000;
 const METHOD_ORDER = ["crypto", "block", "enhanced_secure_erase", "secure_erase", "overwrite"];
@@ -61,7 +85,6 @@ function formatTraffic(drive, type) {
   const smart = drive.smart || {};
   let totalBytes = type === 'read' ? smart.data_read_bytes : smart.data_written_bytes;
   
-  // Fallback to sector/unit math if backend pre-calculated bytes are missing
   if (totalBytes === null || totalBytes === undefined || isNaN(totalBytes)) {
     const raw = type === 'read' ? smart.data_read_raw : smart.data_written_raw;
     if (raw === null || raw === undefined || isNaN(raw)) return "N/A";
@@ -127,7 +150,7 @@ function calculateDriveHealthScore(drive) {
     const fdw = writtenBytes / capacityBytes;
     const fdwPenalty = Math.min(30, (fdw / 150.0) * 30);
 
-    health = Math.max(40, 100 - pohPenalty - fdw_penalty);
+    health = Math.max(40, 100 - poh_penalty - fdwPenalty);
   }
 
   const reallocated = smart.reallocated_sectors || 0;
@@ -165,10 +188,62 @@ function calculateDriveHealthScore(drive) {
   return Math.max(0, Math.min(100, Math.round(health)));
 }
 
+// --- GATEWAY AUTH SECURITY CONTROLLERS ---
+
+async function safeFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    if (!url.includes("/api/auth/verify")) {
+      showAuthOverlay();
+      throw new Error("Authorization Required");
+    }
+  }
+  return response;
+}
+
+function showAuthOverlay() {
+  authOverlay.classList.remove("hidden");
+  authPassphrase.focus();
+}
+
+function hideAuthOverlay() {
+  authOverlay.classList.add("hidden");
+  authErrorMsg.classList.add("hidden");
+  authPassphrase.value = "";
+}
+
+authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const passphrase = authPassphrase.value;
+  try {
+    const response = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase })
+    });
+    if (response.ok) {
+      hideAuthOverlay();
+      loadSecurityStatus();
+      loadDrives();
+    } else {
+      authErrorMsg.classList.remove("hidden");
+    }
+  } catch (err) {
+    authErrorMsg.classList.remove("hidden");
+  }
+});
+
+
 // Unconditional async poller for running status updates
 async function pollActiveWipes() {
   while (true) {
     await loadDrives(true); 
+    
+    const adminTab = document.querySelector('[data-tab="adminPanel"]');
+    if (adminTab && adminTab.classList.contains("active")) {
+      await loadAdminMetrics();
+    }
+    
     await sleep(POLL_INTERVAL_MS);
   }
 }
@@ -176,11 +251,36 @@ async function pollActiveWipes() {
 async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
-    const response = await fetch("/api/drives");
+    const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
-    currentDrives = Array.isArray(drives) ? drives : [];
+    
+    let fetchedDrives = Array.isArray(drives) ? drives : [];
+
+    // Safety: Merge staged bays from memory into background pollers so they are not deleted
+    if (Object.keys(localBayMapCopy).length > 0) {
+      Object.keys(localBayMapCopy).forEach(bayId => {
+        const exists = fetchedDrives.some(d => d.bay === bayId);
+        if (!exists) {
+          const conf = localBayMapCopy[bayId];
+          fetchedDrives.push({
+            bay: bayId,
+            label: conf.label,
+            role: conf.role,
+            locked: conf.locked,
+            present: false,
+            status: "EMPTY",
+            interface_type: conf.type === "nvme" ? "nvme" : "sata",
+            capacity_str: "-",
+            marker: { status: "none" }
+          });
+        }
+      });
+    }
+
+    currentDrives = fetchedDrives;
     renderBays(currentDrives);
+
     if (!silent) {
       apiStatus.textContent = "API Status: Ready";
       lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
@@ -228,12 +328,17 @@ function renderBays(drives) {
     const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const phaseLabel = drive.current_phase || "Sanitizing...";
 
+    const displayLabel = drive.label && drive.label !== drive.bay ? ` (${drive.label})` : "";
+
     return `
       <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
         <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
         <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
         <div class="bay-header-row">
-          <div class="bay-number">${escapeHtml(drive.bay.toUpperCase())}</div>
+          <div class="bay-number">
+            ${escapeHtml(drive.bay.toUpperCase())}
+            <span style="font-size: 0.72rem; font-weight: normal; opacity: 0.7;">${escapeHtml(displayLabel)}</span>
+          </div>
           ${isEmpty ? "" : `<div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>`}
         </div>
         ${isEmpty ? `<div class="empty-label">— Empty slot —</div>` : `
@@ -322,7 +427,6 @@ openBatchWipeModalBtn.addEventListener("click", () => {
 });
 
 function renderBatchModalForm() {
-  // Clear any stale inputs from previous wipe sessions to ensure fresh audit entry
   const techInput = document.getElementById("technician");
   const ticketInput = document.getElementById("ticketNumber");
   if (techInput) techInput.value = "";
@@ -370,7 +474,6 @@ batchEraseForm.addEventListener("submit", async (event) => {
     return;
   }
 
-  // Dual-Mode alert warning prompts instead of hard field blockades
   if (!tech || !ticket) {
     let missingInfo = [];
     if (!tech) missingInfo.push("Technician Name");
@@ -406,7 +509,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
   });
 
   try {
-    const response = await fetch("/api/erase/start", {
+    const response = await safeFetch("/api/erase/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -424,10 +527,8 @@ batchEraseForm.addEventListener("submit", async (event) => {
     selectedBays.clear();
     batchActionFooter.classList.add("hidden");
     
-    // Instantly confirm initiation to the operator
     alert("Sanitization batch successfully initiated.");
     
-    // Refresh background statuses asynchronously
     loadDrives();
     loadHistoryIndex();
   } catch (err) {
@@ -438,7 +539,6 @@ batchEraseForm.addEventListener("submit", async (event) => {
 function renderLiveDetails(drive) {
   if (!drive) return;
   
-  // Clean separation of operational state from hardware health (Option A)
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
   const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
@@ -498,7 +598,6 @@ function renderLiveDetails(drive) {
   const pending = smart.pending_sectors ?? 0;
   const interfaceErrors = smart.interface_errors ?? 0;
 
-  // SMART Health Evaluation: Clean separation of physical health from wipe state
   let smartHealthText = "SMART: PASSED";
   let smartHealthClass = "status-complete";
   if (drive.health_score <= 40 || (opStatusText === "FAILED" && !drive.marker)) {
@@ -506,7 +605,6 @@ function renderLiveDetails(drive) {
     smartHealthClass = "status-failed";
   }
 
-  // Standardize remaining wear level conditional math across drive interfaces
   let remainingLife = "N/A";
   if (smart.wear_level !== null) {
     const iface = String(drive.interface_type || "").toLowerCase();
@@ -569,6 +667,9 @@ mainTabs.addEventListener("click", (event) => {
   
   if (btn.dataset.tab === "auditPanel") {
     loadHistoryIndex();
+  } else if (btn.dataset.tab === "adminPanel") {
+    loadAdminMetrics();
+    loadBayMappingConfig();
   }
 });
 
@@ -576,7 +677,7 @@ async function loadHistoryIndex() {
   const query = historyQuery.value.trim();
   const filter = historyStatusFilter.value;
   try {
-    const response = await fetch(`/api/erase/history?query=${encodeURIComponent(query)}&limit=100`);
+    const response = await safeFetch(`/api/erase/history?query=${encodeURIComponent(query)}&limit=100`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const data = await response.json();
     currentHistoryJobs = Array.isArray(data?.jobs) ? data.jobs : [];
@@ -645,7 +746,6 @@ function renderExpandedAuditRow(job) {
     `;
   }
 
-  // Permissive print validation enables printing of both destruction reports and physical failure slips
   const isPrintable = job.status === "completed" || job.status === "failed";
 
   return `
@@ -717,7 +817,6 @@ historyList.addEventListener("click", async (event) => {
   renderAuditLedger(currentHistoryJobs);
 });
 
-// Clipboard helper with synchronous fallbacks for unauthenticated/unsecure HTTP contexts
 async function copyTextToClipboard(text) {
   if (navigator.clipboard && navigator.clipboard.writeText) {
     try {
@@ -725,7 +824,7 @@ async function copyTextToClipboard(text) {
       alert("Compliance fields copied to clipboard.");
       return;
     } catch (err) {
-      // Fall through to manual iframe / DOM copy on write failure
+      // Fallback
     }
   }
 
@@ -762,7 +861,6 @@ function triggerCertDownload(friendlyId, format) {
   anchor.click();
 }
 
-// Fixed print window pipeline to synchronously launch blank popup within gesture loop
 async function openPrintWindow(friendlyId) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
@@ -770,7 +868,6 @@ async function openPrintWindow(friendlyId) {
     return;
   }
 
-  // Pre-render a safe off-line styling placeholder
   printWindow.document.open();
   printWindow.document.write(`
     <!doctype html>
@@ -785,11 +882,10 @@ async function openPrintWindow(friendlyId) {
   printWindow.document.close();
 
   try {
-    const response = await fetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
+    const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    // Inject active data and focus for OS print driver rendering
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
@@ -838,7 +934,7 @@ async function loadSecurityStatus() {
   const badge = document.getElementById("securityBadge");
   if (!badge) return;
   try {
-    const response = await fetch("/api/status");
+    const response = await safeFetch("/api/status");
     if (!response.ok) throw new Error();
     const data = await response.json();
     if (data.passphrase_enabled) {
@@ -853,6 +949,259 @@ async function loadSecurityStatus() {
     badge.className = "reliability-badge unsecured";
   }
 }
+
+
+// --- ADMIN PANEL HANDLERS & BINDINGS ---
+
+async function loadAdminMetrics() {
+  const adminTab = document.querySelector('[data-tab="adminPanel"]');
+  if (!adminTab || !adminTab.classList.contains("active")) return;
+  
+  try {
+    const response = await safeFetch("/api/admin/metrics");
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    
+    metricDiskBar.style.width = `${data.disk_pct}%`;
+    metricDiskText.textContent = `${data.disk_pct}% (${data.disk_str})`;
+    
+    metricRamBar.style.width = `${data.ram_pct}%`;
+    metricRamText.textContent = `${data.ram_pct}%`;
+    
+    metricCpuBar.style.width = `${data.cpu_pct}%`;
+    metricCpuText.textContent = `${data.cpu_pct}%`;
+    
+    metricUptimeText.textContent = data.uptime;
+    
+    const ipLabel = document.getElementById("metricIpText");
+    if (ipLabel) {
+      ipLabel.textContent = data.ip_address || "Unknown";
+    }
+  } catch (err) {
+    // Suppress background poll failures quietly
+  }
+}
+
+testWebhookBtn.addEventListener("click", async () => {
+  testWebhookBtn.disabled = true;
+  testWebhookBtn.textContent = "Testing...";
+  webhookTestResult.classList.add("hidden");
+  
+  try {
+    const response = await safeFetch("/api/admin/test-webhook", { method: "POST" });
+    const data = await response.json();
+    webhookTestResult.classList.remove("hidden");
+    if (response.ok) {
+      webhookTestResult.className = "test-result-label test-result-success";
+      webhookTestResult.textContent = data.message || "Test Notification Sent!";
+    } else {
+      webhookTestResult.className = "test-result-label test-result-error";
+      webhookTestResult.textContent = `Failure: ${data.error || "Unknown response"}`;
+    }
+  } catch (err) {
+    webhookTestResult.classList.remove("hidden");
+    webhookTestResult.className = "test-result-label test-result-error";
+    webhookTestResult.textContent = `Error: ${err.message}`;
+  } finally {
+    testWebhookBtn.disabled = false;
+    testWebhookBtn.textContent = "Test Alert Notification";
+  }
+});
+
+exportCsvBtn.addEventListener("click", () => {
+  window.location.href = "/api/admin/export-csv";
+});
+
+downloadBundleBtn.addEventListener("click", () => {
+  window.location.href = "/api/admin/support-bundle";
+});
+
+async function loadBayMappingConfig() {
+  try {
+    const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+    if (!unmappedResponse.ok) throw new Error();
+    const unmappedDrives = await unmappedResponse.json();
+    
+    let html = "";
+    
+    // Only re-initialize from currentDrives if we do not already have configured staged keys in memory
+    if (Object.keys(localBayMapCopy).length === 0) {
+      currentDrives.forEach(drive => {
+        localBayMapCopy[drive.bay] = {
+          role: drive.role,
+          locked: drive.locked,
+          label: drive.label,
+          type: drive.interface_type === "nvme" ? "nvme" : "sas_sata",
+          by_path: drive.configured_by_path || ""
+        };
+      });
+    }
+
+    // Sort active bays chronologically directly from our master staged layout copy in browser memory
+    const sortedBayKeys = Object.keys(localBayMapCopy).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      return numA - numB;
+    });
+
+    sortedBayKeys.forEach(bayKey => {
+      const conf = localBayMapCopy[bayKey];
+      if (!conf) return;
+
+      const currentPath = conf.by_path || "";
+      
+      let options = `<option value="">-- Unassigned / Empty --</option>`;
+      if (currentPath) {
+        options += `<option value="${escapeHtml(currentPath)}" selected>${escapeHtml(currentPath)} (Current)</option>`;
+      }
+      
+      unmappedDrives.forEach(ud => {
+        options += `<option value="${escapeHtml(ud.by_path)}">${escapeHtml(ud.by_path)} (${escapeHtml(ud.model)} S/N: ${escapeHtml(ud.serial)})</option>`;
+      });
+
+      const lockStatusText = conf.locked ? "Locked" : "Editable";
+      
+      const deleteBtnHtml = conf.locked ? "" : `
+        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayKey)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
+          Delete
+        </button>
+      `;
+
+      html += `
+        <div class="mapping-row" data-mapping-row-id="${escapeHtml(bayKey)}">
+          <span>${escapeHtml(bayKey.toUpperCase())}</span>
+          <select class="bay-path-select" data-bay-id="${escapeHtml(bayKey)}" ${conf.locked ? "disabled" : ""}>
+            ${options}
+          </select>
+          <div style="display: flex; align-items: center; justify-content: flex-end; min-width: 140px;">
+            <small style="font-size: 0.7rem; color: #888;">${lockStatusText}</small>
+            ${deleteBtnHtml}
+          </div>
+        </div>
+      `;
+    });
+
+    bayMappingContainer.innerHTML = html;
+    bindDeleteBayButtons();
+  } catch (err) {
+    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
+  }
+}
+
+function bindDeleteBayButtons() {
+  document.querySelectorAll(".btn-delete-bay").forEach(button => {
+    button.addEventListener("click", (event) => {
+      const bayId = event.target.getAttribute("data-delete-bay-id");
+      
+      if (Object.keys(localBayMapCopy).length <= 1) {
+        alert("Delete Blocked: A minimum threshold of 1 active bay configuration is required.");
+        return;
+      }
+
+      const drive = currentDrives.find(d => d.bay === bayId);
+      if (drive && (String(drive.status).toUpperCase() === "RUNNING" || String(drive.status).toUpperCase() === "QUEUED")) {
+        alert(`Delete Blocked: Cannot delete ${bayId.toUpperCase()} while an active or queued sanitization job is running on it.`);
+        return;
+      }
+
+      const proceed = confirm(`Are you sure you want to stage the removal of ${bayId.toUpperCase()}?\n\nThis change will take effect only after you click 'Save Mapping Configuration'.`);
+      if (!proceed) return;
+
+      delete localBayMapCopy[bayId];
+      selectedBays.delete(bayId);
+      
+      currentDrives = currentDrives.filter(d => d.bay !== bayId);
+      renderBays(currentDrives);
+      loadBayMappingConfig();
+    });
+  });
+}
+
+addBayBtn.addEventListener("click", () => {
+  if (Object.keys(localBayMapCopy).length >= 128) {
+    alert("Add Blocked: Maximum threshold of 128 active bay configurations has been reached.");
+    return;
+  }
+
+  const label = prompt("Enter a descriptive label for the new physical bay (e.g., shelf1_slot5):");
+  if (label === null) return; 
+  
+  const cleanLabel = label.trim() || "Work Bay Extension";
+  const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'nvme'):", "sas_sata");
+  if (typeSelection === null) return;
+  
+  const cleanType = typeSelection.trim().toLowerCase() === "nvme" ? "nvme" : "sas_sata";
+
+  const bayKeys = Object.keys(localBayMapCopy);
+  let highestNum = 0;
+  bayKeys.forEach(k => {
+    const num = parseInt(k.replace(/\D/g, ""), 10);
+    if (!isNaN(num) && num > highestNum) {
+      highestNum = num;
+    }
+  });
+  
+  const nextBayId = `bay${highestNum + 1}`;
+
+  localBayMapCopy[nextBayId] = {
+    role: "wipe",
+    locked: false,
+    label: cleanLabel,
+    type: cleanType,
+    by_path: ""
+  };
+
+  currentDrives.push({
+    bay: nextBayId,
+    label: cleanLabel,
+    role: "wipe",
+    locked: false,
+    present: false,
+    status: "EMPTY",
+    interface_type: cleanType === "nvme" ? "nvme" : "sata",
+    capacity_str: "-",
+    marker: { status: "none" }
+  });
+
+  renderBays(currentDrives);
+  loadBayMappingConfig();
+});
+
+saveBayMapBtn.addEventListener("click", async () => {
+  saveBayMapBtn.disabled = true;
+  saveBayMapBtn.textContent = "Saving...";
+  
+  try {
+    document.querySelectorAll(".bay-path-select").forEach(select => {
+      const bayId = select.getAttribute("data-bay-id");
+      if (localBayMapCopy[bayId]) {
+        localBayMapCopy[bayId].by_path = select.value;
+      }
+    });
+    
+    const response = await safeFetch("/api/admin/save-bay-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(localBayMapCopy)
+    });
+    
+    if (response.ok) {
+      alert("Mapping configurations saved successfully. Reloading workspace.");
+      localBayMapCopy = {}; // Clear memory reference so reload rebuilds fresh from updated backend JSON
+      await loadDrives();
+      await loadBayMappingConfig();
+    } else {
+      const data = await response.json();
+      alert(`Save Failed: ${data.error || "Unknown response"}`);
+    }
+  } catch (err) {
+    alert(`Error: ${err.message}`);
+  } finally {
+    saveBayMapBtn.disabled = false;
+    saveBayMapBtn.textContent = "Save Mapping Configuration";
+  }
+});
+
 
 (async () => {
   await loadSecurityStatus();

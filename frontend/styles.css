@@ -140,7 +140,7 @@ body {
 
 .bays-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));  /* Enforce exactly 4 columns */
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -237,6 +237,10 @@ body {
   font-size: 1rem;
   font-weight: 800;
   color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
 }
 
 .drive-type-badge {
@@ -674,11 +678,23 @@ button:disabled {
   color: #38bdf8;
 }
 
+@media (max-width: 1200px) {
+  .bays-grid {
+    grid-template-columns: repeat(2, 1fr);  /* Spills cleanly on smaller displays */
+  }
+}
+
 @media (max-width: 900px) {
   .history-controls {
     grid-template-columns: 1fr;
   }
   .form-fields-stack {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .bays-grid {
     grid-template-columns: 1fr;
   }
 }
@@ -735,5 +751,193 @@ button:disabled {
   background: rgba(107, 114, 128, 0.15);
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);
+}
+
+/* --- LOGGING, DIAGNOSTICS & GATEWAY ADMIN EXTENSIONS --- */
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.admin-card {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.admin-desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+}
+
+.progress-bar-container {
+  background: var(--color-surface-3);
+  border-radius: 2px;
+  height: 8px;
+  overflow: hidden;
+  flex-grow: 1;
+  margin: 0 12px;
+  border: 1px solid var(--color-border);
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+}
+
+.metric-label {
+  min-width: 100px;
+}
+
+.metric-value {
+  min-width: 45px;
+  text-align: right;
+  font-weight: bold;
+}
+
+.metric-value-static {
+  font-weight: bold;
+  color: var(--color-primary);
+}
+
+.bay-mapping-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+  gap: 12px;
+}
+
+.mapping-row span {
+  font-size: 0.8rem;
+  font-weight: bold;
+  min-width: 70px;
+}
+
+.mapping-row select {
+  flex-grow: 1;
+  padding: 6px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  color: #fff;
+  font-size: 0.75rem;
+}
+
+.test-result-label {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.test-result-success {
+  background: #14532d;
+  color: #86efac;
+  border: 1px solid #166534;
+}
+
+.test-result-error {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border: 1px solid #991b1b;
+}
+
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Authentication Overlay UI */
+.auth-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(2, 6, 23, 0.96);
+  backdrop-filter: blur(8px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-overlay.hidden {
+  display: none !important;
+}
+
+.auth-dialog {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+}
+
+.auth-dialog h2 {
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+  color: #fff;
+  font-weight: 800;
+}
+
+.auth-dialog p {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
+.auth-dialog input {
+  width: 100%;
+  padding: 10px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  color: #fff;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.auth-error {
+  margin-top: 12px;
+  color: var(--color-danger);
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-align: center;
 }
 /* --- END OF FILE styles.css --- */
