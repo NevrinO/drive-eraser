@@ -1,3 +1,4 @@
+# --- START OF FILE backend/app.py ---
 from flask import Flask, jsonify, request, send_from_directory, send_file
 from flask_cors import CORS
 import sys
@@ -19,7 +20,6 @@ import socket
 import logging
 from logging.handlers import RotatingFileHandler
 
-# Flat sibling imports directly within the backend directory
 from common import (
     get_data_dir, get_config_dir, load_policy, get_db_path, get_cert_dir,
     get_logs_dir, get_active_logs_dir, get_failed_logs_dir,
@@ -37,9 +37,11 @@ from verification import (
 from certificates import build_certificate
 from notifier import send_slack_notification
 
-from disk_ops import discover_drives, get_smart_data, format_capacity_bytes, get_raw_smart_diagnostics
+from disk_ops import (
+    discover_drives, get_smart_data, format_capacity_bytes, 
+    get_raw_smart_diagnostics, get_os_by_path
+)
 
-# --- SYSTEM LOGGING INITIALIZATION ---
 def setup_application_logging():
     try:
         logs_dir = get_logs_dir()
@@ -52,7 +54,6 @@ def setup_application_logging():
         root_logger.setLevel(logging.INFO)
         root_logger.addHandler(handler)
         
-        # Also direct outputs to stdout for systemd-journald capture
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
@@ -68,15 +69,11 @@ CORS(app)
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()
 
-# Restored correct path depth evaluation for frontend assets
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
-
-# --- LOCALHOST-BYPASSED SECURITY MIDDLEWARE ---
 def get_local_ip():
     try:
-        # Resolves the local interface IP routing to the internet
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0)
         s.connect(('8.8.8.8', 1))
@@ -94,14 +91,10 @@ def is_localhost(ip):
 
 @app.before_request
 def security_gate():
-    # Only protect API calls; allow normal frontend page/asset loads
     if not request.path.startswith("/api/"):
         return None
-    # Public authentication check endpoints
     if request.path in ("/api/auth/verify", "/api/status"):
         return None
-        
-    # Fully bypass security gate if the connection originates on localhost
     if is_localhost(request.remote_addr):
         return None
         
@@ -115,9 +108,6 @@ def security_gate():
         return None
         
     return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
-
-
-# --- HELPER FUNCTIONS FOR HOST HEALTH METRICS ---
 
 def get_ram_usage():
     try:
@@ -160,9 +150,6 @@ def get_system_uptime():
         pass
     return "Unknown"
 
-
-# --- SANITIZATION ORDER & VALIDATION HELPERS ---
-
 def build_recommended_method(drive, policy):
     interface_type = (drive.get("interface_type") or "unknown").lower()
     supported_methods = drive.get("supported_methods") or []
@@ -194,6 +181,18 @@ def validate_single_bay(technician, ticket_number, bay, method_override, drives,
     device = selected_drive.get("device")
     if not device:
         return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
+
+    # Absolute safety double-lock backend protection
+    os_dev_node, os_by_path = get_os_by_path()
+    configured_path = selected_drive.get("configured_by_path")
+    resolved_path = selected_drive.get("resolved_by_path")
+
+    if os_dev_node and device and os.path.realpath(device) == os.path.realpath(os_dev_node):
+        return None, {"error": f"Device {device} is the active host OS drive and cannot be erased!"}, 403
+
+    for path in [configured_path, resolved_path]:
+        if path and os_by_path and (path == os_by_path or os.path.basename(path) == os.path.basename(os_by_path)):
+            return None, {"error": f"Device path {path} is the active host OS drive and cannot be erased!"}, 403
 
     supported_methods = selected_drive.get("supported_methods") or []
     recommended_method = build_recommended_method(selected_drive, policy)
@@ -253,8 +252,6 @@ def create_erase_job(validated):
         },
     }
 
-# --- PROGRESS HARVESTING UTILITIES ---
-
 def get_device_sectors_written(device):
     try:
         dev_name = os.path.basename(device)
@@ -264,7 +261,7 @@ def get_device_sectors_written(device):
                 content = f.read().strip()
             parts = content.split()
             if len(parts) >= 7:
-                return int(parts[6])  # 7th column representing write sectors
+                return int(parts[6])
     except Exception:
         pass
     return None
@@ -314,8 +311,6 @@ def poll_sata_sanitize_progress(device):
         pass
     return None
 
-# --- COMMAND INITIATION & CONCURRENCY CONTROLLERS ---
-
 def prepare_erase_command(device, interface_type, method):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
@@ -326,7 +321,6 @@ def prepare_erase_command(device, interface_type, method):
             return {"ok": False, "error": "dd_not_available"}
         return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "oflag=direct"]}
 
-    # Legacy security erase commands (Requires temporary drive passwords)
     if selected_method in {"secure_erase", "enhanced_secure_erase"}:
         hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
         if not hdparm_cmd:
@@ -337,7 +331,6 @@ def prepare_erase_command(device, interface_type, method):
         erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
         return {"ok": True, "command": erase_cmd}
 
-    # Modern native firmware sanitize commands (Passwordless)
     if selected_method in {"block", "crypto"}:
         if iface == "nvme":
             nvme_cmd = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
@@ -369,7 +362,6 @@ def finalize_failed_job(job_id, error_message):
             job["finished_at"] = datetime.now(timezone.utc).isoformat()
             job["error"] = error_message
             
-            # Close active log, move to failed, and append SMART diagnostics
             active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
             failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
             if os.path.exists(active_log_path):
@@ -389,7 +381,6 @@ def finalize_failed_job(job_id, error_message):
             persist_job(job)
             send_slack_notification(job)
             
-            # Post-job housekeeping
             try:
                 purge_old_logs(30)
             except Exception:
@@ -413,7 +404,6 @@ def run_erase_job(job_id):
     method = job["request"]["method"]
     capacity_bytes = job["request"].get("capacity_bytes") or (100 * 1024 * 1024 * 1024)
 
-    # 1. First-Stage: Apply and verify password synchronously on SATA configurations
     if method in {"secure_erase", "enhanced_secure_erase"} and interface_type == "sata":
         hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
         if not hdparm_cmd:
@@ -447,7 +437,6 @@ def run_erase_job(job_id):
     if method == "overwrite":
         initial_sectors = get_device_sectors_written(device)
 
-    # Instantiate the active log file write-unbuffered target
     active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
     try:
         log_file = open(active_log_path, "w", encoding="utf-8", buffering=1)
@@ -460,7 +449,6 @@ def run_erase_job(job_id):
         finalize_failed_job(job_id, f"log_file_creation_failed: {str(e)}")
         return
 
-    # 2. Second-Stage: Spawn sanitize routine, redirecting outputs directly to file descriptor
     try:
         process = subprocess.Popen(
             ["sudo"] + command,
@@ -530,7 +518,6 @@ def run_erase_job(job_id):
     exit_code = process.returncode
     execution_ok = (exit_code == 0)
 
-    # Safely close file stream and load contents as transaction record summary
     log_file.flush()
     log_file.close()
 
@@ -544,21 +531,19 @@ def run_erase_job(job_id):
         "ok": execution_ok,
         "command": " ".join(command),
         "stdout": stdout_content,
-        "stderr": "",  # Redirected directly into standard log file descriptor
+        "stderr": "",
         "exit_code": exit_code
     }
 
-    # 3. Third-Stage: For asynchronous sanitize methods, poll drive firmware state until complete or timeout
     if method in {"crypto", "block"}:
         firmware_complete = False
         poll_start_time = datetime.now(timezone.utc)
-        max_poll_seconds = 1200 if method == "crypto" else 7200  # 20 mins for crypto, 2 hours for block erase
+        max_poll_seconds = 1200 if method == "crypto" else 7200
         
-        # Wait briefly to let the link negotiate and settle after initial command execution
         time.sleep(5)
         
         consecutive_errors = 0
-        max_consecutive_errors = 15  # Up to 60 seconds of tolerance for bus reconnects/temporary drive resets
+        max_consecutive_errors = 15
         
         while not firmware_complete:
             elapsed_poll = (datetime.now(timezone.utc) - poll_start_time).total_seconds()
@@ -584,7 +569,7 @@ def run_erase_job(job_id):
                     consecutive_errors = 0
                 elif status_report.get("error") in {"sata_sanitize_still_in_progress", "nvme_sanitize_still_in_progress", "sas_sanitize_still_in_progress"}:
                     firmware_complete = False
-                    consecutive_errors = 0  # Successfully communicated with drive, reset error tracker
+                    consecutive_errors = 0
                     parsed_pct = None
                     details = status_report.get("details") or {}
                     output_str = str(details.get("output") or "").lower()
@@ -611,14 +596,12 @@ def run_erase_job(job_id):
                         
                     phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
                 else:
-                    # Report returned an unrecognized error or query command failed
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive_errors:
                         break
                     phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
                     progress_pct = min(99.9, (elapsed_poll / (30.0 if method == "crypto" else 300.0)) * 100.0)
             else:
-                # No status report parsed/returned from validation query
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     break
@@ -633,7 +616,6 @@ def run_erase_job(job_id):
                     
             time.sleep(4)
 
-    # 4. Fourth-Stage: Pause briefly to allow the SATA/SAS link to negotiate and settle down after the drive resets itself
     if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
         time.sleep(5)
 
@@ -657,7 +639,6 @@ def run_erase_job(job_id):
         }
         job["verification"] = verification
 
-        # Evaluate job success strictly based on the physical verification status
         if verification.get("ok"):
             if not execution.get("ok"):
                 warnings_list = job.get("result", {}).get("warnings", [])
@@ -669,7 +650,6 @@ def run_erase_job(job_id):
             marker_result = write_marker_and_verify(job)
             job["marker"] = marker_result
             
-            # Clean up the active ephemeral log since job was successful
             if os.path.exists(active_log_path):
                 try:
                     os.remove(active_log_path)
@@ -691,7 +671,6 @@ def run_erase_job(job_id):
             else:
                 job["error"] = verification.get("error") or "erase_verification_failed"
             
-            # Convert active log to failure log and append SMART diagnostics block
             failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
             if os.path.exists(active_log_path):
                 try:
@@ -707,7 +686,6 @@ def run_erase_job(job_id):
             except Exception:
                 pass
 
-            # Record failed sanitization history details inside a clean Failure Certificate
             try:
                 job["certificate"] = build_certificate(job)
             except Exception as e:
@@ -718,7 +696,6 @@ def run_erase_job(job_id):
 
     send_slack_notification(job)
     
-    # Housekeeping: execute auto-purge on conclusion of job
     try:
         purge_old_logs(30)
     except Exception:
@@ -745,7 +722,6 @@ def get_drives():
     try:
         config_dir = get_config_dir()
         
-        # Track currently active or queued device paths to bypass physical query locks
         running_devices = set()
         with ERASE_JOBS_LOCK:
             for job in ERASE_JOBS.values():
@@ -754,7 +730,6 @@ def get_drives():
                     if dev:
                         running_devices.add(dev)
 
-        # Pass running_devices to prevent blocking queries on busy drives
         drives = discover_drives(os.path.join(config_dir, "bay_map.json"), running_devices=running_devices)
         
         with ERASE_JOBS_LOCK:
@@ -768,7 +743,6 @@ def get_drives():
                             d["progress_percent"] = job.get("progress_percent", 0.0)
                             d["current_phase"] = job.get("current_phase", "Sanitizing")
                             
-                            # Restore cached physical drive attributes to prevent metadata blackout while busy
                             if req.get("serial"):
                                 d["serial"] = req.get("serial")
                             if req.get("model"):
@@ -786,7 +760,6 @@ def get_status():
         config_dir = get_config_dir()
         policy = load_policy(config_dir)
         passphrase = policy.get("wipe_passphrase")
-        # Check that the passphrase is set, non-empty, and has been updated from the default placeholder
         has_passphrase = bool(
             passphrase and 
             passphrase.strip() and 
@@ -805,13 +778,11 @@ def start_erase():
         config_dir = get_config_dir()
         policy = load_policy(config_dir)
         
-        # Guard Clause: Terminate instantly if strict auditing is requested but keys are missing
         strict_audit = policy.get("strict_audit_mode", False)
         passphrase = policy.get("wipe_passphrase")
         if strict_audit and not passphrase:
             return jsonify({"error": "Configuration Error: strict_audit_mode is enabled, but no wipe_passphrase is configured in policy.json."}), 400
 
-        # Track currently active or queued device paths to bypass physical query locks during startup validation
         running_devices = set()
         with ERASE_JOBS_LOCK:
             for job in ERASE_JOBS.values():
@@ -820,10 +791,8 @@ def start_erase():
                     if dev:
                         running_devices.add(dev)
 
-        # Pass running_devices to prevent blocking queries on busy drives
         drives = discover_drives(os.path.join(config_dir, "bay_map.json"), running_devices=running_devices)
 
-        # Resolve blank fields with default fallback strings
         technician = str(payload.get("technician") or "").strip()
         ticket_number = str(payload.get("ticket_number") or "").strip()
         if not technician:
@@ -1030,9 +999,6 @@ def get_certificate(job_id):
 
     return jsonify({"error": "format must be one of: json, html"}), 400
 
-
-# --- ADMIN / DIAGNOSTICS CONTROL PANEL ROUTES ---
-
 @app.route("/api/auth/verify", methods=["POST"])
 def verify_auth():
     try:
@@ -1063,7 +1029,7 @@ def get_admin_metrics():
             "ram_pct": get_ram_usage(),
             "cpu_pct": get_cpu_usage(),
             "uptime": get_system_uptime(),
-            "ip_address": get_local_ip()  # <-- Added
+            "ip_address": get_local_ip()
         }), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1162,7 +1128,6 @@ def download_support_bundle():
         workspace_dir = os.path.join("/tmp", bundle_name)
         os.makedirs(workspace_dir, exist_ok=True)
         
-        # 1. Gather hardware environment
         try:
             lsblk_proc = subprocess.run(["sudo", "lsblk", "-J"], capture_output=True, text=True, timeout=10)
             with open(os.path.join(workspace_dir, "hardware_environment.txt"), "w") as f:
@@ -1175,7 +1140,6 @@ def download_support_bundle():
             with open(os.path.join(workspace_dir, "hardware_environment_error.txt"), "w") as f:
                 f.write(f"Failed to gather hardware details: {str(e)}")
                 
-        # 2. Gather system metrics
         try:
             total, used, free = shutil.disk_usage(get_data_dir())
             with open(os.path.join(workspace_dir, "system_metrics.txt"), "w") as f:
@@ -1190,14 +1154,12 @@ def download_support_bundle():
         except Exception:
             pass
             
-        # 3. Redact policy.json
         try:
             policy_dir = get_config_dir()
             policy_path = os.path.join(policy_dir, "policy.json")
             if os.path.exists(policy_path):
                 with open(policy_path, "r", encoding="utf-8") as f:
                     policy_data = json.load(f)
-                # Redact sensitive parameters
                 for key in ["wipe_passphrase", "slack_webhook_url", "lan_passphrase"]:
                     if key in policy_data:
                         policy_data[key] = "[REDACTED]"
@@ -1206,7 +1168,6 @@ def download_support_bundle():
         except Exception:
             pass
             
-        # 4. Copy app.log and failed logs
         try:
             logs_dir = get_logs_dir()
             app_log_path = os.path.join(logs_dir, "app.log")
@@ -1219,12 +1180,10 @@ def download_support_bundle():
         except Exception:
             pass
             
-        # 5. Pack everything into a .tar.gz
         tar_path = f"/tmp/{bundle_name}.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             tar.add(workspace_dir, arcname=bundle_name)
             
-        # Cleanup temporary workspace
         shutil.rmtree(workspace_dir, ignore_errors=True)
         
         return send_file(
@@ -1254,6 +1213,9 @@ def get_unmapped_drives():
         path_to_dev = {}
         by_path_dir = '/dev/disk/by-path/'
         unmapped_devices = []
+
+        # Detect active operating system drive parameters
+        os_dev_node, os_by_path = get_os_by_path()
         
         if os.path.exists(by_path_dir):
             for entry in os.listdir(by_path_dir):
@@ -1262,22 +1224,33 @@ def get_unmapped_drives():
                 full_path = os.path.join(by_path_dir, entry)
                 if os.path.islink(full_path):
                     dev_node = os.path.realpath(full_path)
-                    # Avoid listing partition children
                     if "-part" in entry:
                         continue
                     path_to_dev[entry] = dev_node
                     
-        # Extract SMART metrics for each unmapped target
         for by_path, dev_node in path_to_dev.items():
             try:
                 smart = get_smart_data(dev_node)
+                
+                # Check if this drive matches host operating system disk
+                is_os = False
+                if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
+                    is_os = True
+                if os_by_path and (by_path == os_by_path or os.path.basename(by_path) == os.path.basename(os_by_path)):
+                    is_os = True
+
+                model_str = smart.get("model") or "Unknown"
+                if is_os:
+                    model_str = f"{model_str} [OS Drive]"
+
                 unmapped_devices.append({
                     "by_path": by_path,
                     "device": dev_node,
-                    "model": smart.get("model") or "Unknown",
+                    "model": model_str,
                     "serial": smart.get("serial") or "Unknown",
                     "capacity_str": smart.get("capacity_str", "-"),
-                    "capacity_bytes": smart.get("capacity_bytes")
+                    "capacity_bytes": smart.get("capacity_bytes"),
+                    "is_os": is_os
                 })
             except Exception:
                 pass
@@ -1313,7 +1286,6 @@ def admin_policy():
         try:
             policy = load_policy(config_dir)
             safe_policy = policy.copy()
-            # Redact to prevent key leaks
             if "lan_passphrase" in safe_policy:
                 safe_policy["lan_passphrase"] = ""
             return jsonify(safe_policy), 200
@@ -1347,3 +1319,4 @@ if __name__ == "__main__":
     init_wipe_db()
     logger.info(f"Drive Wipe Station starting on {bind_address}:{port} (config_dir={config_dir})")
     app.run(host=bind_address, port=port, debug=False)
+# --- END OF FILE backend/app.py ---

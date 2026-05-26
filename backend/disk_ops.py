@@ -318,25 +318,18 @@ def get_smart_data(device, diagnostics=None):
         "data_read_raw": read_raw, "data_read_bytes": read_bytes, "raw": raw_output, "rotation_rate": rotation_rate
     }
 
-# --- START OF HARDWARE LOGGING EXTENSIONS ---
 def get_raw_smart_diagnostics(device):
-    """
-    Executes standard plain-text smartctl query on the target device
-    to get raw drive health attributes for failed post-mortem logging.
-    """
     if not SMARTCTL_CMD or not device:
         return "SMARTCTL command not resolved or invalid device target.\n"
     try:
         result = subprocess.run(["sudo", SMARTCTL_CMD, "-a", device], capture_output=True, text=True, timeout=15)
         output = result.stdout or ""
         stderr = result.stderr or ""
-        # smartctl returns non-zero codes to indicate state warnings; do not raise exception on non-zero exit code here.
         return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nExit Code: {result.returncode}\nSTDOUT:\n{output}\nSTDERR:\n{stderr}\n"
     except subprocess.TimeoutExpired:
         return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nError: Command timed out after 15 seconds.\n"
     except Exception as e:
         return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nException raised: {str(e)}\n"
-# --- END OF HARDWARE LOGGING EXTENSIONS ---
 
 def detect_interface_type(by_path_value, device, configured_type=None, smart_output=None):
     value, dev = (by_path_value or "").lower(), (device or "").lower()
@@ -410,12 +403,10 @@ def execute_erase_method(device, interface_type, method):
         if iface != "sata": return {"ok": False, "error": "secure_erase_requires_sata", "command": None, "stdout": "", "stderr": "", "exit_code": None}
         user_password = "wipestation"
 
-        # Check if security is already enabled on the drive
         security_enabled = False
         try:
             init_output = run_command([HDPARM_CMD, "-I", device])
             if init_output:
-                # Find the indented security section
                 sec_match = re.search(r"^[ \t]*Security:[ \t]*\n((?:[ \t]+.*\n?)+)", init_output, re.IGNORECASE | re.MULTILINE)
                 if not sec_match:
                     sec_match = re.search(r"security:\s*(.*?)(?:\n\s*\n|$)", init_output, re.IGNORECASE | re.DOTALL)
@@ -427,19 +418,15 @@ def execute_erase_method(device, interface_type, method):
             pass
 
         if security_enabled:
-            # Try to disable security first using our default password to return to a clean slate
             disable_res = run_destructive_command([HDPARM_CMD, "--user-master", "u", "--security-disable", user_password, device])
             if disable_res.get("ok"):
                 security_enabled = False
             else:
-                # If disabling failed (e.g. password matches but disable is blocked), 
-                # try to proceed directly to the erase command using the password.
                 erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
                 second = run_destructive_command([HDPARM_CMD, "--user-master", "u", erase_flag, user_password, device])
                 second["command"] = f"hdparm {erase_flag} (direct)"
                 return second
 
-        # Standard flow if security was not enabled or was successfully disabled
         first = run_destructive_command([HDPARM_CMD, "--user-master", "u", "--security-set-pass", user_password, device])
         if not first.get("ok"): return first
         erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
@@ -581,6 +568,107 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
         if poh < HDD_NEW_POH_THRESHOLD and fdw < 1.0 and realloc_raw == 0: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
         return {"status": "USED_HEAVY" if fdw >= 150 else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= 150 else "Used but has clean write history and moderate runtime."}
 
+# --- PROGRAMMATIC OS DRIVE DETECTION AND OVERRIDES ---
+
+def get_os_parent_device():
+    """
+    Programmatically returns the parent block device name (e.g. 'sda', 'nvme0n1') of the OS drive.
+    Uses stat on "/" and traces it back via /sys/dev/block/.
+    Includes robust fallbacks for containerized, LVM, or non-standard mounts.
+    """
+    try:
+        # Standard approach: major/minor device stat of root directory
+        st = os.stat("/")
+        major = os.major(st.st_dev)
+        minor = os.minor(st.st_dev)
+        
+        uevent_path = f"/sys/dev/block/{major}:{minor}/uevent"
+        devname = None
+        if os.path.exists(uevent_path):
+            with open(uevent_path, "r") as f:
+                for line in f:
+                    if line.startswith("DEVNAME="):
+                        devname = line.strip().split("=")[1]
+                        break
+                        
+        # Fallback 1: Run findmnt to get the mount source device node for '/'
+        if not devname:
+            try:
+                res = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "/"], capture_output=True, text=True, timeout=5)
+                if res.returncode == 0 and res.stdout.strip():
+                    src = res.stdout.strip()
+                    if src.startswith("/dev/"):
+                        devname = src[5:] # e.g. 'sda2' or 'nvme0n1p2'
+            except Exception:
+                pass
+                
+        # Fallback 2: Read /proc/mounts
+        if not devname:
+            if os.path.exists("/proc/mounts"):
+                with open("/proc/mounts", "r") as f:
+                    for line in f:
+                        parts = line.split()
+                        if len(parts) >= 2 and parts[1] == "/":
+                            src = parts[0]
+                            if src.startswith("/dev/"):
+                                devname = src[5:]
+                                break
+
+        if not devname:
+            return None
+            
+        # Helper to get parent of a leaf block device (e.g. 'sda2' -> 'sda')
+        def resolve_leaf_parent(name):
+            sys_path = f"/sys/class/block/{name}"
+            if not os.path.exists(sys_path):
+                return name
+            real_path = os.path.realpath(sys_path) # e.g. /sys/devices/.../block/sda/sda2
+            if "/block/" in real_path:
+                parts = real_path.split("/block/")
+                if len(parts) > 1:
+                    subparts = parts[1].split("/")
+                    if len(subparts) > 0:
+                        return subparts[0]
+            return name
+
+        # Handle LVM device mapper (dm-X)
+        if devname.startswith("dm-"):
+            slaves_dir = f"/sys/class/block/{devname}/slaves"
+            if os.path.isdir(slaves_dir):
+                slaves = os.listdir(slaves_dir)
+                if slaves:
+                    return resolve_leaf_parent(slaves[0])
+                    
+        return resolve_leaf_parent(devname)
+    except Exception:
+        return None
+
+def get_os_by_path():
+    """
+    Programmatically detects the /dev/disk/by-path/ address of the OS drive.
+    Returns (parent_dev_node, by_path_string) or (None, None).
+    E.g. ('/dev/sda', 'pci-0000:00:1f.2-ata-1.0')
+    """
+    parent_name = get_os_parent_device()
+    if not parent_name:
+        return None, None
+        
+    dev_node = f"/dev/{parent_name}"
+    by_path_dir = "/dev/disk/by-path/"
+    if os.path.exists(by_path_dir):
+        for entry in os.listdir(by_path_dir):
+            full_path = os.path.join(by_path_dir, entry)
+            if os.path.islink(full_path):
+                # Avoid partitions, only want the main disk path
+                if "-part" in entry:
+                    continue
+                if os.path.realpath(full_path) == os.path.realpath(dev_node):
+                    return dev_node, entry
+                    
+    return dev_node, None
+
+# --- DISCOVERY ENGINE ---
+
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     try:
         with open(bay_map_path, 'r', encoding='utf-8') as f: bay_map = json.load(f)
@@ -596,6 +684,9 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     try: passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
     except Exception: pass
 
+    # Dynamically extract active host OS physical parameters
+    os_dev_node, os_by_path = get_os_by_path()
+
     for bay_id, config in bay_map.items():
         target_path = config.get('by_path')
         bay_info = {
@@ -608,6 +699,18 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
         matched_by_path, dev_node = resolve_bay_device(target_path, path_to_dev)
         if dev_node:
             bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
+
+            # Check if this physical slot is running the operating system
+            is_os_drive = False
+            if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
+                is_os_drive = True
+            if os_by_path and (matched_by_path == os_by_path or target_path == os_by_path or os.path.basename(matched_by_path or "") == os.path.basename(os_by_path)):
+                is_os_drive = True
+
+            if is_os_drive:
+                bay_info["role"] = "os"
+                bay_info["locked"] = True
+
             if running_devices and dev_node in running_devices:
                 bay_info.update({"resolved_by_path": matched_by_path, "present": True, "device": dev_node, "status": "RUNNING", "interface_type": detect_interface_type(matched_by_path or target_path, dev_node, config.get('type'), None), "capacity_str": "Sanitizing..."})
                 results.append(bay_info); continue
@@ -637,6 +740,16 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
                     "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw")
                 }
             })
+
+            # Force complete protection overlay on host OS drive attributes
+            if is_os_drive:
+                bay_info["role"] = "os"
+                bay_info["locked"] = True
+                bay_info["supported_methods"] = []
+                bay_info["recommendation"] = {"status": "LOCKED", "comment": "Active Operating System Disk. Sanitization strictly blocked."}
+                if not bay_info["capacity_str"].endswith(" [OS]"):
+                    bay_info["capacity_str"] = f"{bay_info['capacity_str']} [OS]"
+
         else:
             bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if target_path else "missing_by_path"}
         results.append(bay_info)
