@@ -254,8 +254,33 @@ async function loadDrives(silent = false) {
     const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
-    currentDrives = Array.isArray(drives) ? drives : [];
+    
+    let fetchedDrives = Array.isArray(drives) ? drives : [];
+
+    // Safety: Merge staged bays from memory into background pollers so they are not deleted
+    if (Object.keys(localBayMapCopy).length > 0) {
+      Object.keys(localBayMapCopy).forEach(bayId => {
+        const exists = fetchedDrives.some(d => d.bay === bayId);
+        if (!exists) {
+          const conf = localBayMapCopy[bayId];
+          fetchedDrives.push({
+            bay: bayId,
+            label: conf.label,
+            role: conf.role,
+            locked: conf.locked,
+            present: false,
+            status: "EMPTY",
+            interface_type: conf.type === "nvme" ? "nvme" : "sata",
+            capacity_str: "-",
+            marker: { status: "none" }
+          });
+        }
+      });
+    }
+
+    currentDrives = fetchedDrives;
     renderBays(currentDrives);
+
     if (!silent) {
       apiStatus.textContent = "API Status: Ready";
       lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
@@ -303,7 +328,6 @@ function renderBays(drives) {
     const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const phaseLabel = drive.current_phase || "Sanitizing...";
 
-    // Dynamically append display labels adjacent to headers
     const displayLabel = drive.label && drive.label !== drive.bay ? ` (${drive.label})` : "";
 
     return `
@@ -999,28 +1023,32 @@ async function loadBayMappingConfig() {
     const unmappedDrives = await unmappedResponse.json();
     
     let html = "";
-    localBayMapCopy = {};
+    
+    // Only re-initialize from currentDrives if we do not already have configured staged keys in memory
+    if (Object.keys(localBayMapCopy).length === 0) {
+      currentDrives.forEach(drive => {
+        localBayMapCopy[drive.bay] = {
+          role: drive.role,
+          locked: drive.locked,
+          label: drive.label,
+          type: drive.interface_type === "nvme" ? "nvme" : "sas_sata",
+          by_path: drive.configured_by_path || ""
+        };
+      });
+    }
 
-    // Sort bays chronologically by extracting numerical indices
-    const sortedBayKeys = Object.keys(currentDrives.reduce((acc, d) => { acc[d.bay] = true; return acc; }, {})).sort((a, b) => {
+    // Sort active bays chronologically directly from our master staged layout copy in browser memory
+    const sortedBayKeys = Object.keys(localBayMapCopy).sort((a, b) => {
       const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
       const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
       return numA - numB;
     });
 
     sortedBayKeys.forEach(bayKey => {
-      const drive = currentDrives.find(d => d.bay === bayKey);
-      if (!drive) return;
+      const conf = localBayMapCopy[bayKey];
+      if (!conf) return;
 
-      localBayMapCopy[drive.bay] = {
-        role: drive.role,
-        locked: drive.locked,
-        label: drive.label,
-        type: drive.interface_type === "nvme" ? "nvme" : "sas_sata",
-        by_path: drive.configured_by_path || ""
-      };
-
-      const currentPath = drive.configured_by_path || "";
+      const currentPath = conf.by_path || "";
       
       let options = `<option value="">-- Unassigned / Empty --</option>`;
       if (currentPath) {
@@ -1031,19 +1059,18 @@ async function loadBayMappingConfig() {
         options += `<option value="${escapeHtml(ud.by_path)}">${escapeHtml(ud.by_path)} (${escapeHtml(ud.model)} S/N: ${escapeHtml(ud.serial)})</option>`;
       });
 
-      const lockStatusText = drive.locked ? "Locked" : "Editable";
+      const lockStatusText = conf.locked ? "Locked" : "Editable";
       
-      // Conditionally append Delete button only on non-locked bays
-      const deleteBtnHtml = drive.locked ? "" : `
-        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(drive.bay)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
+      const deleteBtnHtml = conf.locked ? "" : `
+        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayKey)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
           Delete
         </button>
       `;
 
       html += `
-        <div class="mapping-row" data-mapping-row-id="${escapeHtml(drive.bay)}">
-          <span>${escapeHtml(drive.bay.toUpperCase())}</span>
-          <select class="bay-path-select" data-bay-id="${escapeHtml(drive.bay)}" ${drive.locked ? "disabled" : ""}>
+        <div class="mapping-row" data-mapping-row-id="${escapeHtml(bayKey)}">
+          <span>${escapeHtml(bayKey.toUpperCase())}</span>
+          <select class="bay-path-select" data-bay-id="${escapeHtml(bayKey)}" ${conf.locked ? "disabled" : ""}>
             ${options}
           </select>
           <div style="display: flex; align-items: center; justify-content: flex-end; min-width: 140px;">
@@ -1066,13 +1093,11 @@ function bindDeleteBayButtons() {
     button.addEventListener("click", (event) => {
       const bayId = event.target.getAttribute("data-delete-bay-id");
       
-      // Constraint check: At least 1 active bay must always remain
       if (Object.keys(localBayMapCopy).length <= 1) {
         alert("Delete Blocked: A minimum threshold of 1 active bay configuration is required.");
         return;
       }
 
-      // Check current drives array to verify run-state status of this specific bay
       const drive = currentDrives.find(d => d.bay === bayId);
       if (drive && (String(drive.status).toUpperCase() === "RUNNING" || String(drive.status).toUpperCase() === "QUEUED")) {
         alert(`Delete Blocked: Cannot delete ${bayId.toUpperCase()} while an active or queued sanitization job is running on it.`);
@@ -1082,13 +1107,9 @@ function bindDeleteBayButtons() {
       const proceed = confirm(`Are you sure you want to stage the removal of ${bayId.toUpperCase()}?\n\nThis change will take effect only after you click 'Save Mapping Configuration'.`);
       if (!proceed) return;
 
-      // Delete locally (staged)
       delete localBayMapCopy[bayId];
-      
-      // Clean selected lists and trigger direct staged redrawing
       selectedBays.delete(bayId);
       
-      // Temporarily override the currentDrives array so re-rendering redraws the UI without the deleted card
       currentDrives = currentDrives.filter(d => d.bay !== bayId);
       renderBays(currentDrives);
       loadBayMappingConfig();
@@ -1097,14 +1118,13 @@ function bindDeleteBayButtons() {
 }
 
 addBayBtn.addEventListener("click", () => {
-  // Constraint check: Maximum 128 active bays limit safeguard
   if (Object.keys(localBayMapCopy).length >= 128) {
     alert("Add Blocked: Maximum threshold of 128 active bay configurations has been reached.");
     return;
   }
 
   const label = prompt("Enter a descriptive label for the new physical bay (e.g., shelf1_slot5):");
-  if (label === null) return; // Technician cancelled
+  if (label === null) return; 
   
   const cleanLabel = label.trim() || "Work Bay Extension";
   const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'nvme'):", "sas_sata");
@@ -1112,7 +1132,6 @@ addBayBtn.addEventListener("click", () => {
   
   const cleanType = typeSelection.trim().toLowerCase() === "nvme" ? "nvme" : "sas_sata";
 
-  // Calculate highest numeric bay key index dynamically to auto-increment sequentially
   const bayKeys = Object.keys(localBayMapCopy);
   let highestNum = 0;
   bayKeys.forEach(k => {
@@ -1124,7 +1143,6 @@ addBayBtn.addEventListener("click", () => {
   
   const nextBayId = `bay${highestNum + 1}`;
 
-  // Stage local addition
   localBayMapCopy[nextBayId] = {
     role: "wipe",
     locked: false,
@@ -1133,7 +1151,6 @@ addBayBtn.addEventListener("click", () => {
     by_path: ""
   };
 
-  // Push custom mock drive structure so the staged card shows up in Active Workbench instantly
   currentDrives.push({
     bay: nextBayId,
     label: cleanLabel,
@@ -1170,6 +1187,7 @@ saveBayMapBtn.addEventListener("click", async () => {
     
     if (response.ok) {
       alert("Mapping configurations saved successfully. Reloading workspace.");
+      localBayMapCopy = {}; // Clear memory reference so reload rebuilds fresh from updated backend JSON
       await loadDrives();
       await loadBayMappingConfig();
     } else {
