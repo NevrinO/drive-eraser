@@ -1,4 +1,3 @@
-<!-- --- START OF FILE index.html --- -->
 <!doctype html>
 <html lang="en">
 <head>
@@ -25,6 +24,7 @@
     <nav class="tabs" id="mainTabs">
       <button type="button" class="tab-button active" data-tab="workbenchPanel">Active Workbench</button>
       <button type="button" class="tab-button" data-tab="auditPanel">Compliance Audit Vault</button>
+      <button type="button" class="tab-button" data-tab="adminPanel">System Administration</button>
     </nav>
 
     <!-- TAB A: WORKBENCH -->
@@ -69,6 +69,94 @@
       <div id="historyList" class="audit-vault-list"></div>
     </section>
 
+    <!-- TAB C: SYSTEM ADMINISTRATION -->
+    <section id="adminPanel" class="tab-panel">
+      <div class="admin-grid">
+        
+        <!-- Zone A: Host Health Monitor -->
+        <div class="admin-card">
+          <div class="card-title">Host Health & Resource Monitor</div>
+          <div class="admin-metrics">
+            <div class="metric-row">
+              <span class="metric-label">OS Disk Space</span>
+              <div class="progress-bar-container">
+                <div id="metricDiskBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+              </div>
+              <span id="metricDiskText" class="metric-value">0%</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">RAM Usage</span>
+              <div class="progress-bar-container">
+                <div id="metricRamBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+              </div>
+              <span id="metricRamText" class="metric-value">0%</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">CPU Utilization</span>
+              <div class="progress-bar-container">
+                <div id="metricCpuBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+              </div>
+              <span id="metricCpuText" class="metric-value">0%</span>
+            </div>
+            <div class="metric-row">
+              <span class="metric-label">System Uptime</span>
+              <span id="metricUptimeText" class="metric-value-static">Unknown</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Zone B: Connectivity & Webhook Testing -->
+        <div class="admin-card">
+          <div class="card-title">Network & Alerts Integration</div>
+          <p class="admin-desc">Verify background system alerts and active configurations.</p>
+          <div class="kv">
+            <span>Alert Target:</span>
+            <span>Slack Notification Webhook</span>
+          </div>
+          <button type="button" id="testWebhookBtn" class="btn-primary" style="margin-top: 12px; width: 100%;">Test Alert Notification</button>
+          <div id="webhookTestResult" class="test-result-label hidden"></div>
+        </div>
+
+        <!-- Zone C: Bulk Exports -->
+        <div class="admin-card">
+          <div class="card-title">Bulk Exports & Diagnostics</div>
+          <p class="admin-desc">Download complete historic ledgers or compile raw troubleshooting logs.</p>
+          <div class="button-stack">
+            <button type="button" id="exportCsvBtn" class="btn-primary" style="width: 100%; margin-bottom: 8px;">Export Historic CSV Ledger</button>
+            <button type="button" id="downloadBundleBtn" class="btn-secondary" style="width: 100%;">Download Support Bundle (.tar.gz)</button>
+          </div>
+        </div>
+
+        <!-- Zone D: Interactive Bay Mapping -->
+        <div class="admin-card" style="grid-column: span 2;">
+          <div class="card-title">Interactive Physical Bay Mapping</div>
+          <p class="admin-desc">Correlate physical workstation slots with backend device disk-by-path references.</p>
+          
+          <div id="bayMappingContainer" class="bay-mapping-list">
+            <!-- Populated dynamically via javascript -->
+          </div>
+
+          <div style="margin-top: 16px;">
+            <button type="button" id="saveBayMapBtn" class="btn-primary">Save Mapping Configuration</button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+  </div>
+
+  <!-- NETWORK AUTHENTICATION OVERLAY -->
+  <div id="authOverlay" class="auth-overlay hidden">
+    <div class="auth-dialog">
+      <h2>Remote Network Access Required</h2>
+      <p>Please enter the administrator passphrase configured in policy.json to interact with this station.</p>
+      <form id="authForm">
+        <input type="password" id="authPassphrase" placeholder="Passphrase" autocomplete="current-password">
+        <button type="submit" class="btn-primary" style="margin-top: 12px; width: 100%;">Verify Passphrase</button>
+      </form>
+      <div id="authErrorMsg" class="auth-error hidden">Invalid passphrase. Access denied.</div>
+    </div>
   </div>
 
   <!-- SANITIZATION CONFIGURATION MODAL -->
@@ -124,4 +212,3 @@
   <script src="/app.js"></script>
 </body>
 </html>
-<!-- --- END OF FILE index.html --- -->

@@ -1,0 +1,237 @@
+***
+
+# Technical Implementation Specification: Diagnostics, Logging, Security, & Bay Mapping
+
+This document provides a comprehensive technical blueprint to implement a **Hybrid Logging Subsystem**, a **Localhost-Bypassed Network Security Gate**, a **Support Bundle Compiler**, and an **Interactive Admin/Diagnostics Panel (Tab 3)** on the Drive Sanitization Station (running on Ubuntu 26.04).
+
+---
+
+## 1. Directory Structure Additions & Requirements
+
+To prevent configuration drift, ensure the local storage layout on the host is explicitly updated. The application data directory (`/opt/drive-eraser/data`) must be structured as follows:
+
+```text
+/opt/drive-eraser/
+├── data/
+│   ├── wipes.db                  # SQLite database
+│   ├── certs/                    # JSON/HTML certificates
+│   └── logs/                     # [NEW] Root logs directory
+│       ├── app.log               # [NEW] Global INFO-level application output
+│       ├── active/               # [NEW] Ephemeral logs for running jobs (e.g., job-124.log)
+│       └── failed/               # [NEW] Post-mortem logs for failed jobs (e.g., failed-job-124-bay3.log)
+└── config/
+    ├── policy.json               # Updated to include "lan_passphrase"
+    └── bay_map.json              # Write-enabled from UI
+```
+
+---
+
+## 2. Core Feature Architectures
+
+### Feature A: Hybrid Logging Subsystem & Auto-Purge
+
+#### 1. Global Application Log (`app.log`)
+*   Operates at `INFO` level.
+*   Captures high-level events (web server requests, database writes, thread spawn actions, errors).
+*   Managed via Python’s native `logging.handlers.RotatingFileHandler` to limit maximum size (e.g., 10MB limit with 3 backups) to protect host storage space.
+
+#### 2. Job-Specific Ephemeral Logs (`/data/logs/active/job-{job_id}.log`)
+*   When a sanitization job is spawned, a unique, unbuffered log file is opened in the `active/` directory.
+*   During execution, the standard outputs (`stdout` and `stderr`) of external CLI utilities (`dd`, `smartctl`, `nvme-cli`, `hdparm`, etc.) are redirected directly to this file descriptor.
+*   This isolates high-volume progress noise and error details, keeping RAM usage entirely flat and preserving data in the event of an unexpected power cycle.
+
+#### 3. Post-Mortem Failed Logs (`/data/logs/failed/failed-job-{job_id}-bay{bay_id}.log`)
+*   If a job completes successfully, its ephemeral active log is deleted.
+*   If a job fails:
+    1. The active log file is closed.
+    2. It is moved to the `/data/logs/failed/` directory and renamed.
+    3. The backend immediately appends a distinct diagnostic section containing the final parsed **SMART Attributes** of the drive (queried via `smartctl` [1, 5]) and the failing subprocess's exit code.
+
+#### 4. Automatic Log Retention Cleanup
+*   **Trigger:** Synchronously executed at the conclusion of every job (either upon successful completion or inside the finalization step of a failed job).
+*   **Logic:** A clean-up routine iterates through files in `/data/logs/` (including the subdirectories `active/` and `failed/`). Any log file with a modification time (`os.path.getmtime`) older than 30 days is permanently purged.
+
+---
+
+### Feature B: Localhost-Bypassed Network Security Gate
+
+To balance local warehouse usability with network security, the application enforces a security gate based on the client IP address.
+
+```text
+                   +---------------------------+
+                   | Incoming API / Page HTTP  |
+                   +---------------------------+
+                                 |
+                     Is Client IP Localhost?
+                     (127.0.0.1 or ::1)
+                               /   \
+                             YES    NO
+                             /        \
+          +-----------------------+   +---------------------------------------+
+          | BYPASS AUTHENTICATION |   | Check for Valid Session Token/Cookie  |
+          |  (Allow full access)  |   +---------------------------------------+
+          +-----------------------+                 /           \
+                                                 VALID        INVALID
+                                                 /                 \
+                               +---------------------+     +--------------------------+
+                               | ALLOW SECURE ACCESS |     | Return 401 Unauthorized  |
+                               +---------------------+     |   (Render Auth Overlay)  |
+                                                           +--------------------------+
+```
+
+#### 1. Passphrase Storage
+*   The passphrase is saved under the `"lan_passphrase"` key inside `/opt/drive-eraser/config/policy.json`.
+*   The default state during installation should be configured to a known default (e.g., `"eraser123"`) and must be user-customizable.
+
+#### 2. Authentication Flow
+*   The Flask app evaluates the `request.remote_addr` for every incoming API and static asset request.
+*   If `request.remote_addr` is not in `('127.0.0.1', '::1')`:
+    *   It checks for the presence of a secure, cryptographically signed cookie (e.g., `session_id`) or an `Authorization` bearer token.
+    *   If missing or invalid, Flask returns a `401 Unauthorized` status code with JSON: `{"authenticated": false, "message": "Authentication required for network access"}`.
+*   **Frontend Behavior:** 
+    *   Upon receiving a `401` status from any fetch call, the frontend displays a fullscreen modal overlay blocking access to the tabs.
+    *   The user inputs the passphrase, which is POSTed to `/api/auth/verify`.
+    *   On success, the backend sets the secure cookie, and the frontend removes the overlay.
+
+---
+
+### Feature C: On-Demand Support Bundle Compiler
+
+A utility compiling a comprehensive snapshot of the host station's status to easily send to engineering for debugging.
+
+#### 1. Metadata Generation
+When triggered, the backend runs system tools via `subprocess` to generate static files in an ephemeral `/tmp` workspace:
+*   `hardware_environment.txt`: Collects outputs of `lsblk -J` (block device geometries) and `lshw -class storage -class disk` (host adapter/bus structures) [1, 2].
+*   `system_metrics.txt`: Summarizes current physical memory, CPU load, and host partition disk space.
+*   `redacted_policy.json`: A copied, filtered output of `/config/policy.json` where any keys, tokens, webhooks, or passphrases are overwritten with `"[REDACTED]"`.
+
+#### 2. Compiling the Archive
+*   The compiler grabs the current `app.log`, all files inside `/data/logs/failed/`, and the newly generated diagnostic text files.
+*   These are compressed into a single tarball named with the pattern: `support-bundle-{hostname}-{timestamp}.tar.gz`.
+*   The file is streamed directly to the requesting client's browser (Option A) as an immediate file download, then deleted from `/tmp`.
+
+---
+
+### Feature D: System Diagnostics & Admin UI (Tab 3)
+
+The UI will expose a new Tab 3 labeled **"System Administration"**. This tab contains four functional zones:
+
+#### Zone A: Host Health Monitor
+*   Uses standard HTTP polling (e.g., every 15 seconds) against a backend endpoint `/api/admin/metrics`.
+*   Renders horizontal progress bars indicating:
+    *   Host Disk Space utilization.
+    *   RAM consumption.
+    *   CPU utilization percentage.
+    *   System uptime since boot.
+
+#### Zone B: Connectivity & Alerts Testing
+*   Displays the active IP interfaces of the system.
+*   Provides a button labeled **"Test Slack Integration"**. Clicking it issues a POST to `/api/admin/test-webhook`. The backend sends a structured test notification to the configured webhook in `policy.json` and returns the exact HTTP response or connection error to show in the UI.
+
+#### Zone C: Bulk Exports
+*   **"Export CSV Ledger"**: Resolves all historical records from `wipes.db` and downloads them as a formatted CSV file.
+*   **"Download Diagnostic Bundle"**: Calls the support bundle compiler and streams the resulting `.tar.gz` archive.
+
+#### Zone D: Interactive Bay Mapping Utility
+This section visualizes and updates `/opt/drive-eraser/config/bay_map.json`.
+
+```text
++-----------------------------------------------------------------------------------+
+|  INTERACTIVE BAY MAPPING                                                          |
++-----------------------------------------------------------------------------------+
+|  Configure Physical Bays to OS paths:                                             |
+|                                                                                   |
+|  Bay 1: [/dev/disk/by-path/pci-0000:00:17.0-ata-1]  (Connected: Samsung EVO 1TB)   |
+|  Bay 2: [Unassigned / Select from list...] v                                      |
+|                                                                                   |
+|  Unmapped Devices Detected:                                                       |
+|  * [pci-0000:00:17.0-ata-3] - Crucial MX500 500GB (Serial: 1948E23B19A)            |
+|                                                                                   |
+|  [Save Bay Configuration]                                                         |
++-----------------------------------------------------------------------------------+
+```
+
+1.  **Backend Scan:** A utility parses connected hardware paths (via `/dev/disk/by-path/` links) and compares them against the current `bay_map.json` configurations.
+2.  **Mapping UI:**
+    *   Lists all defined Bays and their assigned paths. If a drive is connected to that path, it displays its Model, Serial, and Capacity.
+    *   Displays a dropdown of unmapped, physically connected drives (showing their raw physical paths and drive identities).
+3.  **Hot Reload Saving:** When the user clicks "Save Bay Configuration", the frontend POSTs the updated key-value map to `/api/admin/save-bay-map`. The backend performs basic validation, writes to `/opt/drive-eraser/config/bay_map.json`, and triggers a config reload inside the running application.
+
+---
+
+## 3. Detailed Technical File-by-File Blueprint
+
+To implement these features, the future AI developer should apply modifications to the following files:
+
+### 1. `backend/common.py`
+*   **Add Path Resolvers:** 
+    *   Implement functions `get_logs_dir()`, `get_active_logs_dir()`, and `get_failed_logs_dir()`.
+    *   Ensure they create the directories on startup if they do not exist.
+*   **Update Configuration Schema:** Ensure the policy loader reads and validates `"lan_passphrase"`.
+
+### 2. `backend/disk_ops.py`
+*   **Add Raw SMART Capture:**
+    *   Implement a function `get_raw_smart_diagnostics(dev_path)` that runs `sudo smartctl -a {dev_path}` [1, 5].
+    *   Ensure it gracefully handles devices that do not support SMART commands or are in an unresponsive state.
+
+### 3. `backend/app.py`
+*   **Implement Localhost Verification Middleware:**
+    *   Create a `@app.before_request` hook.
+    *   Determine if `request.remote_addr` is local. If local, skip authentication.
+    *   If remote, verify the presence of a secure cookie or token. Bypass auth only for static assets needed to render the Auth page (e.g., UI layout files, basic CSS), but block all API routes with a `401` status.
+*   **Create Auth Verification Route:**
+    *   `POST /api/auth/verify`: Accepts `{"passphrase": "..."}`. Checks against the value in `policy.json`. Sets a secure HTTP-only cookie on success.
+*   **Create Diagnostic Routes:**
+    *   `GET /api/admin/metrics`: Uses Python libraries (like `psutil` or reading `/proc`) to retrieve memory, CPU, and disk space details.
+    *   `POST /api/admin/test-webhook`: Invokes the alert dispatcher to send a dummy notification and returns the result.
+    *   `GET /api/admin/export-csv`: Queries SQLite, formats past wipes into CSV bytes, and streams with `content-disposition: attachment`.
+    *   `GET /api/admin/support-bundle`: Triggers the temporary compilation of logs/diagnostics and streams the tarball.
+    *   `GET /api/admin/unmapped-drives`: Scans `/dev/disk/by-path/`, identifies active drives, subtracts mapped devices, and returns the list of unmapped identities.
+    *   `POST /api/admin/save-bay-map`: Overwrites the contents of `bay_map.json` and invokes a reload mechanism.
+*   **Update Thread Management (Wipe Job Lifecycle):**
+    *   Modify `run_erase_job()` to instantiate a direct log file in `data/logs/active/job-{job_id}.log`.
+    *   When running external subprocesses via `subprocess.Popen`, pass the log file's file descriptor as the `stdout` and `stderr` targets.
+    *   Update `finalize_failed_job()` to close the active log, move it to `data/logs/failed/`, and append the raw SMART diagnostics payload.
+    *   Add a call to the retention cleaner at the end of every success/failure lifecycle to delete logs older than 30 days.
+
+### 4. `frontend/index.html`
+*   **Update Navigation Layout:**
+    *   Add a third tab selection button: `<button id="tab-admin" class="tab-btn">System Administration</button>` (Ensure existing tabs are untouched).
+*   **Add Tab 3 Panel UI:**
+    *   Create a corresponding `<div id="panel-admin" class="tab-panel hidden">` section.
+    *   Define layout grids or cards for:
+        1. **System Health Card:** CPU, RAM, and Disk capacity meters.
+        2. **Notification & Integrations Card:** IP Address, Webhook test status, and "Test Alert" button.
+        3. **Reports & Diagnostics Card:** Buttons for CSV Export and Support Bundle Download.
+        4. **Interactive Bay Configuration Table:** Dynamic rows mapped to bays, dropdown lists to assign unmapped devices, and a "Save Bay Configuration" button.
+*   **Authentication Overlay:**
+    *   Add a hidden fullscreen div container `<div id="auth-overlay" class="hidden">` with a passcode input field and an "Enter" button.
+
+### 5. `frontend/app.js`
+*   **Manage Security Gate Interception:**
+    *   In the global fetch wrapper, intercept any `401 Unauthorized` responses.
+    *   If a `401` is caught, render the `#auth-overlay`, block dashboard UI interactions, and focus on the passcode input.
+    *   Implement an event handler for the `#auth-overlay` submission. On success, hide the overlay and re-trigger the initial UI loader.
+*   **Tab Switching Logic:**
+    *   Ensure the tab state machine is updated to show/hide the third panel cleanly adjacent to the current views.
+*   **System Diagnostics Polling:**
+    *   Implement a poll function (e.g., every 15 seconds) that fetches `/api/admin/metrics` only when Tab 3 is active to reduce background network traffic.
+*   **Bay Mapping Logic:**
+    *   Implement functions to fetch unmapped drives, populate dropdown selectors, dynamically construct the current bay assignment forms, and POST changes to the backend mapping API.
+
+### 6. `scripts/install.sh`
+*   **Append Sudo Permissions:**
+    *   Configure the script to write customized entries into `/etc/sudoers.d/drive-eraser` so the non-root execution user can invoke key system tools safely:
+        ```text
+        drive-eraser ALL=(ALL) NOPASSWD: /usr/bin/lsblk
+        drive-eraser ALL=(ALL) NOPASSWD: /usr/sbin/lshw
+        drive-eraser ALL=(ALL) NOPASSWD: /usr/sbin/smartctl
+        drive-eraser ALL=(ALL) NOPASSWD: /usr/bin/systemctl status drive-eraser
+        ```
+
+### 7. `scripts/export-logs.sh` (The CLI Fallback)
+*   Create a standalone Shell script inside the `/scripts` directory.
+*   If executed locally (via terminal or SSH fallback), it reads paths and configurations natively, gathers `/var/log/syslog` patterns or the systemd journal logs, copies `/opt/drive-eraser/data/logs/failed/`, generates health details, redacts `/opt/drive-eraser/config/policy.json`, and outputs the same `support-bundle-{hostname}-{timestamp}.tar.gz` directly into the current directory (or onto a detected, mounted USB device).
+
+***
+

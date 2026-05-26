@@ -21,8 +21,10 @@ INSTALL_DIR="/opt/drive-eraser"
 SERVICE_NAME="drive-eraser"
 PYTHON_BIN="python3"
 VENV_DIR="$INSTALL_DIR/venv"
-LOG_DIR="$INSTALL_DIR/logs"
 DATA_DIR="$INSTALL_DIR/data"
+LOG_DIR="$DATA_DIR/logs"
+ACTIVE_LOG_DIR="$LOG_DIR/active"
+FAILED_LOG_DIR="$LOG_DIR/failed"
 CERT_DIR="$DATA_DIR/certs"
 DB_PATH="$DATA_DIR/wipes.db"
 CONFIG_DIR="$INSTALL_DIR/config"
@@ -35,6 +37,8 @@ SG_SANITIZE_PATH=""
 SG_INQ_PATH=""
 DD_PATH=""
 LSBLK_PATH=""
+LSHW_PATH=""
+SYSTEMCTL_PATH=""
 WIPE_PASSPHRASE=""
 
 # Colors for output
@@ -79,6 +83,8 @@ resolve_command_paths() {
     SG_INQ_PATH="$(find_cmd_path sg_inq)"
     DD_PATH="$(find_cmd_path dd)"
     LSBLK_PATH="$(find_cmd_path lsblk)"
+    LSHW_PATH="$(find_cmd_path lshw)"
+    SYSTEMCTL_PATH="$(find_cmd_path systemctl)"
 
     success "Command paths resolved."
 }
@@ -95,7 +101,9 @@ write_command_paths_config() {
   "sg_sanitize": "$SG_SANITIZE_PATH",
   "sg_inq": "$SG_INQ_PATH",
   "dd": "$DD_PATH",
-  "lsblk": "$LSBLK_PATH"
+  "lsblk": "$LSBLK_PATH",
+  "lshw": "$LSHW_PATH",
+  "systemctl": "$SYSTEMCTL_PATH"
 }
 EOF
 
@@ -145,6 +153,7 @@ install_packages() {
         hdparm \
         curl \
         util-linux \
+        lshw \
         rsync
 
     success "System packages installed."
@@ -204,7 +213,7 @@ prompt_passphrase() {
         echo -e "${YELLOW}================================================================${NC}"
         echo -e "  Entering a passphrase enables cryptographic marker signing (HMAC-SHA256)."
         echo -e "  Other workstations sharing this passphrase can verify the authenticity"
-        echo -e "  of your drive wipes. Leave blank to skip (Unauthenticated State 4)."
+        echo -e "  of your drive wipes. Leave blank to skip (Unauthenticated State)."
         echo ""
 
         local pass=""
@@ -329,7 +338,8 @@ data = {
   'port': 5000,
   'bind_address': '127.0.0.1',
   'station_id': 'wipe-station-01',
-  'wipe_passphrase': os.environ.get('WIPE_PASSPHRASE', '')
+  'wipe_passphrase': os.environ.get('WIPE_PASSPHRASE', ''),
+  'lan_passphrase': 'eraser123'
 }
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
@@ -349,6 +359,8 @@ setup_directories() {
     info "Creating data and log directories..."
 
     mkdir -p "$LOG_DIR"
+    mkdir -p "$ACTIVE_LOG_DIR"
+    mkdir -p "$FAILED_LOG_DIR"
     mkdir -p "$DATA_DIR"
     mkdir -p "$CERT_DIR"
 
@@ -415,6 +427,8 @@ $APP_USER ALL=(root) NOPASSWD: $SG_SANITIZE_PATH
 $APP_USER ALL=(root) NOPASSWD: $SG_INQ_PATH
 $APP_USER ALL=(root) NOPASSWD: $DD_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSBLK_PATH
+$APP_USER ALL=(root) NOPASSWD: $LSHW_PATH
+$APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH
 EOF
 
     chmod 440 "$TMP_SUDOERS_FILE"
@@ -499,7 +513,7 @@ print_summary() {
     echo ""
     echo -e "  App location:   ${BLUE}$INSTALL_DIR${NC}"
     echo -e "  Config:         ${BLUE}$CONFIG_DIR${NC}"
-    echo -e "  Logs:         ${BLUE}$LOG_DIR${NC}"
+    echo -e "  Logs:           ${BLUE}$LOG_DIR${NC}"
     echo -e "  Certificates:   ${BLUE}$CERT_DIR${NC}"
     echo ""
     echo -e "  Service status: ${BLUE}systemctl status $SERVICE_NAME${NC}"

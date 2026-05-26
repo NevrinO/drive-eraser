@@ -1,4 +1,3 @@
-// --- START OF FILE frontend/app.js ---
 const baysGrid = document.getElementById("baysGrid");
 const refreshButton = document.getElementById("refreshButton");
 const apiStatus = document.getElementById("apiStatus");
@@ -28,11 +27,35 @@ const historyQuery = document.getElementById("historyQuery");
 const historyStatusFilter = document.getElementById("historyStatusFilter");
 const historyRefreshButton = document.getElementById("historyRefreshButton");
 
+// Admin Panel Elements
+const testWebhookBtn = document.getElementById("testWebhookBtn");
+const webhookTestResult = document.getElementById("webhookTestResult");
+const exportCsvBtn = document.getElementById("exportCsvBtn");
+const downloadBundleBtn = document.getElementById("downloadBundleBtn");
+const bayMappingContainer = document.getElementById("bayMappingContainer");
+const saveBayMapBtn = document.getElementById("saveBayMapBtn");
+
+// Metric Elements
+const metricDiskBar = document.getElementById("metricDiskBar");
+const metricDiskText = document.getElementById("metricDiskText");
+const metricRamBar = document.getElementById("metricRamBar");
+const metricRamText = document.getElementById("metricRamText");
+const metricCpuBar = document.getElementById("metricCpuBar");
+const metricCpuText = document.getElementById("metricCpuText");
+const metricUptimeText = document.getElementById("metricUptimeText");
+
+// Auth Overlay Elements
+const authOverlay = document.getElementById("authOverlay");
+const authForm = document.getElementById("authForm");
+const authPassphrase = document.getElementById("authPassphrase");
+const authErrorMsg = document.getElementById("authErrorMsg");
+
 let currentDrives = [];
 let currentHistoryJobs = [];
 let selectedBays = new Set();
 let isBatchMode = false;
 let ledgerExpandedJobs = new Set(); 
+let localBayMapCopy = {};
 
 const POLL_INTERVAL_MS = 2000;
 const METHOD_ORDER = ["crypto", "block", "enhanced_secure_erase", "secure_erase", "overwrite"];
@@ -165,10 +188,64 @@ function calculateDriveHealthScore(drive) {
   return Math.max(0, Math.min(100, Math.round(health)));
 }
 
+// --- GATEWAY AUTH SECURITY CONTROLLERS ---
+
+async function safeFetch(url, options = {}) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    // Exclude the verify hook itself to prevent recursive loop blocks
+    if (!url.includes("/api/auth/verify")) {
+      showAuthOverlay();
+      throw new Error("Authorization Required");
+    }
+  }
+  return response;
+}
+
+function showAuthOverlay() {
+  authOverlay.classList.remove("hidden");
+  authPassphrase.focus();
+}
+
+function hideAuthOverlay() {
+  authOverlay.classList.add("hidden");
+  authErrorMsg.classList.add("hidden");
+  authPassphrase.value = "";
+}
+
+authForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const passphrase = authPassphrase.value;
+  try {
+    const response = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ passphrase })
+    });
+    if (response.ok) {
+      hideAuthOverlay();
+      loadSecurityStatus();
+      loadDrives();
+    } else {
+      authErrorMsg.classList.remove("hidden");
+    }
+  } catch (err) {
+    authErrorMsg.classList.remove("hidden");
+  }
+});
+
+
 // Unconditional async poller for running status updates
 async function pollActiveWipes() {
   while (true) {
     await loadDrives(true); 
+    
+    // Also poll admin metrics if tab is currently focused
+    const adminTab = document.querySelector('[data-tab="adminPanel"]');
+    if (adminTab && adminTab.classList.contains("active")) {
+      await loadAdminMetrics();
+    }
+    
     await sleep(POLL_INTERVAL_MS);
   }
 }
@@ -176,7 +253,7 @@ async function pollActiveWipes() {
 async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
-    const response = await fetch("/api/drives");
+    const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
     currentDrives = Array.isArray(drives) ? drives : [];
@@ -322,7 +399,6 @@ openBatchWipeModalBtn.addEventListener("click", () => {
 });
 
 function renderBatchModalForm() {
-  // Clear any stale inputs from previous wipe sessions to ensure fresh audit entry
   const techInput = document.getElementById("technician");
   const ticketInput = document.getElementById("ticketNumber");
   if (techInput) techInput.value = "";
@@ -406,7 +482,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
   });
 
   try {
-    const response = await fetch("/api/erase/start", {
+    const response = await safeFetch("/api/erase/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
@@ -424,10 +500,8 @@ batchEraseForm.addEventListener("submit", async (event) => {
     selectedBays.clear();
     batchActionFooter.classList.add("hidden");
     
-    // Instantly confirm initiation to the operator
     alert("Sanitization batch successfully initiated.");
     
-    // Refresh background statuses asynchronously
     loadDrives();
     loadHistoryIndex();
   } catch (err) {
@@ -438,7 +512,6 @@ batchEraseForm.addEventListener("submit", async (event) => {
 function renderLiveDetails(drive) {
   if (!drive) return;
   
-  // Clean separation of operational state from hardware health (Option A)
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
   const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
@@ -498,7 +571,6 @@ function renderLiveDetails(drive) {
   const pending = smart.pending_sectors ?? 0;
   const interfaceErrors = smart.interface_errors ?? 0;
 
-  // SMART Health Evaluation: Clean separation of physical health from wipe state
   let smartHealthText = "SMART: PASSED";
   let smartHealthClass = "status-complete";
   if (drive.health_score <= 40 || (opStatusText === "FAILED" && !drive.marker)) {
@@ -506,7 +578,6 @@ function renderLiveDetails(drive) {
     smartHealthClass = "status-failed";
   }
 
-  // Standardize remaining wear level conditional math across drive interfaces
   let remainingLife = "N/A";
   if (smart.wear_level !== null) {
     const iface = String(drive.interface_type || "").toLowerCase();
@@ -569,6 +640,9 @@ mainTabs.addEventListener("click", (event) => {
   
   if (btn.dataset.tab === "auditPanel") {
     loadHistoryIndex();
+  } else if (btn.dataset.tab === "adminPanel") {
+    loadAdminMetrics();
+    loadBayMappingConfig();
   }
 });
 
@@ -576,7 +650,7 @@ async function loadHistoryIndex() {
   const query = historyQuery.value.trim();
   const filter = historyStatusFilter.value;
   try {
-    const response = await fetch(`/api/erase/history?query=${encodeURIComponent(query)}&limit=100`);
+    const response = await safeFetch(`/api/erase/history?query=${encodeURIComponent(query)}&limit=100`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const data = await response.json();
     currentHistoryJobs = Array.isArray(data?.jobs) ? data.jobs : [];
@@ -762,7 +836,6 @@ function triggerCertDownload(friendlyId, format) {
   anchor.click();
 }
 
-// Fixed print window pipeline to synchronously launch blank popup within gesture loop
 async function openPrintWindow(friendlyId) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
@@ -785,11 +858,10 @@ async function openPrintWindow(friendlyId) {
   printWindow.document.close();
 
   try {
-    const response = await fetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
+    const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    // Inject active data and focus for OS print driver rendering
     printWindow.document.open();
     printWindow.document.write(htmlContent);
     printWindow.document.close();
@@ -838,7 +910,7 @@ async function loadSecurityStatus() {
   const badge = document.getElementById("securityBadge");
   if (!badge) return;
   try {
-    const response = await fetch("/api/status");
+    const response = await safeFetch("/api/status");
     if (!response.ok) throw new Error();
     const data = await response.json();
     if (data.passphrase_enabled) {
@@ -853,6 +925,151 @@ async function loadSecurityStatus() {
     badge.className = "reliability-badge unsecured";
   }
 }
+
+
+// --- ADMIN PANEL HANDLERS & BINDINGS ---
+
+async function loadAdminMetrics() {
+  const adminTab = document.querySelector('[data-tab="adminPanel"]');
+  if (!adminTab || !adminTab.classList.contains("active")) return;
+  
+  try {
+    const response = await safeFetch("/api/admin/metrics");
+    if (!response.ok) throw new Error();
+    const data = await response.json();
+    
+    metricDiskBar.style.width = `${data.disk_pct}%`;
+    metricDiskText.textContent = `${data.disk_pct}% (${data.disk_str})`;
+    
+    metricRamBar.style.width = `${data.ram_pct}%`;
+    metricRamText.textContent = `${data.ram_pct}%`;
+    
+    metricCpuBar.style.width = `${data.cpu_pct}%`;
+    metricCpuText.textContent = `${data.cpu_pct}%`;
+    
+    metricUptimeText.textContent = data.uptime;
+  } catch (err) {
+    // Suppress console alerts on background poll failures
+  }
+}
+
+testWebhookBtn.addEventListener("click", async () => {
+  testWebhookBtn.disabled = true;
+  testWebhookBtn.textContent = "Testing...";
+  webhookTestResult.classList.add("hidden");
+  
+  try {
+    const response = await safeFetch("/api/admin/test-webhook", { method: "POST" });
+    const data = await response.json();
+    webhookTestResult.classList.remove("hidden");
+    if (response.ok) {
+      webhookTestResult.className = "test-result-label test-result-success";
+      webhookTestResult.textContent = data.message || "Test Notification Sent!";
+    } else {
+      webhookTestResult.className = "test-result-label test-result-error";
+      webhookTestResult.textContent = `Failure: ${data.error || "Unknown response"}`;
+    }
+  } catch (err) {
+    webhookTestResult.classList.remove("hidden");
+    webhookTestResult.className = "test-result-label test-result-error";
+    webhookTestResult.textContent = `Error: ${err.message}`;
+  } finally {
+    testWebhookBtn.disabled = false;
+    testWebhookBtn.textContent = "Test Alert Notification";
+  }
+});
+
+exportCsvBtn.addEventListener("click", () => {
+  window.location.href = "/api/admin/export-csv";
+});
+
+downloadBundleBtn.addEventListener("click", () => {
+  window.location.href = "/api/admin/support-bundle";
+});
+
+async function loadBayMappingConfig() {
+  try {
+    const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+    if (!unmappedResponse.ok) throw new Error();
+    const unmappedDrives = await unmappedResponse.json();
+    
+    let html = "";
+    localBayMapCopy = {};
+
+    currentDrives.forEach(drive => {
+      // Reconstruct local configurations map
+      localBayMapCopy[drive.bay] = {
+        role: drive.role,
+        locked: drive.locked,
+        label: drive.label,
+        type: drive.interface_type === "nvme" ? "nvme" : "sas_sata",
+        by_path: drive.configured_by_path || ""
+      };
+
+      const currentPath = drive.configured_by_path || "";
+      
+      let options = `<option value="">-- Unassigned / Empty --</option>`;
+      if (currentPath) {
+        options += `<option value="${escapeHtml(currentPath)}" selected>${escapeHtml(currentPath)} (Current)</option>`;
+      }
+      
+      unmappedDrives.forEach(ud => {
+        options += `<option value="${escapeHtml(ud.by_path)}">${escapeHtml(ud.by_path)} (${escapeHtml(ud.model)} S/N: ${escapeHtml(ud.serial)})</option>`;
+      });
+
+      const lockStatusText = drive.locked ? "Locked" : "Editable";
+
+      html += `
+        <div class="mapping-row">
+          <span>${escapeHtml(drive.bay.toUpperCase())}</span>
+          <select class="bay-path-select" data-bay-id="${escapeHtml(drive.bay)}" ${drive.locked ? "disabled" : ""}>
+            ${options}
+          </select>
+          <small style="font-size: 0.7rem; color: #888; min-width: 60px; text-align: right;">${lockStatusText}</small>
+        </div>
+      `;
+    });
+
+    bayMappingContainer.innerHTML = html;
+  } catch (err) {
+    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
+  }
+}
+
+saveBayMapBtn.addEventListener("click", async () => {
+  saveBayMapBtn.disabled = true;
+  saveBayMapBtn.textContent = "Saving...";
+  
+  try {
+    document.querySelectorAll(".bay-path-select").forEach(select => {
+      const bayId = select.getAttribute("data-bay-id");
+      if (localBayMapCopy[bayId]) {
+        localBayMapCopy[bayId].by_path = select.value;
+      }
+    });
+    
+    const response = await safeFetch("/api/admin/save-bay-map", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(localBayMapCopy)
+    });
+    
+    if (response.ok) {
+      alert("Mapping configurations saved successfully. Reloading workspace.");
+      await loadDrives();
+      await loadBayMappingConfig();
+    } else {
+      const data = await response.json();
+      alert(`Save Failed: ${data.error || "Unknown response"}`);
+    }
+  } catch (err) {
+    alert(`Error: ${err.message}`);
+  } finally {
+    saveBayMapBtn.disabled = false;
+    saveBayMapBtn.textContent = "Save Mapping Configuration";
+  }
+});
+
 
 (async () => {
   await loadSecurityStatus();

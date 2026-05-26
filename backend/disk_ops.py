@@ -318,6 +318,26 @@ def get_smart_data(device, diagnostics=None):
         "data_read_raw": read_raw, "data_read_bytes": read_bytes, "raw": raw_output, "rotation_rate": rotation_rate
     }
 
+# --- START OF HARDWARE LOGGING EXTENSIONS ---
+def get_raw_smart_diagnostics(device):
+    """
+    Executes standard plain-text smartctl query on the target device
+    to get raw drive health attributes for failed post-mortem logging.
+    """
+    if not SMARTCTL_CMD or not device:
+        return "SMARTCTL command not resolved or invalid device target.\n"
+    try:
+        result = subprocess.run(["sudo", SMARTCTL_CMD, "-a", device], capture_output=True, text=True, timeout=15)
+        output = result.stdout or ""
+        stderr = result.stderr or ""
+        # smartctl returns non-zero codes to indicate state warnings; do not raise exception on non-zero exit code here.
+        return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nExit Code: {result.returncode}\nSTDOUT:\n{output}\nSTDERR:\n{stderr}\n"
+    except subprocess.TimeoutExpired:
+        return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nError: Command timed out after 15 seconds.\n"
+    except Exception as e:
+        return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nException raised: {str(e)}\n"
+# --- END OF HARDWARE LOGGING EXTENSIONS ---
+
 def detect_interface_type(by_path_value, device, configured_type=None, smart_output=None):
     value, dev = (by_path_value or "").lower(), (device or "").lower()
     smart_hint = classify_interface_from_smart(smart_output)

@@ -14,9 +14,17 @@ from datetime import datetime, timezone
 from threading import Lock, Thread
 import urllib.request
 import uuid
+import shutil
+import socket
+import logging
+from logging.handlers import RotatingFileHandler
 
 # Flat sibling imports directly within the backend directory
-from common import get_config_dir, load_policy, get_db_path, get_cert_dir
+from common import (
+    get_data_dir, get_config_dir, load_policy, get_db_path, get_cert_dir,
+    get_logs_dir, get_active_logs_dir, get_failed_logs_dir,
+    purge_old_logs, save_policy, save_bay_map
+)
 from database import init_wipe_db, persist_job
 from verification import (
     verification_for_method,
@@ -29,7 +37,30 @@ from verification import (
 from certificates import build_certificate
 from notifier import send_slack_notification
 
-from disk_ops import discover_drives, get_smart_data, format_capacity_bytes
+from disk_ops import discover_drives, get_smart_data, format_capacity_bytes, get_raw_smart_diagnostics
+
+# --- SYSTEM LOGGING INITIALIZATION ---
+def setup_application_logging():
+    try:
+        logs_dir = get_logs_dir()
+        log_file = os.path.join(logs_dir, "app.log")
+        handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3)
+        formatter = logging.Formatter('%(asctime)s %(levelname)s [%(name)s] %(message)s')
+        handler.setFormatter(formatter)
+        
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(handler)
+        
+        # Also direct outputs to stdout for systemd-journald capture
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+    except Exception as e:
+        print(f"Failed to setup file logging: {str(e)}", file=sys.stderr)
+
+setup_application_logging()
+logger = logging.getLogger("app")
 
 app = Flask(__name__)
 CORS(app)
@@ -40,6 +71,84 @@ ERASE_JOBS_LOCK = Lock()
 # Restored correct path depth evaluation for frontend assets
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
+
+
+# --- LOCALHOST-BYPASSED SECURITY MIDDLEWARE ---
+
+def calculate_session_token(passphrase):
+    return hmac.new(passphrase.encode('utf-8'), b"dws_admin_session", hashlib.sha256).hexdigest()
+
+def is_localhost(ip):
+    return ip in ("127.0.0.1", "::1", "localhost")
+
+@app.before_request
+def security_gate():
+    # Only protect API calls; allow normal frontend page/asset loads
+    if not request.path.startswith("/api/"):
+        return None
+    # Public authentication check endpoints
+    if request.path in ("/api/auth/verify", "/api/status"):
+        return None
+        
+    # Fully bypass security gate if the connection originates on localhost
+    if is_localhost(request.remote_addr):
+        return None
+        
+    policy = load_policy()
+    lan_passphrase = policy.get("lan_passphrase", "eraser123")
+    
+    expected_token = calculate_session_token(lan_passphrase)
+    cookie_token = request.cookies.get("admin_session")
+    
+    if cookie_token == expected_token:
+        return None
+        
+    return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+
+
+# --- HELPER FUNCTIONS FOR HOST HEALTH METRICS ---
+
+def get_ram_usage():
+    try:
+        with open("/proc/meminfo", "r") as f:
+            lines = f.readlines()
+        mem_total = 0
+        mem_available = 0
+        for line in lines:
+            if line.startswith("MemTotal:"):
+                mem_total = int(line.split()[1])
+            elif line.startswith("MemAvailable:"):
+                mem_available = int(line.split()[1])
+        if mem_total > 0:
+            used = mem_total - mem_available
+            return round((used / mem_total) * 100, 1)
+    except Exception:
+        pass
+    return 0.0
+
+def get_cpu_usage():
+    try:
+        load = os.getloadavg()[0]
+        cores = os.cpu_count() or 1
+        return round(min(100.0, (load / cores) * 100.0), 1)
+    except Exception:
+        pass
+    return 0.0
+
+def get_system_uptime():
+    try:
+        with open("/proc/uptime", "r") as f:
+            uptime_seconds = float(f.readline().split()[0])
+        days = int(uptime_seconds // 86400)
+        hours = int((uptime_seconds % 86400) // 3600)
+        minutes = int((uptime_seconds % 3600) // 60)
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        return f"{hours}h {minutes}m"
+    except Exception:
+        pass
+    return "Unknown"
+
 
 # --- SANITIZATION ORDER & VALIDATION HELPERS ---
 
@@ -248,8 +357,32 @@ def finalize_failed_job(job_id, error_message):
             job["status"] = "failed"
             job["finished_at"] = datetime.now(timezone.utc).isoformat()
             job["error"] = error_message
+            
+            # Close active log, move to failed, and append SMART diagnostics
+            active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
+            failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
+            if os.path.exists(active_log_path):
+                try:
+                    os.rename(active_log_path, failed_log_path)
+                except Exception:
+                    pass
+            try:
+                with open(failed_log_path, "a", encoding="utf-8") as lf:
+                    lf.write(f"\n=== JOB CONFIGURATION FAILURE ===\nError Message: {error_message}\n")
+                    dev = job["request"].get("device")
+                    if dev:
+                        lf.write(get_raw_smart_diagnostics(dev))
+            except Exception:
+                pass
+                
             persist_job(job)
             send_slack_notification(job)
+            
+            # Post-job housekeeping
+            try:
+                purge_old_logs(30)
+            except Exception:
+                pass
 
 def run_erase_job(job_id):
     with ERASE_JOBS_LOCK:
@@ -303,15 +436,29 @@ def run_erase_job(job_id):
     if method == "overwrite":
         initial_sectors = get_device_sectors_written(device)
 
-    # 2. Second-Stage: Spawn sanitize routine in background
+    # Instantiate the active log file write-unbuffered target
+    active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
+    try:
+        log_file = open(active_log_path, "w", encoding="utf-8", buffering=1)
+        log_file.write(f"=== Sanitization Job Started: {datetime.now(timezone.utc).isoformat()} ===\n")
+        log_file.write(f"Target Device: {device}\n")
+        log_file.write(f"Wipe Method: {method}\n")
+        log_file.write(f"Command Invocation: {' '.join(command)}\n\n")
+        log_file.flush()
+    except Exception as e:
+        finalize_failed_job(job_id, f"log_file_creation_failed: {str(e)}")
+        return
+
+    # 2. Second-Stage: Spawn sanitize routine, redirecting outputs directly to file descriptor
     try:
         process = subprocess.Popen(
             ["sudo"] + command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=log_file,
+            stderr=log_file,
             text=True
         )
     except Exception as e:
+        log_file.close()
         finalize_failed_job(job_id, f"process_spawn_failed:{str(e)}")
         return
 
@@ -369,15 +516,24 @@ def run_erase_job(job_id):
 
         time.sleep(3)
 
-    stdout, stderr = process.communicate()
     exit_code = process.returncode
     execution_ok = (exit_code == 0)
+
+    # Safely close file stream and load contents as transaction record summary
+    log_file.flush()
+    log_file.close()
+
+    try:
+        with open(active_log_path, "r", encoding="utf-8") as lf:
+            stdout_content = lf.read()
+    except Exception:
+        stdout_content = "Failed to extract execution stream log content."
 
     execution = {
         "ok": execution_ok,
         "command": " ".join(command),
-        "stdout": stdout,
-        "stderr": stderr,
+        "stdout": stdout_content,
+        "stderr": "",  # Redirected directly into standard log file descriptor
         "exit_code": exit_code
     }
 
@@ -501,6 +657,14 @@ def run_erase_job(job_id):
 
             marker_result = write_marker_and_verify(job)
             job["marker"] = marker_result
+            
+            # Clean up the active ephemeral log since job was successful
+            if os.path.exists(active_log_path):
+                try:
+                    os.remove(active_log_path)
+                except Exception:
+                    pass
+                    
             try:
                 job["certificate"] = build_certificate(job)
                 job["status"] = "completed"
@@ -516,6 +680,22 @@ def run_erase_job(job_id):
             else:
                 job["error"] = verification.get("error") or "erase_verification_failed"
             
+            # Convert active log to failure log and append SMART diagnostics block
+            failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
+            if os.path.exists(active_log_path):
+                try:
+                    os.rename(active_log_path, failed_log_path)
+                except Exception:
+                    pass
+            try:
+                smart_diagnostics = get_raw_smart_diagnostics(device)
+                with open(failed_log_path, "a", encoding="utf-8") as lf:
+                    lf.write("\n=== WIPE ATTESTATION FAILURE ===\n")
+                    lf.write(f"Failure Attestation Message: {job['error']}\n")
+                    lf.write(smart_diagnostics)
+            except Exception:
+                pass
+
             # Record failed sanitization history details inside a clean Failure Certificate
             try:
                 job["certificate"] = build_certificate(job)
@@ -526,6 +706,12 @@ def run_erase_job(job_id):
         persist_job(job)
 
     send_slack_notification(job)
+    
+    # Housekeeping: execute auto-purge on conclusion of job
+    try:
+        purge_old_logs(30)
+    except Exception:
+        pass
 
 @app.route("/")
 def home():
@@ -833,11 +1019,319 @@ def get_certificate(job_id):
 
     return jsonify({"error": "format must be one of: json, html"}), 400
 
+
+# --- ADMIN / DIAGNOSTICS CONTROL PANEL ROUTES ---
+
+@app.route("/api/auth/verify", methods=["POST"])
+def verify_auth():
+    try:
+        payload = request.get_json(silent=True) or {}
+        passphrase = payload.get("passphrase", "")
+        policy = load_policy()
+        lan_passphrase = policy.get("lan_passphrase", "eraser123")
+        
+        if passphrase == lan_passphrase:
+            token = calculate_session_token(lan_passphrase)
+            response = jsonify({"status": "authenticated"})
+            response.set_cookie("admin_session", token, httponly=True, samesite="Lax", max_age=86400 * 30)
+            return response, 200
+        return jsonify({"error": "Invalid passphrase"}), 401
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/metrics")
+def get_admin_metrics():
+    try:
+        total, used, free = shutil.disk_usage(get_data_dir())
+        disk_pct = round((used / total) * 100, 1)
+        disk_str = f"{format_capacity_bytes(used)} / {format_capacity_bytes(total)}"
+        
+        return jsonify({
+            "disk_pct": disk_pct,
+            "disk_str": disk_str,
+            "ram_pct": get_ram_usage(),
+            "cpu_pct": get_cpu_usage(),
+            "uptime": get_system_uptime()
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/test-webhook", methods=["POST"])
+def test_webhook():
+    try:
+        config_dir = get_config_dir()
+        policy = load_policy(config_dir)
+        slack_url = policy.get("slack_webhook_url")
+        
+        if not slack_url:
+            return jsonify({"error": "No Slack webhook URL configured in policy.json"}), 400
+            
+        test_payload = {
+            "text": f"🔔 *Drive Wipe Station Test Notification*\nStation: `{policy.get('station_id', 'unknown')}`\nTime: `{datetime.now(timezone.utc).isoformat()}`\nStatus: Network communication verified."
+        }
+        
+        req_data = json.dumps(test_payload).encode("utf-8")
+        req = urllib.request.Request(
+            slack_url,
+            data=req_data,
+            headers={"Content-Type": "application/json"}
+        )
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            resp_code = response.getcode()
+            
+        if resp_code in (200, 201, 204):
+            return jsonify({"status": "success", "message": "Test webhook dispatched successfully."}), 200
+        return jsonify({"error": f"Slack returned status code {resp_code}"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to send webhook: {str(e)}"}), 500
+
+@app.route("/api/admin/export-csv")
+def export_csv_ledger():
+    try:
+        import io
+        import csv
+        
+        with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, friendly_id, status, created_at, started_at, finished_at, error, request_json, verification_json 
+                FROM erase_jobs ORDER BY job_number DESC
+                """
+            ).fetchall()
+            
+        output = io.StringIO()
+        writer = csv.writer(output)
+        
+        writer.writerow(["Job ID", "Friendly ID", "Status", "Created At", "Started At", "Finished At", "Technician", "Ticket Number", "Bay", "Serial", "Model", "Capacity", "Method", "Verification Status", "Error"])
+        
+        for row in rows:
+            req = json.loads(row["request_json"] or "{}")
+            ver = json.loads(row["verification_json"] or "{}")
+            
+            writer.writerow([
+                row["id"],
+                row["friendly_id"],
+                row["status"],
+                row["created_at"],
+                row["started_at"],
+                row["finished_at"],
+                req.get("technician", ""),
+                req.get("ticket_number", ""),
+                req.get("bay", ""),
+                req.get("serial", ""),
+                req.get("model", ""),
+                format_capacity_bytes(req.get("capacity_bytes")),
+                req.get("method", ""),
+                ver.get("status", "none"),
+                row["error"] or ""
+            ])
+            
+        output.seek(0)
+        return send_file(
+            io.BytesIO(output.getvalue().encode('utf-8')),
+            mimetype="text/csv",
+            as_attachment=True,
+            download_name=f"wipe-ledger-{datetime.now().strftime('%Y%m%d-%H%M%S')}.csv"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/support-bundle")
+def download_support_bundle():
+    try:
+        import tarfile
+        import socket
+        
+        hostname = socket.gethostname()
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        bundle_name = f"support-bundle-{hostname}-{timestamp}"
+        workspace_dir = os.path.join("/tmp", bundle_name)
+        os.makedirs(workspace_dir, exist_ok=True)
+        
+        # 1. Gather hardware environment
+        try:
+            lsblk_proc = subprocess.run(["sudo", "lsblk", "-J"], capture_output=True, text=True, timeout=10)
+            with open(os.path.join(workspace_dir, "hardware_environment.txt"), "w") as f:
+                f.write("=== LSBLK -J OUTPUT ===\n")
+                f.write(lsblk_proc.stdout or "")
+                f.write("\n\n=== LSHW STORAGE DETAILS ===\n")
+                lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15)
+                f.write(lshw_proc.stdout or "")
+        except Exception as e:
+            with open(os.path.join(workspace_dir, "hardware_environment_error.txt"), "w") as f:
+                f.write(f"Failed to gather hardware details: {str(e)}")
+                
+        # 2. Gather system metrics
+        try:
+            total, used, free = shutil.disk_usage(get_data_dir())
+            with open(os.path.join(workspace_dir, "system_metrics.txt"), "w") as f:
+                f.write(f"Host Hostname: {hostname}\n")
+                f.write(f"Current Date: {datetime.now(timezone.utc).isoformat()}\n")
+                f.write(f"System Uptime: {get_system_uptime()}\n")
+                f.write(f"CPU Utilization: {get_cpu_usage()}%\n")
+                f.write(f"RAM Utilization: {get_ram_usage()}%\n")
+                f.write(f"OS Disk Space total: {format_capacity_bytes(total)}\n")
+                f.write(f"OS Disk Space used: {format_capacity_bytes(used)}\n")
+                f.write(f"OS Disk Space free: {format_capacity_bytes(free)}\n")
+        except Exception:
+            pass
+            
+        # 3. Redact policy.json
+        try:
+            policy_dir = get_config_dir()
+            policy_path = os.path.join(policy_dir, "policy.json")
+            if os.path.exists(policy_path):
+                with open(policy_path, "r", encoding="utf-8") as f:
+                    policy_data = json.load(f)
+                # Redact sensitive parameters
+                for key in ["wipe_passphrase", "slack_webhook_url", "lan_passphrase"]:
+                    if key in policy_data:
+                        policy_data[key] = "[REDACTED]"
+                with open(os.path.join(workspace_dir, "redacted_policy.json"), "w", encoding="utf-8") as f:
+                    json.dump(policy_data, f, indent=2)
+        except Exception:
+            pass
+            
+        # 4. Copy app.log and failed logs
+        try:
+            logs_dir = get_logs_dir()
+            app_log_path = os.path.join(logs_dir, "app.log")
+            if os.path.exists(app_log_path):
+                shutil.copy(app_log_path, os.path.join(workspace_dir, "app.log"))
+                
+            failed_logs_dir = get_failed_logs_dir()
+            if os.path.exists(failed_logs_dir):
+                shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
+        except Exception:
+            pass
+            
+        # 5. Pack everything into a .tar.gz
+        tar_path = f"/tmp/{bundle_name}.tar.gz"
+        with tarfile.open(tar_path, "w:gz") as tar:
+            tar.add(workspace_dir, arcname=bundle_name)
+            
+        # Cleanup temporary workspace
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+        
+        return send_file(
+            tar_path,
+            mimetype="application/gzip",
+            as_attachment=True,
+            download_name=f"{bundle_name}.tar.gz"
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/unmapped-drives")
+def get_unmapped_drives():
+    try:
+        config_dir = get_config_dir()
+        bay_map_path = os.path.join(config_dir, "bay_map.json")
+        with open(bay_map_path, "r", encoding="utf-8") as f:
+            bay_map = json.load(f)
+            
+        mapped_paths = set()
+        for config in bay_map.values():
+            p = config.get("by_path")
+            if p:
+                mapped_paths.add(os.path.basename(p))
+                mapped_paths.add(p)
+                
+        path_to_dev = {}
+        by_path_dir = '/dev/disk/by-path/'
+        unmapped_devices = []
+        
+        if os.path.exists(by_path_dir):
+            for entry in os.listdir(by_path_dir):
+                if entry in mapped_paths:
+                    continue
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    dev_node = os.path.realpath(full_path)
+                    # Avoid listing partition children
+                    if "-part" in entry:
+                        continue
+                    path_to_dev[entry] = dev_node
+                    
+        # Extract SMART metrics for each unmapped target
+        for by_path, dev_node in path_to_dev.items():
+            try:
+                smart = get_smart_data(dev_node)
+                unmapped_devices.append({
+                    "by_path": by_path,
+                    "device": dev_node,
+                    "model": smart.get("model") or "Unknown",
+                    "serial": smart.get("serial") or "Unknown",
+                    "capacity_str": smart.get("capacity_str", "-"),
+                    "capacity_bytes": smart.get("capacity_bytes")
+                })
+            except Exception:
+                pass
+        return jsonify(unmapped_devices), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/save-bay-map", methods=["POST"])
+def update_bay_map():
+    try:
+        payload = request.get_json(silent=True) or {}
+        if not payload:
+            return jsonify({"error": "Invalid payload"}), 400
+            
+        config_dir = get_config_dir()
+        
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Payload must be a dictionary map."}), 400
+            
+        for bay_id, conf in payload.items():
+            if not isinstance(conf, dict):
+                return jsonify({"error": f"Configuration for {bay_id} must be a dictionary."}), 400
+                
+        save_bay_map(payload, config_dir)
+        return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/policy", methods=["GET", "POST"])
+def admin_policy():
+    config_dir = get_config_dir()
+    if request.method == "GET":
+        try:
+            policy = load_policy(config_dir)
+            safe_policy = policy.copy()
+            # Redact to prevent key leaks
+            if "lan_passphrase" in safe_policy:
+                safe_policy["lan_passphrase"] = ""
+            return jsonify(safe_policy), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    else:
+        try:
+            payload = request.get_json(silent=True) or {}
+            current_policy = load_policy(config_dir)
+            
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override"]
+            for field in updatable_fields:
+                if field in payload:
+                    current_policy[field] = payload[field]
+                    
+            new_pass = str(payload.get("lan_passphrase") or "").strip()
+            if new_pass:
+                current_policy["lan_passphrase"] = new_pass
+                
+            save_policy(current_policy, config_dir)
+            return jsonify({"status": "success", "message": "System policies updated successfully."}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+
 if __name__ == "__main__":
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
     bind_address = policy.get("bind_address", "127.0.0.1")
     port = int(policy.get("port", 5000))
     init_wipe_db()
-    print(f"Drive Wipe Station starting on {bind_address}:{port} (config_dir={config_dir})", flush=True)
+    logger.info(f"Drive Wipe Station starting on {bind_address}:{port} (config_dir={config_dir})")
     app.run(host=bind_address, port=port, debug=False)
