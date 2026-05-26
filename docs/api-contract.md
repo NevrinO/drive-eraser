@@ -51,30 +51,33 @@ Starts validated asynchronous erase job.
 ### Request body
 - `technician` string required
 - `ticket_number` string required
-- `bay` string required
-- `confirmation_text` string required, exact format: `erase <bay>`
-- `method` string optional
+- `bays` string[] required
+- `confirmation_text` string required, format: `erase <bay>` or `erase <count> drives`
+- `methods` object optional (map of bay IDs to selected wipe methods)
 
 ### Success 202
 ```json
 {
   "status": "accepted",
-  "message": "erase job started",
-  "job": {
-    "id": "uuid",
-    "status": "queued",
-    "created_at": "ISO-8601",
-    "technician": "...",
-    "ticket_number": "...",
-    "bay": "bay3",
-    "device": "/dev/sdX",
-    "method": "overwrite",
-    "recommended_method": "overwrite",
-    "supported_methods": ["overwrite"],
-    "interface_type": "sata",
-    "serial": "...",
-    "model": "..."
-  }
+  "message": "started 1 concurrent wipe process(es)",
+  "jobs": [
+    {
+      "id": "uuid",
+      "friendly_id": null,
+      "status": "queued",
+      "created_at": "ISO-8601",
+      "technician": "...",
+      "ticket_number": "...",
+      "bay": "bay3",
+      "device": "/dev/sdX",
+      "method": "overwrite",
+      "recommended_method": "overwrite",
+      "supported_methods": ["overwrite"],
+      "interface_type": "sata",
+      "serial": "...",
+      "model": "..."
+    }
+  ]
 }
 ```
 
@@ -89,158 +92,119 @@ Starts validated asynchronous erase job.
 Returns job state and execution result.
 
 ### Success 200
-```json
-{
-  "id": "uuid",
-  "status": "running",
-  "created_at": "ISO-8601",
-  "started_at": "ISO-8601|null",
-  "finished_at": "ISO-8601|null",
-  "error": null,
-  "result": {
-    "command": "...",
-    "stdout": "...",
-    "stderr": "...",
-    "exit_code": 0
-  },
-  "verification": {
-    "ok": true,
-    "status": "verified",
-    "error": null,
-    "details": {}
-  },
-  "certificate": {
-    "id": "cert-uuid",
-    "job_id": "uuid",
-    "issued_at": "ISO-8601",
-    "finished_at": "ISO-8601",
-    "technician": "...",
-    "ticket_number": "...",
-    "bay": "bay3",
-    "device": "/dev/sdX",
-    "serial": "...",
-    "model": "...",
-    "interface_type": "sata",
-    "method": "overwrite",
-    "verification": {
-      "ok": true,
-      "status": "verified",
-      "error": null,
-      "details": {}
-    },
-    "path": ".../data/certs/cert-uuid.json",
-    "filename": "cert-uuid.json"
-  },
-  "request": {
-    "technician": "...",
-    "ticket_number": "...",
-    "bay": "bay3",
-    "device": "/dev/sdX",
-    "method": "overwrite",
-    "recommended_method": "overwrite",
-    "supported_methods": ["overwrite"],
-    "interface_type": "sata",
-    "serial": "...",
-    "model": "..."
-  }
-}
-```
-
-### Not found 404
-```json
-{
-  "error": "job not found: <job_id>"
-}
-```
+*(Payload shape contains verification and certificate attributes)*
 
 ## GET /api/erase/history
 Returns recent persisted erase jobs.
 
-### Query params
-- `limit` integer optional, default `50`, range `1..500`
-
-### Success 200
-```json
-{
-  "jobs": [
-    {
-      "id": "uuid",
-      "status": "completed",
-      "created_at": "ISO-8601",
-      "started_at": "ISO-8601|null",
-      "finished_at": "ISO-8601|null",
-      "error": null,
-      "request": {},
-      "result": {},
-      "verification": {},
-      "certificate": {}
-    }
-  ],
-  "count": 1
-}
-```
-
-### Error 400
-```json
-{
-  "error": "limit must be an integer"
-}
-```
-
-```json
-{
-  "error": "limit must be between 1 and 500"
-}
-```
+*(Payload shape contains historical lists of completed jobs)*
 
 ## GET /api/certificates/<job_id>
 Returns certificate payload for a completed job.
 
+*(Payload shape accepts query param `?format=html` to fetch plain HTML files)*
+
+## POST /api/auth/verify
+Validates network access passphrase and sets secure browser session cookie.
+
+### Request body
+- `passphrase` string required
+
+### Success 200
+Returns a secure `HTTP-Only` cookie named `admin_session`.
+```json
+{
+  "status": "authenticated"
+}
+```
+
+### Error 401
+```json
+{
+  "error": "Invalid passphrase"
+}
+```
+
+## GET /api/admin/metrics
+Returns real-time host hardware diagnostics (Disk space, RAM, CPU load, system uptime).
+
 ### Success 200
 ```json
 {
-  "id": "cert-uuid",
-  "job_id": "uuid",
-  "issued_at": "ISO-8601",
-  "finished_at": "ISO-8601",
-  "technician": "...",
-  "ticket_number": "...",
-  "bay": "bay3",
-  "device": "/dev/sdX",
-  "serial": "...",
-  "model": "...",
-  "interface_type": "sata",
-  "method": "overwrite",
-  "verification": {
-    "ok": true,
-    "status": "verified",
-    "error": null,
-    "details": {}
-  },
-  "path": ".../data/certs/cert-uuid.json",
-  "filename": "cert-uuid.json"
+  "disk_pct": 2.2,
+  "disk_str": "11 GB / 944 GB",
+  "ram_pct": 13.1,
+  "cpu_pct": 1.2,
+  "uptime": "5h 5m",
+  "ip_address": "192.168.2.111"
 }
 ```
 
-### Not found 404
+## POST /api/admin/test-webhook
+Dispatches an immediate, timestamped connectivity test alert to the Slack Webhook URL defined in `policy.json`.
+
+### Success 200
 ```json
 {
-  "error": "job not found: <job_id>"
+  "status": "success",
+  "message": "Test webhook dispatched successfully."
 }
 ```
 
+### Error 400 / 500
 ```json
 {
-  "error": "certificate not found for job: <job_id>"
+  "error": "Failed to send webhook: <detailed connection error description>"
 }
 ```
+
+## GET /api/admin/unmapped-drives
+Scans `/dev/disk/by-path/` to locate physically connected drives that are not registered in the active `bay_map.json` configuration.
+
+### Success 200
+```json
+[
+  {
+    "by_path": "pci-0000:01:00.0-scsi-0:0:4:0",
+    "device": "/dev/sdc",
+    "model": "Seagate ST4000NM0023",
+    "serial": "W1F0ABCD",
+    "capacity_str": "4 TB",
+    "capacity_bytes": 4000787030016
+  }
+]
+```
+
+## POST /api/admin/save-bay-map
+Overwrites `/opt/drive-eraser/config/bay_map.json` with the updated dictionary sent by the client.
+
+### Request body
+- Map object representing full, validated `bay_map.json` structure.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Bay mapping configuration updated successfully."
+}
+```
+
+### Error 400 / 500
+```json
+{
+  "error": "Payload must be a dictionary map."
+}
+```
+
+## GET / POST /api/admin/policy
+Exposes and safely updates system rules (Station ID, Webhook URLs, Pre-wipe check states) and writes changes back to `/config/policy.json`.
+
+**Note on GET requests:** The backend automatically redacts `"lan_passphrase"` values from the payload to prevent browser-side credential leaking.
+
+---
 
 ## Job Status Values
 - `queued`
 - `running`
 - `completed`
 - `failed`
-
-## Notes
-- A frontend polling timeout does not stop backend execution.
-- Job ID is the authoritative tracking handle.

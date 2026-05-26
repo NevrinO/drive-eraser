@@ -39,7 +39,13 @@ DD_PATH=""
 LSBLK_PATH=""
 LSHW_PATH=""
 SYSTEMCTL_PATH=""
+
+# Default config parameters (overwritten if run interactively)
+STATION_ID="wipe-station-01"
+WIPE_PORT=5000
 WIPE_PASSPHRASE=""
+LAN_PASSPHRASE="eraser123"
+SLACK_WEBHOOK=""
 
 # Colors for output
 RED='\033[0;31m'
@@ -204,48 +210,98 @@ install_app() {
 # STEP 5 - Set up config files (only if they don't exist)
 # -----------------------------------------------------------------------------
 
-prompt_passphrase() {
+prompt_interactive_config() {
     # Only execute interactive prompts if standard input is a terminal TTY
     if [ -t 0 ]; then
         echo ""
         echo -e "${YELLOW}================================================================${NC}"
-        echo -e "${YELLOW}   Optional Cryptographic Authentication Setup                  ${NC}"
+        echo -e "${YELLOW}   Drive Wipe Station - Interactive Configuration               ${NC}"
         echo -e "${YELLOW}================================================================${NC}"
-        echo -e "  Entering a passphrase enables cryptographic marker signing (HMAC-SHA256)."
-        echo -e "  Other workstations sharing this passphrase can verify the authenticity"
-        echo -e "  of your drive wipes. Leave blank to skip (Unauthenticated State)."
         echo ""
 
-        local pass=""
-        local confirm=""
-        
+        # 1. Prompt for Station ID
+        echo -e -n "  Enter Station Identifier [Default: wipe-station-01]: "
+        local temp_station
+        read -r temp_station
+        if [ -n "$temp_station" ]; then
+            STATION_ID="$temp_station"
+            success "Station ID set to: $STATION_ID"
+        else
+            info "Using default Station ID: $STATION_ID"
+        fi
+        echo ""
+
+        # 2. Prompt for Port
+        echo -e -n "  Enter Bind Port [Default: 5000]: "
+        local temp_port
+        read -r temp_port
+        if [ -n "$temp_port" ]; then
+            if [[ "$temp_port" =~ ^[0-9]+$ ]] && [ "$temp_port" -gt 1024 ] && [ "$temp_port" -lt 65536 ]; then
+                WIPE_PORT="$temp_port"
+                success "Bind Port set to: $WIPE_PORT"
+            else
+                warn "Invalid port entered. Falling back to default: $WIPE_PORT"
+            fi
+        else
+            info "Using default Port: $WIPE_PORT"
+        fi
+        echo ""
+
+        # 3. Prompt for LAN Passphrase
+        echo -e -n "  Enter LAN Passphrase for Remote UI Gate [Default: eraser123]: "
+        local temp_lan_pass
+        read -r temp_lan_pass
+        if [ -n "$temp_lan_pass" ]; then
+            LAN_PASSPHRASE="$temp_lan_pass"
+            success "LAN Passphrase successfully staged."
+        else
+            info "Using default LAN Passphrase: $LAN_PASSPHRASE"
+        fi
+        echo ""
+
+        # 4. Prompt for Cryptographic Wipe Passphrase (Salt Signer)
+        echo -e "  Entering a Cryptographic Passphrase enables secure HMAC-SHA256 signature signing."
+        echo -e "  Leave blank to run in Unauthenticated State."
         while true; do
-            echo -e -n "  Enter passphrase: "
+            echo -e -n "  Enter Cryptographic Passphrase [Optional - Press Enter to Skip]: "
+            local pass=""
+            local confirm=""
             read -r -s pass
             echo ""
             
             if [ -z "$pass" ]; then
-                info "No passphrase entered. Continuing in unauthenticated mode."
-                WIPE_PASSPHRASE=""
+                info "Skipping Cryptographic Passphrase setup."
                 break
             fi
 
-            echo -e -n "  Confirm passphrase: "
+            echo -e -n "  Confirm Cryptographic Passphrase: "
             read -r -s confirm
             echo ""
 
             if [ "$pass" = "$confirm" ]; then
                 WIPE_PASSPHRASE="$pass"
-                success "Passphrase confirmed and staged."
+                success "Cryptographic Passphrase staged."
                 break
             else
                 warn "Passphrases did not match. Please try again."
             fi
         done
         echo ""
+
+        # 5. Prompt for Slack Webhook URL
+        echo -e -n "  Enter Slack Webhook URL for instant alerting [Optional - Press Enter to Skip]: "
+        local temp_slack
+        read -r temp_slack
+        if [ -n "$temp_slack" ]; then
+            SLACK_WEBHOOK="$temp_slack"
+            success "Slack Webhook staged."
+        else
+            info "Slack alerting disabled (no URL provided)."
+        fi
+        echo ""
+
     else
-        info "Non-interactive shell detected. Skipping passphrase prompt."
-        WIPE_PASSPHRASE=""
+        info "Non-interactive terminal detected. Skipping prompts and applying defaults."
     fi
 }
 
@@ -316,11 +372,16 @@ EOF
 
     # policy.json - only create if missing
     if [ ! -f "$CONFIG_DIR/policy.json" ]; then
-        prompt_passphrase
+        prompt_interactive_config
 
         info "Generating default policy.json..."
         # Safely compile the JSON structure using system Python to avoid shell escape issues
+        export STATION_ID
+        export WIPE_PORT
         export WIPE_PASSPHRASE
+        export LAN_PASSPHRASE
+        export SLACK_WEBHOOK
+        
         "$PYTHON_BIN" -c "
 import json, os
 path = '$CONFIG_DIR/policy.json'
@@ -335,16 +396,21 @@ data = {
   },
   'crypto_fail_retry_block': True,
   'health_soft_stop': True,
-  'port': 5000,
-  'bind_address': '127.0.0.1',
-  'station_id': 'wipe-station-01',
+  'port': int(os.environ.get('WIPE_PORT', 5000)),
+  'bind_address': '0.0.0.0',
+  'station_id': os.environ.get('STATION_ID', 'wipe-station-01'),
   'wipe_passphrase': os.environ.get('WIPE_PASSPHRASE', ''),
-  'lan_passphrase': 'eraser123'
+  'slack_webhook_url': os.environ.get('SLACK_WEBHOOK', ''),
+  'lan_passphrase': os.environ.get('LAN_PASSPHRASE', 'eraser123')
 }
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 "
+        unset STATION_ID
+        unset WIPE_PORT
         unset WIPE_PASSPHRASE
+        unset LAN_PASSPHRASE
+        unset SLACK_WEBHOOK
         success "policy.json safely compiled."
     else
         warn "policy.json already exists. Skipping (your config is preserved)."

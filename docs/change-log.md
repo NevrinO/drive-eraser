@@ -1,5 +1,18 @@
 # Change Log
 
+## v0.25 - Hybrid Logging, Diagnostics Support Bundles, Remote UI Gates, & Interactive Bay Mapping
+- **Hybrid Logging Subsystem**: Segregated logging boundaries. Technical runtime alerts go to `app.log` (rotating at 10MB). Active subprocess `stdout`/`stderr` pipes write progressively to ephemeral `data/logs/active/job-{id}.log` streams. Failed wipes are closed and relocated to `data/logs/failed/` with complete raw `smartctl -a` attributes appended for post-mortem forensics. Successful runs are cleanly expunged to preserve disk space.
+- **Auto-Purge Garbage Collection**: Integrated a deterministic retention cleaner executing synchronously on the completion of any wipe. Deletes any active or failed logs whose modification age exceeds 30 days.
+- **Localhost-Bypassed Security Gate**: Implemented client network IP evaluation. Bypasses password gates for local TTY touchscreens (originating on `127.0.0.1` or `::1`). Enforces secure HTTP-Only cookie verification (`admin_session`) for any network-based LAN requests, prompting remote operators with a passcode overlay matched against the `"lan_passphrase"` configured inside `policy.json`.
+- **System Administration UI (Tab 3)**: Added an adjacent separate administration tab containing:
+  - **Host Resource Telemetry**: Real-time polling monitoring host CPU load, RAM usage, OS partition capacity, and uptime.
+  - **Webhook Alerts Testing**: A native loop check dispatching test payloads to Slack to diagnose network isolation blocks.
+  - **Support Bundle Compiler**: Packs system hardware mappings (`lsblk`, `lshw`), redacted configurations, system health metrics, and failed logs into a single compressed `support-bundle-{hostname}-{timestamp}.tar.gz` directly in the browser.
+  - **CLI Diagnostics Fallback**: Written `scripts/export-logs.sh` to package diagnostic bundles directly onto connected USB storage sticks or user home folders when headless or offline.
+  - **Interactive Bay Mapping**: Visualized configuration links. Added staged UI controls to append, delete, and modify physical drive bays (bays bound from 1 to 128) and map them to unassigned system controllers, reloading configurations on save.
+- **Workbench Layout Optimization**: Standardized the card rendering layout to display exactly **4 columns per row** on desktop viewports, with clean, smaller display labels embedded inside headers.
+- **Sudoers Expansion**: Updated both `install.sh` and `update.sh` to append passwordless `sudo` rights for `lshw` and `systemctl` to the restricted `wipestation` account.
+
 ## v0.24 - Resilient SATA Sanitize Polling, Lockup Bypass & Metadata Recovery
 - **Resilient Polling Loop**: Implemented a 5-second initial delay (settling time) inside Stage 3 polling to allow SATA host controller link resets to resolve. Added consecutive failure tolerance (up to 15 retries / 60 seconds) during the firmware status check loop. This accommodates immediate drive resets that cause `hdparm` to return exit code `5` / input-output errors during the initiation of block or crypto erase methods.
 - **Active Query Lockup Bypass**: Configured both `/api/drives` and `/api/erase/start` in `backend/app.py` to compile and pass the list of `running_devices` to `discover_drives()`. This bypasses physical drive scanning on busy devices, preventing API hangs when operators or frontend refresh timers poll the system during active runs.

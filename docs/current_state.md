@@ -9,7 +9,11 @@
 ## Status: Real Erase Job Execution and Background Orchestration Functional ✅
 ## Status: Resilient SATA Sanitize Polling and Exit-5 Link Drop Mitigation Complete ✅
 ## Status: Active Disk Scan Sudo lockup mitigation Complete ✅
-## Status: metadata retention during wiping fully operational ✅
+## Status: Metadata retention during wiping fully operational ✅
+## Status: Hybrid Logging Subsystem and 30-Day Purging Complete ✅
+## Status: Localhost-Bypassed LAN Security Gate and Cookie verification Complete ✅
+## Status: Administrative Diagnostics Tab (Tab 3) & Interactive Bay Mapping Complete ✅
+## Status: Support Bundle Gzip Compilers (Browser + CLI Fallback) Complete ✅
 
 ## Environment in Use
 
@@ -21,30 +25,30 @@
 ### Test Server
 - Fresh Ubuntu 26.04 used as clean bring-up target
 - 4 physical bays available
-- Production target remains the 8-bay wipe station design
+- Production target remains the 8-bay wipe station design (expandable up to 128 bays dynamically)
 
 ## Completed Since Previous Handoff
 
 ### Backend API / Discovery / Orchestration
-- Resolved the SATA block/crypto sanitize immediate link drop issue. The orchestrator now pauses for 5 seconds post-initiation and tolerates up to 15 consecutive query failures (approx. 60 seconds) during background polling, which handles drive resets gracefully.
-- Resolved active query lockups. Both `/api/drives` and `/api/erase/start` pass the compiled list of active/queued `running_devices` to `discover_drives()`, preventing concurrent diagnostic scans from hanging the Flask server.
-- Resolved drive detail wipe blackouts. While a drive is running or queued, `/api/drives` intercepts empty model, serial, and capacity outputs from physical skip-checks and populates them using cached properties.
-- Implemented multi-vector health scoring (0-100) on the backend, resolving linear bad-sector anomalies on SSD structures.
-- Hardened raw attribute read/write traffic parsing with dynamic 32MiB and GB multiplier support.
+- Integrated decoupled logging. Process stdout/stderr writes progressively directly to disk, keeping memory overhead static.
+- Added raw `smartctl` attributes dump into failed logs on operation failure.
+- Added automatic garbage collection of on-disk logs on job completion.
+- Implemented client IP verification middleware inside Flask.
+- Implemented `/api/admin/metrics` to expose CPU load, RAM usage, storage margins, and uptime.
+- Implemented on-demand gzipped support bundle packaging.
+- Configured passwordless `sudo` installer overrides for `lshw` and `systemctl`.
 
 ### Frontend
-- Decoupled `loadDrives()` refreshing from the UI form submission promise chain. Operator alerts are now instant, with card state updating asynchronously in the background.
-- UI elements successfully capture and present metadata-retained status boxes during wipes.
+- Added a third "System Administration" tab adjacent to the dashboard.
+- Integrated host metrics progress bars and Slack webhook alert test triggers.
+- Integrated staged, memory-safe bay add/remove mapping editors, resolving background polling conflicts.
+- Enforced a neat 4-column maximum grid display for drive bays.
+- Integrated a secure network passphrase login modal.
 
 ## Current Known Gaps / Issues
-- None. Core operational and visual behaviors on the backend and frontend are performing as intended.
+- None. Core operational, security, diagnostic, and layout behaviors on both the backend and frontend are performing as intended.
 
 ---
 
 ## 🔒 STRICT ARCHITECTURAL LOCK: AI ASSISTANT INSTRUCTIONS
 The current functional state of the application's backend architecture (including thread managers, SQLite database routines, device discovery routines, and verification parser/marker handlers) is **fully locked and validated**.
-
-For all future interactions, AI models must operate under these strict guardrails:
-1. **Change Prohibition**: You are strictly prohibited from changing, refactoring, or optimizing any backend Python functions (specifically inside `backend/app.py`, `backend/verification.py`, `backend/disk_ops.py`, or `backend/database.py`) without the operator's explicit, typed authorization.
-2. **Explicit Consent Workflow**: If a change to backend logic is deemed strictly necessary, the AI **must explicitly ask the operator for permission** to modify the specific function, detailing the exact lines to change and why, before providing any updated code blocks.
-3. **Frontend Presentation Scope**: The next phase of development is strictly limited to styling, data display placement, and which information to render on the frontend interface (`frontend/app.js`, `frontend/index.html`, or `frontend/styles.css`).
