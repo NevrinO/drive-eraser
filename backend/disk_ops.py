@@ -670,18 +670,37 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
     os_dev_node, os_by_path = get_os_by_path()
 
+    # --- backend/disk_ops.py ---
+# Around line 520, inside discover_drives():
+
     for bay_id, config in bay_map.items():
         target_path = config.get('by_path')
         target_path_nvme = config.get('by_path_nvme')
         
         bay_info = {
-            "bay": bay_id, "label": config.get('label', bay_id), "role": config.get('role', 'wipe'), "locked": config.get('locked', False),
-            "configured_by_path": target_path, "resolved_by_path": None,
-            "configured_by_path_nvme": target_path_nvme, "resolved_by_path_nvme": None,
-            "present": False, "device": None, "serial": None, "model": None, "status": "EMPTY",
-            "interface_type": "unknown", "capacity_str": "-", "marker": {"ok": False, "status": "none", "error": None, "details": {}}, "recommendation": {"status": "UNKNOWN", "comment": "-"}, "health_score": 100,
-            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, "supported_methods": ["overwrite"],
-            "smart": {}, "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}}
+            "bay": bay_id, 
+            "label": config.get('label', bay_id), 
+            "role": config.get('role', 'wipe'), 
+            "locked": config.get('locked', False),
+            "configured_by_path": target_path, 
+            "resolved_by_path": None,
+            "configured_by_path_nvme": target_path_nvme, 
+            "resolved_by_path_nvme": None,
+            "type": config.get("type", "sas_sata"),  # <-- ADD THIS LINE HERE
+            "present": False, 
+            "device": None, 
+            "serial": None, 
+            "model": None, 
+            "status": "EMPTY",
+            "interface_type": "unknown", 
+            "capacity_str": "-", 
+            "marker": {"ok": False, "status": "none", "error": None, "details": {}}, 
+            "recommendation": {"status": "UNKNOWN", "comment": "-"}, 
+            "health_score": 100,
+            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, 
+            "supported_methods": ["overwrite"],
+            "smart": {}, 
+            "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}}
         }
         
         # 1. Primary SATA/SAS path check

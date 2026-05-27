@@ -1016,13 +1016,16 @@ downloadBundleBtn.addEventListener("click", () => {
   window.location.href = "/api/admin/support-bundle";
 });
 
+// --- frontend/app.js ---
+
 async function loadBayMappingConfig() {
   try {
     const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
     if (!unmappedResponse.ok) throw new Error();
     const unmappedDrives = await unmappedResponse.json();
     
-    let html = "";
+    // Clear old layout
+    bayMappingContainer.innerHTML = "";
     
     // Only re-initialize from currentDrives if we do not already have configured staged keys in memory
     if (Object.keys(localBayMapCopy).length === 0) {
@@ -1031,8 +1034,9 @@ async function loadBayMappingConfig() {
           role: drive.role,
           locked: drive.locked,
           label: drive.label,
-          type: drive.interface_type === "nvme" ? "nvme" : "sas_sata",
-          by_path: drive.configured_by_path || ""
+          type: drive.type || "sas_sata",
+          by_path: drive.configured_by_path || "",
+          by_path_nvme: drive.configured_by_path_nvme || ""
         };
       });
     }
@@ -1048,40 +1052,11 @@ async function loadBayMappingConfig() {
       const conf = localBayMapCopy[bayKey];
       if (!conf) return;
 
-      const currentPath = conf.by_path || "";
-      
-      let options = `<option value="">-- Unassigned / Empty --</option>`;
-      if (currentPath) {
-        options += `<option value="${escapeHtml(currentPath)}" selected>${escapeHtml(currentPath)} (Current)</option>`;
-      }
-      
-      unmappedDrives.forEach(ud => {
-        options += `<option value="${escapeHtml(ud.by_path)}">${escapeHtml(ud.by_path)} (${escapeHtml(ud.model)} S/N: ${escapeHtml(ud.serial)})</option>`;
-      });
-
-      const lockStatusText = conf.locked ? "Locked" : "Editable";
-      
-      const deleteBtnHtml = conf.locked ? "" : `
-        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayKey)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
-          Delete
-        </button>
-      `;
-
-      html += `
-        <div class="mapping-row" data-mapping-row-id="${escapeHtml(bayKey)}">
-          <span>${escapeHtml(bayKey.toUpperCase())}</span>
-          <select class="bay-path-select" data-bay-id="${escapeHtml(bayKey)}" ${conf.locked ? "disabled" : ""}>
-            ${options}
-          </select>
-          <div style="display: flex; align-items: center; justify-content: flex-end; min-width: 140px;">
-            <small style="font-size: 0.7rem; color: #888;">${lockStatusText}</small>
-            ${deleteBtnHtml}
-          </div>
-        </div>
-      `;
+      // Render advanced hybrid-capable layout rows
+      const rowElement = renderBayConfigurationRow(bayKey, conf, unmappedDrives);
+      bayMappingContainer.appendChild(rowElement);
     });
 
-    bayMappingContainer.innerHTML = html;
     bindDeleteBayButtons();
   } catch (err) {
     bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
@@ -1102,7 +1077,6 @@ document.getElementById('btn-auto-detect').addEventListener('click', async () =>
         const data = await response.json();
         if (response.ok) {
             alert(`Success! ${data.message}`);
-            // Force reload your admin configuration inputs or refresh the page
             location.reload(); 
         } else {
             alert(`Error running scan: ${data.error}`);
@@ -1112,20 +1086,17 @@ document.getElementById('btn-auto-detect').addEventListener('click', async () =>
     }
 });
 
-// Example helper to populate the dropdown options
 function populatePathDropdown(selectElement, unmappedDrives, currentValue) {
     selectElement.innerHTML = '<option value="">-- Select Drive Path (Empty Slot) --</option>';
     
-    // If there's a currently saved path, add it as the selected option first
     if (currentValue) {
         const opt = document.createElement('option');
         opt.value = currentValue;
-        opt.textContent = currentValue; // Shows the saved path
+        opt.textContent = `${currentValue} (Current)`;
         opt.selected = true;
         selectElement.appendChild(opt);
     }
 
-    // Add all other unmapped drives to the dropdown
     unmappedDrives.forEach(drive => {
         if (drive.by_path !== currentValue) {
             const opt = document.createElement('option');
@@ -1136,53 +1107,62 @@ function populatePathDropdown(selectElement, unmappedDrives, currentValue) {
     });
 }
 
-// Main rendering logic inside your app.js layout loop
 function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
     const container = document.createElement('div');
     container.className = 'bay-config-row';
     container.id = `config-row-${bayId}`;
+    container.style.marginBottom = "20px";
     
-    // 1. Bay Type Selector (sas_sata or u2)
     const isU2 = bayConfig.type === 'u2';
+    const lockStatusText = bayConfig.locked ? "Locked" : "Editable";
+    
+    const deleteBtnHtml = bayConfig.locked ? "" : `
+        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayId)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
+          Delete
+        </button>
+    `;
     
     container.innerHTML = `
-        <h3>Bay: ${bayConfig.label || bayId}</h3>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+            <h3 style="margin: 0; font-size: 1rem; color: var(--color-primary);">${escapeHtml(bayConfig.label || bayId)}</h3>
+            <div style="display: flex; align-items: center;">
+                <small style="font-size: 0.7rem; color: #888;">${lockStatusText}</small>
+                ${deleteBtnHtml}
+            </div>
+        </div>
         
-        <div class="form-group">
-            <label>Drive Interface Type</label>
-            <select id="type-${bayId}" class="bay-type-selector" data-bay="${bayId}">
+        <div class="form-group" style="margin-bottom: 8px;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Drive Interface Type</label>
+            <select id="type-${bayId}" class="bay-type-selector" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
                 <option value="sas_sata" ${!isU2 ? 'selected' : ''}>SAS / SATA</option>
                 <option value="u2" ${isU2 ? 'selected' : ''}>U.2 / U.3 / Hybrid (NVMe capable)</option>
             </select>
         </div>
 
         <!-- Primary SATA/SAS Selector -->
-        <div class="form-group">
-            <label id="primary-label-${bayId}">Primary SAS/SATA Controller Port Path</label>
-            <select id="path-${bayId}" class="by-path-select" data-bay="${bayId}">
-                <!-- Populated dynamically below -->
+        <div class="form-group" style="margin-bottom: 8px;">
+            <label id="primary-label-${bayId}" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Primary SAS/SATA Controller Port Path</label>
+            <select id="path-${bayId}" class="by-path-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <!-- Populated dynamically -->
             </select>
         </div>
 
-        <!-- Secondary NVMe Selector (Only visible for U.2/hybrid bays) -->
-        <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'}">
-            <label style="color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
-            <select id="path-nvme-${bayId}" class="by-path-nvme-select" data-bay="${bayId}">
-                <!-- Populated dynamically below -->
+        <!-- Secondary NVMe Selector -->
+        <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'} margin-bottom: 8px;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px; color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
+            <select id="path-nvme-${bayId}" class="by-path-nvme-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <!-- Populated dynamically -->
             </select>
         </div>
-        <hr>
+        <hr style="border: 0; border-top: 1px solid #333; margin: 16px 0;">
     `;
 
-    // Populate primary dropdown
     const primarySelect = container.querySelector(`#path-${bayId}`);
     populatePathDropdown(primarySelect, unmappedDrives, bayConfig.by_path);
 
-    // Populate secondary NVMe dropdown
     const nvmeSelect = container.querySelector(`#path-nvme-${bayId}`);
     populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme);
 
-    // Toggle NVMe field visibility dynamically when the Interface Type dropdown changes
     const typeSelector = container.querySelector(`#type-${bayId}`);
     typeSelector.addEventListener('change', (e) => {
         const nvmeGroup = container.querySelector(`#nvme-group-${bayId}`);
@@ -1194,7 +1174,6 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
         } else {
             nvmeGroup.style.display = 'none';
             primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path';
-            // Clear the secondary path selection if reverted to standard SATA
             nvmeSelect.value = "";
         }
     });
@@ -1204,50 +1183,48 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
 
 async function saveBayMappingConfiguration() {
     const updatedBayMap = {};
-    
-    // Query all rendered configuration blocks (assuming you use a selector like '.bay-config-row')
     const configRows = document.querySelectorAll('.bay-config-row');
     
     configRows.forEach(row => {
-        // Find the bay ID associated with this row element
         const typeSelector = row.querySelector('.bay-type-selector');
         const bayId = typeSelector.getAttribute('data-bay');
         
         const type = typeSelector.value;
         const primaryPath = row.querySelector('.by-path-select').value || null;
         
-        // Read the NVMe path only if the slot is configured as hybrid/u2
         let nvmePath = null;
         if (type === 'u2') {
-            nvmePath = row.querySelector('.by-path-nvme-select').value || null;
+            const nvmeSelect = row.querySelector('.by-path-nvme-select');
+            nvmePath = (nvmeSelect && nvmeSelect.value) || null;
         }
 
+        const labelNum = bayId.startsWith("bay") ? bayId.slice(3) : bayId;
+        const defaultLabel = 'Work Bay ' + (labelNum || bayId);
+
         updatedBayMap[bayId] = {
-            "role": "wipe",
-            "locked": false,
+            "role": localBayMapCopy[bayId]?.role || "wipe",
+            "locked": localBayMapCopy[bayId]?.locked || false, // Fixed Python Capitalized 'False' ReferenceError
             "type": type,
-            "label": 'Work Bay ' + (bayId.slice(3) || bayId), // Preserve dynamic labels
+            "label": localBayMapCopy[bayId]?.label || defaultLabel,
             "by_path": primaryPath,
             "by_path_nvme": nvmePath
         };
     });
 
-    try {
-        const response = await fetch('/api/admin/save-bay-map', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(updatedBayMap)
-        });
-        
+    const response = await safeFetch('/api/admin/save-bay-map', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedBayMap)
+    });
+    
+    if (response.ok) {
+        alert("Bay mapping successfully saved!");
+        localBayMapCopy = {}; 
+        await loadDrives();
+        await loadBayMappingConfig();
+    } else {
         const data = await response.json();
-        if (response.ok) {
-            alert("Bay mapping successfully saved!");
-            location.reload();
-        } else {
-            alert(`Error saving mapping: ${data.error}`);
-        }
-    } catch (err) {
-        alert(`Failed to save configuration: ${err}`);
+        throw new Error(data.error || "Failed to save configuration");
     }
 }
 
@@ -1263,11 +1240,11 @@ function bindDeleteBayButtons() {
 
       const drive = currentDrives.find(d => d.bay === bayId);
       if (drive && (String(drive.status).toUpperCase() === "RUNNING" || String(drive.status).toUpperCase() === "QUEUED")) {
-        alert(`Delete Blocked: Cannot delete ${bayId.toUpperCase()} while an active or queued sanitization job is running on it.`);
+        alert(`Delete Blocked: Cannot delete ${bayId.toUpperCase()} while an active or queued job is running on it.`);
         return;
       }
 
-      const proceed = confirm(`Are you sure you want to stage the removal of ${bayId.toUpperCase()}?\n\nThis change will take effect only after you click 'Save Mapping Configuration'.`);
+      const proceed = confirm(`Are you sure you want to stage the removal of ${bayId.toUpperCase()}?\n\nThis change takes effect only after you click 'Save Mapping Configuration'.`);
       if (!proceed) return;
 
       delete localBayMapCopy[bayId];
@@ -1282,18 +1259,18 @@ function bindDeleteBayButtons() {
 
 addBayBtn.addEventListener("click", () => {
   if (Object.keys(localBayMapCopy).length >= 128) {
-    alert("Add Blocked: Maximum threshold of 128 active bay configurations has been reached.");
+    alert("Add Blocked: Maximum threshold of 128 active configurations has been reached.");
     return;
   }
 
-  const label = prompt("Enter a descriptive label for the new physical bay (e.g., shelf1_slot5):");
+  const label = prompt("Enter a descriptive label for the new physical bay:");
   if (label === null) return; 
   
   const cleanLabel = label.trim() || "Work Bay Extension";
-  const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'nvme'):", "sas_sata");
+  const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'u2' for hybrid NVMe):", "sas_sata");
   if (typeSelection === null) return;
   
-  const cleanType = typeSelection.trim().toLowerCase() === "nvme" ? "nvme" : "sas_sata";
+  const cleanType = typeSelection.trim().toLowerCase() === "u2" ? "u2" : "sas_sata";
 
   const bayKeys = Object.keys(localBayMapCopy);
   let highestNum = 0;
@@ -1311,7 +1288,8 @@ addBayBtn.addEventListener("click", () => {
     locked: false,
     label: cleanLabel,
     type: cleanType,
-    by_path: ""
+    by_path: "",
+    by_path_nvme: ""
   };
 
   currentDrives.push({
@@ -1321,7 +1299,7 @@ addBayBtn.addEventListener("click", () => {
     locked: false,
     present: false,
     status: "EMPTY",
-    interface_type: cleanType === "nvme" ? "nvme" : "sata",
+    interface_type: cleanType === "u2" ? "nvme" : "sata",
     capacity_str: "-",
     marker: { status: "none" }
   });
@@ -1335,28 +1313,7 @@ saveBayMapBtn.addEventListener("click", async () => {
   saveBayMapBtn.textContent = "Saving...";
   
   try {
-    document.querySelectorAll(".bay-path-select").forEach(select => {
-      const bayId = select.getAttribute("data-bay-id");
-      if (localBayMapCopy[bayId]) {
-        localBayMapCopy[bayId].by_path = select.value;
-      }
-    });
-    
-    const response = await safeFetch("/api/admin/save-bay-map", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(localBayMapCopy)
-    });
-    
-    if (response.ok) {
-      alert("Mapping configurations saved successfully. Reloading workspace.");
-      localBayMapCopy = {}; // Clear memory reference so reload rebuilds fresh from updated backend JSON
-      await loadDrives();
-      await loadBayMappingConfig();
-    } else {
-      const data = await response.json();
-      alert(`Save Failed: ${data.error || "Unknown response"}`);
-    }
+    await saveBayMappingConfiguration();
   } catch (err) {
     alert(`Error: ${err.message}`);
   } finally {
@@ -1364,7 +1321,6 @@ saveBayMapBtn.addEventListener("click", async () => {
     saveBayMapBtn.textContent = "Save Mapping Configuration";
   }
 });
-
 
 (async () => {
   await loadSecurityStatus();

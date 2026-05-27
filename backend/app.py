@@ -1287,33 +1287,69 @@ def auto_detect_bays():
                         continue
                     path_to_dev[entry] = os.path.realpath(full_path)
 
-        import glob
-        enclosure_pattern = "/sys/class/enclosure/*/*/device/block/*"
+        enclosure_base = "/sys/class/enclosure"
+        if not os.path.exists(enclosure_base) or not os.listdir(enclosure_base):
+            return jsonify({
+                "status": "success",
+                "message": "Auto-detection completed, but no physical SCSI backplane enclosures were found under /sys/class/enclosure on this host system. Verify that the 'ses' kernel module is loaded.",
+                "bay_map": bay_map
+            }), 200
+
         discovered_slots = {}
-        
-        for dev_path in glob.glob(enclosure_pattern):
-            if os.path.exists(dev_path):
-                sd_node = os.path.basename(dev_path)
-                real_dev = f"/dev/{sd_node}"
-                slot_name = os.path.basename(os.path.dirname(os.path.dirname(dev_path)))
+        METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
+
+        for enc_id in os.listdir(enclosure_base):
+            enc_path = os.path.join(enclosure_base, enc_id)
+            if not os.path.isdir(enc_path):
+                continue
+            
+            for slot_id in os.listdir(enc_path):
+                if slot_id in METADATA_DIRS:
+                    continue
+                slot_path = os.path.join(enc_path, slot_id)
+                if not os.path.isdir(slot_path):
+                    continue
                 
-                digits = re.findall(r'\d+', slot_name)
-                if digits:
-                    slot_num = int(digits[0])
-                    
-                    bay_id = f"bay{slot_num}"
-                    # Match double digit config schemas (e.g. 'bay03' vs 'bay3')
-                    if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
-                        bay_id = f"bay{slot_num:02d}"
-                    
-                    by_path_link = None
-                    for link_entry, node_path in path_to_dev.items():
-                        if os.path.realpath(node_path) == os.path.realpath(real_dev):
-                            by_path_link = link_entry
-                            break
-                    
-                    if by_path_link:
-                        discovered_slots[bay_id] = by_path_link
+                block_devs = []
+
+                # Look for block device paths inside slot node
+                dev_block_path = os.path.join(slot_path, "device", "block")
+                if os.path.exists(dev_block_path) and os.path.isdir(dev_block_path):
+                    for b in os.listdir(dev_block_path):
+                        block_devs.append(b)
+                
+                dev_path = os.path.join(slot_path, "device")
+                if os.path.exists(dev_path) and os.path.isdir(dev_path):
+                    for name in os.listdir(dev_path):
+                        if name.startswith("sd") or name.startswith("nvme"):
+                            block_devs.append(name)
+
+                # Map found devices to their stable by-path symbolic links
+                for sd_node in sorted(list(set(block_devs))):
+                    real_dev = f"/dev/{sd_node}"
+                    digits = re.findall(r'\d+', slot_id)
+                    if digits:
+                        slot_num = int(digits[0])
+                        bay_id = f"bay{slot_num}"
+                        
+                        if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
+                            bay_id = f"bay{slot_num:02d}"
+                        
+                        by_path_link = None
+                        for link_entry, node_path in path_to_dev.items():
+                            if os.path.realpath(node_path) == os.path.realpath(real_dev):
+                                by_path_link = link_entry
+                                break
+                        
+                        if by_path_link:
+                            discovered_slots[bay_id] = by_path_link
+
+        if not discovered_slots:
+            return jsonify({
+                "status": "success",
+                "message": "Auto-detection run finished, but no populated physical backplane slots or block devices were detected.",
+                "bay_map": bay_map
+            }), 200
 
         updates_count = 0
         for bay_id, by_path_val in discovered_slots.items():
@@ -1342,7 +1378,7 @@ def auto_detect_bays():
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
+        
 @app.route("/api/admin/save-bay-map", methods=["POST"])
 def update_bay_map():
     try:
