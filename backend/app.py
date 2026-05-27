@@ -1324,7 +1324,7 @@ def auto_detect_bays():
                         if name.startswith("sd") or name.startswith("nvme"):
                             block_devs.append(name)
 
-                # Map enclosure slots directly to bay numbers
+                # Process found devices for this slot
                 for sd_node in sorted(list(set(block_devs))):
                     real_dev = f"/dev/{sd_node}"
                     digits = re.findall(r'\d+', slot_id)
@@ -1378,7 +1378,7 @@ def auto_detect_bays():
         }), 200
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500       
+        return jsonify({"error": str(e)}), 500      
 
 @app.route("/api/admin/save-bay-map", methods=["POST"])
 def update_bay_map():
