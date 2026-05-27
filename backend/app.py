@@ -42,13 +42,45 @@ from disk_ops import (
     get_raw_smart_diagnostics, get_os_by_path
 )
 
+class PollingFilter(logging.Filter):
+    """
+    Filters out routine high-frequency polling telemetry requests from the Werkzeug logs
+    unless they return a non-success HTTP status code (such as a 4xx or 5xx error).
+    """
+    def filter(self, record):
+        try:
+            msg = record.getMessage()
+            # Suppress routine ANSI escape codes that colorize logs in development
+            clean_msg = re.sub(r'\x1b\[[0-9;]*m', '', msg)
+            
+            # Identify repetitive poll endpoints
+            is_poll_endpoint = any(x in clean_msg for x in [
+                "GET /api/drives",
+                "GET /api/admin/metrics",
+                "GET /api/erase/history"
+            ])
+            
+            if is_poll_endpoint:
+                # Suppress if HTTP status represents success (200 OK or 304 Not Modified)
+                if " 200 " in clean_msg or " 304 " in clean_msg:
+                    return False
+        except Exception:
+            pass
+        return True
+
 def setup_application_logging():
     try:
         logs_dir = get_logs_dir()
         log_file = os.path.join(logs_dir, "app.log")
+        
+        # Configure file rotating handler (capped strictly at 10MB as requested)
         handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=3)
         formatter = logging.Formatter('%(asctime)s %(levelname)s [%(name)s] %(message)s')
         handler.setFormatter(formatter)
+        
+        # Inject the polling filter to intercept Werkzeug telemetry lines
+        polling_filter = PollingFilter()
+        handler.addFilter(polling_filter)
         
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.INFO)
@@ -56,6 +88,7 @@ def setup_application_logging():
         
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(formatter)
+        console_handler.addFilter(polling_filter)
         root_logger.addHandler(console_handler)
     except Exception as e:
         print(f"Failed to setup file logging: {str(e)}", file=sys.stderr)
@@ -383,6 +416,9 @@ def finalize_failed_job(job_id, error_message):
             persist_job(job)
             send_slack_notification(job)
             
+            # Emit a high-signal application log representing an initialization failure
+            logger.error(f"Job {job_id} (Bay {job['request']['bay']}) initialization failed: {error_message}")
+            
             try:
                 purge_old_logs(30)
             except Exception:
@@ -405,6 +441,9 @@ def run_erase_job(job_id):
     interface_type = job["request"]["interface_type"]
     method = job["request"]["method"]
     capacity_bytes = job["request"].get("capacity_bytes") or (100 * 1024 * 1024 * 1024)
+
+    # High-signal event marking the active beginning of physical wipe commands
+    logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}'")
 
     if method in {"secure_erase", "enhanced_secure_erase"} and interface_type == "sata":
         hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
@@ -466,6 +505,7 @@ def run_erase_job(job_id):
     start_time = datetime.now(timezone.utc)
     estimated_seconds = 600
 
+    # Thread sleep telemetry updates loop (contained within individual job context)
     while process.poll() is None:
         elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
         progress = 0.0
@@ -654,6 +694,7 @@ def run_erase_job(job_id):
                 warnings_list.append(f"Initiation process returned non-zero code ({execution.get('exit_code')}), but hardware-level sanitization status verified successfully.")
                 job["result"]["warnings"] = warnings_list
 
+            logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Committing physical security markers.")
             marker_result = write_marker_and_verify(job)
             job["marker"] = marker_result
             
@@ -667,10 +708,14 @@ def run_erase_job(job_id):
                 job["certificate"] = build_certificate(job)
                 job["status"] = "completed"
                 job["error"] = None
+                
+                # High-signal application events of ultimate success
+                logger.info(f"Job {job_id} (Bay {job['request']['bay']}) COMPLETED. Certificate generated, audit record finalized.")
             except Exception as e:
                 job["status"] = "failed"
                 job["error"] = f"certificate_generation_failed:{e}"
                 job["certificate"] = None
+                logger.error(f"Job {job_id} (Bay {job['request']['bay']}) failed certificate generation: {str(e)}")
         else:
             job["status"] = "failed"
             if not execution.get("ok"):
@@ -678,6 +723,9 @@ def run_erase_job(job_id):
             else:
                 job["error"] = verification.get("error") or "erase_verification_failed"
             
+            # High-signal error event written to the global app.log
+            logger.error(f"Job {job_id} (Bay {job['request']['bay']}) FAILED: {job['error']}")
+
             failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
             if os.path.exists(active_log_path):
                 try:
@@ -852,6 +900,9 @@ def start_erase():
                 "created_at": job["created_at"],
                 **job["request"],
             })
+
+        # High-signal audit trail log entry
+        logger.info(f"Erase request accepted for bays: {bays}. Technician: '{technician}', Ticket: '{ticket_number}'. Created {len(accepted_jobs)} job(s).")
 
         return jsonify({
             "status": "accepted",
@@ -1066,6 +1117,7 @@ def test_webhook():
             resp_code = response.getcode()
             
         if resp_code in (200, 201, 204):
+            logger.info("Test slack webhook dispatch succeeded.")
             return jsonify({"status": "success", "message": "Test webhook dispatched successfully."}), 200
         return jsonify({"error": f"Slack returned status code {resp_code}"}), 400
     except Exception as e:
@@ -1193,6 +1245,7 @@ def download_support_bundle():
             
         shutil.rmtree(workspace_dir, ignore_errors=True)
         
+        logger.info(f"Support bundle built successfully: {tar_path}")
         return send_file(
             tar_path,
             mimetype="application/gzip",
@@ -1269,8 +1322,6 @@ def get_unmapped_drives():
         return jsonify({"error": str(e)}), 500
 
 # --- AUTOMATIC ENCLOSURE MAPPING ROUTE ---
-
-# --- backend/app.py ---
 
 @app.route("/api/admin/auto-detect-bays", methods=["POST"])
 def auto_detect_bays():
@@ -1400,6 +1451,7 @@ def auto_detect_bays():
 
         # If both scans yielded 0 populated slots, report back to the user
         if not discovered_slots:
+            logger.info("Auto-detect bays completed: no physical backplane slots or block devices detected.")
             return jsonify({
                 "status": "success",
                 "message": "Auto-detection run completed, but no physical backplane slots or block devices were detected on this server.",
@@ -1425,6 +1477,7 @@ def auto_detect_bays():
 
         save_bay_map(bay_map, config_dir)
         
+        logger.info(f"Auto-detect bays updated {updates_count} map elements out of {len(discovered_slots)} total discovered enclosures.")
         return jsonify({
             "status": "success",
             "message": f"Successfully mapped {len(discovered_slots)} physical backplane slot(s). Updated {updates_count} bay(s).",
@@ -1451,6 +1504,8 @@ def update_bay_map():
                 return jsonify({"error": f"Configuration for {bay_id} must be a dictionary."}), 400
                 
         save_bay_map(payload, config_dir)
+        
+        logger.info("Enclosure bay map edited manually by administrator.")
         return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -1482,6 +1537,8 @@ def admin_policy():
                 current_policy["lan_passphrase"] = new_pass
                 
             save_policy(current_policy, config_dir)
+            
+            logger.info("Operational policies modified successfully by administrator.")
             return jsonify({"status": "success", "message": "System policies updated successfully."}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
