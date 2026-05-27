@@ -1345,24 +1345,45 @@ def auto_detect_bays():
 
         # --- METHOD B: SAS Transport Subsystem bay_identifier Fallback (For Passive Direct-Attach Backplanes) ---
         if not discovered_slots:
-            import glob
-            # Search for any block device's sas_device bay_identifier in sysfs
-            for bay_id_file in glob.glob("/sys/block/sd*/device/sas_device/end_device-*/bay_identifier"):
-                try:
-                    parts = bay_id_file.split("/")
-                    sd_node = parts[3] # Extract 'sdX' from '/sys/block/sdX/...'
-                    
-                    with open(bay_id_file, "r") as f:
-                        slot_str = f.read().strip()
+            sys_block_dir = "/sys/block"
+            if os.path.exists(sys_block_dir):
+                for name in os.listdir(sys_block_dir):
+                    if not name.startswith("sd"):
+                        continue
                         
-                    if slot_str.isdigit():
-                        slot_num = int(slot_str)
+                    real_path = os.path.realpath(os.path.join(sys_block_dir, name))
+                    
+                    # Walk up the parent directory tree to find the SCSI/SAS transport target node
+                    npath = real_path
+                    found_bay = None
+                    
+                    while npath and npath != "/":
+                        sas_device_dir = os.path.join(npath, "sas_device")
+                        if os.path.exists(sas_device_dir) and os.path.isdir(sas_device_dir):
+                            # Inspect the specific SAS end device subdirectory inside sas_device
+                            for end_dev_id in os.listdir(sas_device_dir):
+                                bay_id_path = os.path.join(sas_device_dir, end_dev_id, "bay_identifier")
+                                if os.path.exists(bay_id_path):
+                                    try:
+                                        with open(bay_id_path, "r") as f:
+                                            slot_str = f.read().strip()
+                                        if slot_str.isdigit():
+                                            found_bay = int(slot_str)
+                                            break
+                                    except Exception:
+                                        pass
+                        if found_bay is not None:
+                            break
+                        npath = os.path.dirname(npath)
+                        
+                    if found_bay is not None:
+                        slot_num = found_bay
                         bay_id = f"bay{slot_num}"
                         
                         if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
                             bay_id = f"bay{slot_num:02d}"
                         
-                        real_dev = f"/dev/{sd_node}"
+                        real_dev = f"/dev/{name}"
                         by_path_link = None
                         for link_entry, node_path in path_to_dev.items():
                             if os.path.realpath(node_path) == os.path.realpath(real_dev):
@@ -1371,8 +1392,6 @@ def auto_detect_bays():
                                 
                         if by_path_link:
                             discovered_slots[bay_id] = by_path_link
-                except Exception:
-                    pass
 
         # If both scans yielded 0 populated slots, report back to the user
         if not discovered_slots:
@@ -1408,7 +1427,7 @@ def auto_detect_bays():
         }), 200
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500    
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/admin/save-bay-map", methods=["POST"])
 def update_bay_map():
