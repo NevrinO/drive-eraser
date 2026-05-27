@@ -310,11 +310,18 @@ setup_config() {
 
     mkdir -p "$CONFIG_DIR"
 
-    # bay_map.json - only create if missing
+     # bay_map.json - only create if missing
     if [ ! -f "$CONFIG_DIR/bay_map.json" ]; then
         info "Creating default clean-slate bay_map.json..."
         cat > "$CONFIG_DIR/bay_map.json" << 'EOF'
 {
+  "bay0": {
+    "role": "wipe",
+    "locked": false,
+    "type": "sas_sata",
+    "label": "Work Bay 0",
+    "by_path": null
+  },
   "bay1": {
     "role": "wipe",
     "locked": false,
@@ -346,7 +353,7 @@ setup_config() {
   "bay5": {
     "role": "wipe",
     "locked": false,
-    "type": "u2",
+    "type": "sas_sata",
     "label": "Work Bay 5",
     "by_path": null
   },
@@ -369,6 +376,13 @@ setup_config() {
     "locked": false,
     "type": "u2",
     "label": "Work Bay 8",
+    "by_path": null
+  },
+  "bay9": {
+    "role": "wipe",
+    "locked": false,
+    "type": "u2",
+    "label": "Work Bay 9",
     "by_path": null
   }
 }

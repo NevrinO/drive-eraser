@@ -571,13 +571,7 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
 # --- PROGRAMMATIC OS DRIVE DETECTION AND OVERRIDES ---
 
 def get_os_parent_device():
-    """
-    Programmatically returns the parent block device name (e.g. 'sda', 'nvme0n1') of the OS drive.
-    Uses stat on "/" and traces it back via /sys/dev/block/.
-    Includes robust fallbacks for containerized, LVM, or non-standard mounts.
-    """
     try:
-        # Standard approach: major/minor device stat of root directory
         st = os.stat("/")
         major = os.major(st.st_dev)
         minor = os.minor(st.st_dev)
@@ -591,18 +585,16 @@ def get_os_parent_device():
                         devname = line.strip().split("=")[1]
                         break
                         
-        # Fallback 1: Run findmnt to get the mount source device node for '/'
         if not devname:
             try:
                 res = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "/"], capture_output=True, text=True, timeout=5)
                 if res.returncode == 0 and res.stdout.strip():
                     src = res.stdout.strip()
                     if src.startswith("/dev/"):
-                        devname = src[5:] # e.g. 'sda2' or 'nvme0n1p2'
+                        devname = src[5:]
             except Exception:
                 pass
                 
-        # Fallback 2: Read /proc/mounts
         if not devname:
             if os.path.exists("/proc/mounts"):
                 with open("/proc/mounts", "r") as f:
@@ -617,12 +609,11 @@ def get_os_parent_device():
         if not devname:
             return None
             
-        # Helper to get parent of a leaf block device (e.g. 'sda2' -> 'sda')
         def resolve_leaf_parent(name):
             sys_path = f"/sys/class/block/{name}"
             if not os.path.exists(sys_path):
                 return name
-            real_path = os.path.realpath(sys_path) # e.g. /sys/devices/.../block/sda/sda2
+            real_path = os.path.realpath(sys_path)
             if "/block/" in real_path:
                 parts = real_path.split("/block/")
                 if len(parts) > 1:
@@ -631,7 +622,6 @@ def get_os_parent_device():
                         return subparts[0]
             return name
 
-        # Handle LVM device mapper (dm-X)
         if devname.startswith("dm-"):
             slaves_dir = f"/sys/class/block/{devname}/slaves"
             if os.path.isdir(slaves_dir):
@@ -644,11 +634,6 @@ def get_os_parent_device():
         return None
 
 def get_os_by_path():
-    """
-    Programmatically detects the /dev/disk/by-path/ address of the OS drive.
-    Returns (parent_dev_node, by_path_string) or (None, None).
-    E.g. ('/dev/sda', 'pci-0000:00:1f.2-ata-1.0')
-    """
     parent_name = get_os_parent_device()
     if not parent_name:
         return None, None
@@ -659,7 +644,6 @@ def get_os_by_path():
         for entry in os.listdir(by_path_dir):
             full_path = os.path.join(by_path_dir, entry)
             if os.path.islink(full_path):
-                # Avoid partitions, only want the main disk path
                 if "-part" in entry:
                     continue
                 if os.path.realpath(full_path) == os.path.realpath(dev_node):
@@ -684,27 +668,62 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     try: passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
     except Exception: pass
 
-    # Dynamically extract active host OS physical parameters
     os_dev_node, os_by_path = get_os_by_path()
 
     for bay_id, config in bay_map.items():
         target_path = config.get('by_path')
+        target_path_nvme = config.get('by_path_nvme')
+        
         bay_info = {
-            "bay": bay_id, "label": config.get('label', bay_id), "role": config.get('role', 'wipe'), "locked": config.get('locked', False),
-            "configured_by_path": target_path, "resolved_by_path": None, "present": False, "device": None, "serial": None, "model": None, "status": "EMPTY",
-            "interface_type": "unknown", "capacity_str": "-", "marker": {"ok": False, "status": "none", "error": None, "details": {}}, "recommendation": {"status": "UNKNOWN", "comment": "-"}, "health_score": 100,
-            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, "supported_methods": ["overwrite"],
-            "smart": {}, "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}}
+            "bay": bay_id, 
+            "label": config.get('label', bay_id), 
+            "role": config.get('role', 'wipe'), 
+            "locked": config.get('locked', False),
+            "configured_by_path": target_path, 
+            "resolved_by_path": None,
+            "configured_by_path_nvme": target_path_nvme, 
+            "resolved_by_path_nvme": None,
+            "type": config.get("type", "sas_sata"),  # <-- Ensure this is explicitly set here
+            "present": False, 
+            "device": None, 
+            "serial": None, 
+            "model": None, 
+            "status": "EMPTY",
+            "interface_type": "unknown", 
+            "capacity_str": "-", 
+            "marker": {"ok": False, "status": "none", "error": None, "details": {}}, 
+            "recommendation": {"status": "UNKNOWN", "comment": "-"}, 
+            "health_score": 100,
+            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, 
+            "supported_methods": ["overwrite"],
+            "smart": {}, 
+            "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}}
         }
+        
+        # 1. Primary SATA/SAS path check
         matched_by_path, dev_node = resolve_bay_device(target_path, path_to_dev)
+        matched_by_path_nvme = None
+        
+        # 2. Tri-Mode Fallback: If no SATA/SAS is found, resolve the NVMe motherboard port
+        if not dev_node and target_path_nvme:
+            matched_by_path_nvme, dev_node = resolve_bay_device(target_path_nvme, path_to_dev)
+            if dev_node:
+                bay_info["resolved_by_path_nvme"] = matched_by_path_nvme
+        else:
+            if dev_node:
+                bay_info["resolved_by_path"] = matched_by_path
+
         if dev_node:
             bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
 
-            # Check if this physical slot is running the operating system
             is_os_drive = False
             if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
                 is_os_drive = True
-            if os_by_path and (matched_by_path == os_by_path or target_path == os_by_path or os.path.basename(matched_by_path or "") == os.path.basename(os_by_path)):
+            
+            resolved_active_path = matched_by_path_nvme if matched_by_path_nvme else matched_by_path
+            configured_active_path = target_path_nvme if matched_by_path_nvme else target_path
+            
+            if os_by_path and (resolved_active_path == os_by_path or configured_active_path == os_by_path or os.path.basename(resolved_active_path or "") == os.path.basename(os_by_path)):
                 is_os_drive = True
 
             if is_os_drive:
@@ -712,12 +731,12 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
                 bay_info["locked"] = True
 
             if running_devices and dev_node in running_devices:
-                bay_info.update({"resolved_by_path": matched_by_path, "present": True, "device": dev_node, "status": "RUNNING", "interface_type": detect_interface_type(matched_by_path or target_path, dev_node, config.get('type'), None), "capacity_str": "Sanitizing..."})
+                bay_info.update({"present": True, "device": dev_node, "status": "RUNNING", "interface_type": detect_interface_type(resolved_active_path or configured_active_path, dev_node, config.get('type'), None), "capacity_str": "Sanitizing..."})
                 results.append(bay_info); continue
 
             command_diagnostics = {}
             smart = get_smart_data(dev_node, command_diagnostics)
-            interface_type = detect_interface_type(matched_by_path or target_path, dev_node, config.get('type'), smart.get("raw"))
+            interface_type = detect_interface_type(resolved_active_path or configured_active_path, dev_node, config.get('type'), smart.get("raw"))
             capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
             marker_status = read_marker_status(dev_node, interface_type, passphrase)
 
@@ -730,7 +749,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
 
             bay_info.update({
-                "resolved_by_path": matched_by_path, "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "capacity_str": smart.get("capacity_str", "-"),
+                "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "capacity_str": smart.get("capacity_str", "-"),
                 "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
                 "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
                 "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
@@ -741,7 +760,6 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
                 }
             })
 
-            # Force complete protection overlay on host OS drive attributes
             if is_os_drive:
                 bay_info["role"] = "os"
                 bay_info["locked"] = True
@@ -751,7 +769,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
                     bay_info["capacity_str"] = f"{bay_info['capacity_str']} [OS]"
 
         else:
-            bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if target_path else "missing_by_path"}
+            bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if (target_path or target_path_nvme) else "missing_by_path"}
         results.append(bay_info)
     return results
 # --- END OF FILE backend/disk_ops.py ---
