@@ -1088,6 +1088,169 @@ async function loadBayMappingConfig() {
   }
 }
 
+document.getElementById('btn-auto-detect').addEventListener('click', async () => {
+    if (!confirm("Are you sure you want to scan and auto-detect your physical SAS/SATA backplane bays? This will match any populated slots with your config automatically.")) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/admin/auto-detect-bays', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            alert(`Success! ${data.message}`);
+            // Force reload your admin configuration inputs or refresh the page
+            location.reload(); 
+        } else {
+            alert(`Error running scan: ${data.error}`);
+        }
+    } catch (err) {
+        alert(`Failed to communicate with backplane auto-detector: ${err}`);
+    }
+});
+
+// Example helper to populate the dropdown options
+function populatePathDropdown(selectElement, unmappedDrives, currentValue) {
+    selectElement.innerHTML = '<option value="">-- Select Drive Path (Empty Slot) --</option>';
+    
+    // If there's a currently saved path, add it as the selected option first
+    if (currentValue) {
+        const opt = document.createElement('option');
+        opt.value = currentValue;
+        opt.textContent = currentValue; // Shows the saved path
+        opt.selected = true;
+        selectElement.appendChild(opt);
+    }
+
+    // Add all other unmapped drives to the dropdown
+    unmappedDrives.forEach(drive => {
+        if (drive.by_path !== currentValue) {
+            const opt = document.createElement('option');
+            opt.value = drive.by_path;
+            opt.textContent = `${drive.model} (${drive.serial}) - ${drive.capacity_str}`;
+            selectElement.appendChild(opt);
+        }
+    });
+}
+
+// Main rendering logic inside your app.js layout loop
+function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
+    const container = document.createElement('div');
+    container.className = 'bay-config-row';
+    container.id = `config-row-${bayId}`;
+    
+    // 1. Bay Type Selector (sas_sata or u2)
+    const isU2 = bayConfig.type === 'u2';
+    
+    container.innerHTML = `
+        <h3>Bay: ${bayConfig.label || bayId}</h3>
+        
+        <div class="form-group">
+            <label>Drive Interface Type</label>
+            <select id="type-${bayId}" class="bay-type-selector" data-bay="${bayId}">
+                <option value="sas_sata" ${!isU2 ? 'selected' : ''}>SAS / SATA</option>
+                <option value="u2" ${isU2 ? 'selected' : ''}>U.2 / U.3 / Hybrid (NVMe capable)</option>
+            </select>
+        </div>
+
+        <!-- Primary SATA/SAS Selector -->
+        <div class="form-group">
+            <label id="primary-label-${bayId}">Primary SAS/SATA Controller Port Path</label>
+            <select id="path-${bayId}" class="by-path-select" data-bay="${bayId}">
+                <!-- Populated dynamically below -->
+            </select>
+        </div>
+
+        <!-- Secondary NVMe Selector (Only visible for U.2/hybrid bays) -->
+        <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'}">
+            <label style="color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
+            <select id="path-nvme-${bayId}" class="by-path-nvme-select" data-bay="${bayId}">
+                <!-- Populated dynamically below -->
+            </select>
+        </div>
+        <hr>
+    `;
+
+    // Populate primary dropdown
+    const primarySelect = container.querySelector(`#path-${bayId}`);
+    populatePathDropdown(primarySelect, unmappedDrives, bayConfig.by_path);
+
+    // Populate secondary NVMe dropdown
+    const nvmeSelect = container.querySelector(`#path-nvme-${bayId}`);
+    populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme);
+
+    // Toggle NVMe field visibility dynamically when the Interface Type dropdown changes
+    const typeSelector = container.querySelector(`#type-${bayId}`);
+    typeSelector.addEventListener('change', (e) => {
+        const nvmeGroup = container.querySelector(`#nvme-group-${bayId}`);
+        const primaryLabel = container.querySelector(`#primary-label-${bayId}`);
+        
+        if (e.target.value === 'u2') {
+            nvmeGroup.style.display = 'block';
+            primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path (SATA Mode)';
+        } else {
+            nvmeGroup.style.display = 'none';
+            primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path';
+            // Clear the secondary path selection if reverted to standard SATA
+            nvmeSelect.value = "";
+        }
+    });
+
+    return container;
+}
+
+async function saveBayMappingConfiguration() {
+    const updatedBayMap = {};
+    
+    // Query all rendered configuration blocks (assuming you use a selector like '.bay-config-row')
+    const configRows = document.querySelectorAll('.bay-config-row');
+    
+    configRows.forEach(row => {
+        // Find the bay ID associated with this row element
+        const typeSelector = row.querySelector('.bay-type-selector');
+        const bayId = typeSelector.getAttribute('data-bay');
+        
+        const type = typeSelector.value;
+        const primaryPath = row.querySelector('.by-path-select').value || null;
+        
+        // Read the NVMe path only if the slot is configured as hybrid/u2
+        let nvmePath = null;
+        if (type === 'u2') {
+            nvmePath = row.querySelector('.by-path-nvme-select').value || null;
+        }
+
+        updatedBayMap[bayId] = {
+            "role": "wipe",
+            "locked": false,
+            "type": type,
+            "label": 'Work Bay ' + (bayId.slice(3) || bayId), // Preserve dynamic labels
+            "by_path": primaryPath,
+            "by_path_nvme": nvmePath
+        };
+    });
+
+    try {
+        const response = await fetch('/api/admin/save-bay-map', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(updatedBayMap)
+        });
+        
+        const data = await response.json();
+        if (response.ok) {
+            alert("Bay mapping successfully saved!");
+            location.reload();
+        } else {
+            alert(`Error saving mapping: ${data.error}`);
+        }
+    } catch (err) {
+        alert(`Failed to save configuration: ${err}`);
+    }
+}
+
 function bindDeleteBayButtons() {
   document.querySelectorAll(".btn-delete-bay").forEach(button => {
     button.addEventListener("click", (event) => {

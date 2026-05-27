@@ -182,15 +182,17 @@ def validate_single_bay(technician, ticket_number, bay, method_override, drives,
     if not device:
         return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
 
-    # Absolute safety double-lock backend protection
+    # Absolute dynamic hard-stop backend safety locks
     os_dev_node, os_by_path = get_os_by_path()
     configured_path = selected_drive.get("configured_by_path")
     resolved_path = selected_drive.get("resolved_by_path")
+    configured_path_nvme = selected_drive.get("configured_by_path_nvme")
+    resolved_path_nvme = selected_drive.get("resolved_by_path_nvme")
 
     if os_dev_node and device and os.path.realpath(device) == os.path.realpath(os_dev_node):
         return None, {"error": f"Device {device} is the active host OS drive and cannot be erased!"}, 403
 
-    for path in [configured_path, resolved_path]:
+    for path in [configured_path, resolved_path, configured_path_nvme, resolved_path_nvme]:
         if path and os_by_path and (path == os_by_path or os.path.basename(path) == os.path.basename(os_by_path)):
             return None, {"error": f"Device path {path} is the active host OS drive and cannot be erased!"}, 403
 
@@ -1205,16 +1207,20 @@ def get_unmapped_drives():
             
         mapped_paths = set()
         for config in bay_map.values():
+            # Exclude both mapped SAS/SATA paths and mapped PCIe NVMe paths from unmapped selections
             p = config.get("by_path")
             if p:
                 mapped_paths.add(os.path.basename(p))
                 mapped_paths.add(p)
+            p_nvme = config.get("by_path_nvme")
+            if p_nvme:
+                mapped_paths.add(os.path.basename(p_nvme))
+                mapped_paths.add(p_nvme)
                 
         path_to_dev = {}
         by_path_dir = '/dev/disk/by-path/'
         unmapped_devices = []
 
-        # Detect active operating system drive parameters
         os_dev_node, os_by_path = get_os_by_path()
         
         if os.path.exists(by_path_dir):
@@ -1232,7 +1238,6 @@ def get_unmapped_drives():
             try:
                 smart = get_smart_data(dev_node)
                 
-                # Check if this drive matches host operating system disk
                 is_os = False
                 if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
                     is_os = True
@@ -1255,6 +1260,86 @@ def get_unmapped_drives():
             except Exception:
                 pass
         return jsonify(unmapped_devices), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --- AUTOMATIC ENCLOSURE MAPPING ROUTE ---
+
+@app.route("/api/admin/auto-detect-bays", methods=["POST"])
+def auto_detect_bays():
+    try:
+        config_dir = get_config_dir()
+        bay_map_path = os.path.join(config_dir, "bay_map.json")
+        
+        try:
+            with open(bay_map_path, "r", encoding="utf-8") as f:
+                bay_map = json.load(f)
+        except Exception:
+            bay_map = {}
+
+        path_to_dev = {}
+        by_path_dir = '/dev/disk/by-path/'
+        if os.path.exists(by_path_dir):
+            for entry in os.listdir(by_path_dir):
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    if "-part" in entry:
+                        continue
+                    path_to_dev[entry] = os.path.realpath(full_path)
+
+        import glob
+        enclosure_pattern = "/sys/class/enclosure/*/*/device/block/*"
+        discovered_slots = {}
+        
+        for dev_path in glob.glob(enclosure_pattern):
+            if os.path.exists(dev_path):
+                sd_node = os.path.basename(dev_path)
+                real_dev = f"/dev/{sd_node}"
+                slot_name = os.path.basename(os.path.dirname(os.path.dirname(dev_path)))
+                
+                digits = re.findall(r'\d+', slot_name)
+                if digits:
+                    slot_num = int(digits[0])
+                    
+                    bay_id = f"bay{slot_num}"
+                    # Match double digit config schemas (e.g. 'bay03' vs 'bay3')
+                    if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
+                        bay_id = f"bay{slot_num:02d}"
+                    
+                    by_path_link = None
+                    for link_entry, node_path in path_to_dev.items():
+                        if os.path.realpath(node_path) == os.path.realpath(real_dev):
+                            by_path_link = link_entry
+                            break
+                    
+                    if by_path_link:
+                        discovered_slots[bay_id] = by_path_link
+
+        updates_count = 0
+        for bay_id, by_path_val in discovered_slots.items():
+            if bay_id in bay_map:
+                if bay_map[bay_id].get("by_path") != by_path_val:
+                    bay_map[bay_id]["by_path"] = by_path_val
+                    updates_count += 1
+            else:
+                bay_map[bay_id] = {
+                    "role": "wipe",
+                    "locked": False,
+                    "type": "sas_sata",
+                    "label": f"Work Bay {bay_id[3:] if bay_id.startswith('bay') else bay_id}",
+                    "by_path": by_path_val,
+                    "by_path_nvme": None
+                }
+                updates_count += 1
+
+        save_bay_map(bay_map, config_dir)
+        
+        return jsonify({
+            "status": "success",
+            "message": f"Successfully mapped {len(discovered_slots)} physical backplane slot(s). Updated {updates_count} bay(s).",
+            "bay_map": bay_map
+        }), 200
+        
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
