@@ -529,6 +529,11 @@ def run_erase_job(job_id):
     except Exception:
         stdout_content = "Failed to extract execution stream log content."
 
+    # Intercept expected ENOSPC termination of dd raw overwrites
+    if method == "overwrite" and exit_code == 1:
+        if "no space left on device" in stdout_content.lower():
+            execution_ok = True
+
     execution = {
         "ok": execution_ok,
         "command": " ".join(command),

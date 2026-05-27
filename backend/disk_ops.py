@@ -1,4 +1,3 @@
-# --- START OF FILE backend/disk_ops.py ---
 import subprocess
 import json
 import os
@@ -338,6 +337,29 @@ def detect_interface_type(by_path_value, device, configured_type=None, smart_out
     if "nvme" in value or dev.startswith("/dev/nvme"): return "nvme"
     if "sas" in value: return "sas"
     if "ata" in value: return "sata"
+    
+    # Sysfs-based fallback to distinguish true SCSI/SAS drives from SATA devices on SAS HBAs
+    dev_name = os.path.basename(dev)
+    if dev_name and dev.startswith("/dev/sd"):
+        sys_vendor_path = f"/sys/block/{dev_name}/device/vendor"
+        if os.path.exists(sys_vendor_path):
+            try:
+                with open(sys_vendor_path, "r") as f:
+                    vendor = f.read().strip()
+                # SATA disks on SAS HBAs will return "ATA     " as vendor.
+                # True SAS/SCSI disks will return their manufacturer's name.
+                if "ATA" in vendor:
+                    return "sata"
+                else:
+                    # Check if the parent bus/device path is attached via SAS host
+                    sys_device_path = f"/sys/block/{dev_name}/device"
+                    if os.path.exists(sys_device_path):
+                        real_sys_path = os.path.realpath(sys_device_path)
+                        if "sas" in real_sys_path.lower():
+                            return "sas"
+            except Exception:
+                pass
+
     return "sata" if dev.startswith("/dev/sd") else "unknown"
 
 def detect_sata_capabilities(device, diagnostics=None):
@@ -683,7 +705,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             "resolved_by_path": None,
             "configured_by_path_nvme": target_path_nvme, 
             "resolved_by_path_nvme": None,
-            "type": config.get("type", "sas_sata"),  # <-- Ensure this is explicitly set here
+            "type": config.get("type", "sas_sata"),  # Ensure type remains explicitly mapped
             "present": False, 
             "device": None, 
             "serial": None, 
@@ -772,4 +794,3 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if (target_path or target_path_nvme) else "missing_by_path"}
         results.append(bay_info)
     return results
-# --- END OF FILE backend/disk_ops.py ---

@@ -1,4 +1,3 @@
-# --- START OF FILE backend/verification.py ---
 import os
 import re
 import json
@@ -6,6 +5,7 @@ import subprocess
 import hashlib
 import hmac
 import time
+import random
 from datetime import datetime, timezone
 from common import load_policy
 
@@ -157,7 +157,7 @@ def verify_sata_secure_erase(device, method):
             }
         return {"ok": False, "status": "verification_error", "error": "sata_security_section_missing", "details": {"method": method}}
 
-    # Parse individual flags precisely using word boundaries to avoid false substring matches (e.g., 'not frozen' matching 'frozen')
+    # Parse individual flags precisely using word boundaries to avoid false substring matches
     sec_lines = [line.strip() for line in security_section.splitlines()]
     is_enabled = any(re.search(r"\benabled\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
     is_locked = any(re.search(r"\blocked\b", line) and not re.search(r"\bnot\b", line) for line in sec_lines)
@@ -273,6 +273,83 @@ def verify_sas_block(device, method):
 
     return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sas_sanitize_status", "method": method, "output": output}}
 
+def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=10*1024*1024, max_read_bytes=10*1024*1024*1024):
+    """
+    Performs a secondary zero-validation check by reading spatially distributed
+    samples across the drive LBA range. Combines random sampling with sequential chunk
+    reads to avoid disk head seek bottlenecks on HDDs.
+    """
+    try:
+        with open(device, "rb") as f:
+            f.seek(0, 2)
+            capacity = f.tell()
+    except Exception as e:
+        return {"ok": False, "error": "secondary_capacity_check_failed", "details": str(e)}
+
+    # Calculate total bytes to verify based on 10% sample ratio
+    target_read_bytes = int(capacity * sample_ratio)
+    if max_read_bytes and target_read_bytes > max_read_bytes:
+        target_read_bytes = max_read_bytes
+
+    # Determine chunk count
+    num_chunks = max(1, target_read_bytes // chunk_size_bytes)
+    if capacity < chunk_size_bytes:
+        chunk_size_bytes = capacity
+        num_chunks = 1
+
+    # Generate spaced random offsets spanning the entire LBA
+    interval_size = capacity // num_chunks
+    offsets = []
+    for i in range(num_chunks):
+        start = i * interval_size
+        end = max(start, (i + 1) * interval_size - chunk_size_bytes)
+        if end > start:
+            offsets.append(random.randint(start, end))
+        else:
+            offsets.append(start)
+
+    total_verified_bytes = 0
+    non_zero_found = False
+    first_non_zero_offset = None
+
+    try:
+        with open(device, "rb") as f:
+            for offset in offsets:
+                f.seek(offset)
+                data = f.read(chunk_size_bytes)
+                total_verified_bytes += len(data)
+                
+                # Highly optimized C-level block evaluation in Python
+                if data != b'\x00' * len(data):
+                    non_zero_found = True
+                    first_non_zero_offset = offset
+                    break
+    except Exception as e:
+        return {"ok": False, "error": "secondary_sampled_read_failed", "details": str(e)}
+
+    if non_zero_found:
+        return {
+            "ok": False,
+            "status": "verification_failed",
+            "error": "secondary_zero_check_failed_nonzero_data_detected",
+            "details": {
+                "offset": first_non_zero_offset,
+                "total_verified_bytes": total_verified_bytes,
+                "sample_ratio": sample_ratio
+            }
+        }
+
+    return {
+        "ok": True,
+        "status": "verified",
+        "details": {
+            "total_verified_bytes": total_verified_bytes,
+            "chunks_read": num_chunks,
+            "chunk_size_bytes": chunk_size_bytes,
+            "sample_ratio": sample_ratio
+        }
+    }
+
 def write_marker_and_verify(job):
     dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
     if not dd_cmd:
@@ -373,20 +450,40 @@ def verification_for_method(device, interface_type, method, execution):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
 
+    primary_result = None
+
     if selected_method == "overwrite":
         if not execution.get("ok"):
             return {"ok": False, "status": "skipped", "error": "erase_failed", "details": {"method": selected_method, "interface_type": iface, "exit_code": execution.get("exit_code")}}
-        return verify_overwrite(device)
+        primary_result = verify_overwrite(device)
+    elif selected_method in {"crypto", "block"} and iface == "nvme":
+        primary_result = verify_nvme_sanitize(device, selected_method)
+    elif selected_method in {"crypto", "block"} and iface == "sata":
+        primary_result = verify_sata_sanitize(device, selected_method)
+    elif selected_method in {"secure_erase", "enhanced_secure_erase"} and iface == "sata":
+        primary_result = verify_sata_secure_erase(device, selected_method)
+    elif selected_method == "block" and iface == "sas":
+        primary_result = verify_sas_block(device, selected_method)
+    else:
+        return {"ok": False, "status": "unsupported_method", "error": f"verification_not_defined:{selected_method}:{iface}", "details": {"method": selected_method, "interface_type": iface}}
 
-    # For hardware firmware sanitization routines, evaluate logs regardless of execution exit status
-    if selected_method in {"crypto", "block"} and iface == "nvme":
-        return verify_nvme_sanitize(device, selected_method)
-    if selected_method in {"crypto", "block"} and iface == "sata":
-        return verify_sata_sanitize(device, selected_method)
-    if selected_method in {"secure_erase", "enhanced_secure_erase"} and iface == "sata":
-        return verify_sata_secure_erase(device, selected_method)
-    if selected_method == "block" and iface == "sas":
-        return verify_sas_block(device, selected_method)
+    # Apply secondary spatial 10% zero-verification on success of any zero-writing sanitization routine
+    if primary_result and primary_result.get("ok"):
+        if selected_method in {"overwrite", "block", "secure_erase", "enhanced_secure_erase"}:
+            secondary_result = verify_sampled_zero_check(device, sample_ratio=0.10)
+            if not secondary_result.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "verification_failed",
+                    "error": secondary_result.get("error") or "secondary_verification_failed",
+                    "details": {
+                        "primary_details": primary_result.get("details"),
+                        "secondary_details": secondary_result.get("details")
+                    }
+                }
+            primary_result["details"]["secondary_validation"] = secondary_result.get("details")
+            primary_result["details"]["secondary_status"] = "PASSED"
+        else:
+            primary_result["details"]["secondary_status"] = "SKIPPED_FOR_CRYPTO"
 
-    return {"ok": False, "status": "unsupported_method", "error": f"verification_not_defined:{selected_method}:{iface}", "details": {"method": selected_method, "interface_type": iface}}
-# --- END OF FILE backend/verification.py ---
+    return primary_result
