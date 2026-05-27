@@ -1312,7 +1312,7 @@ def auto_detect_bays():
                 
                 block_devs = []
 
-                # Look for block device paths inside slot node
+                # Find associated block device nodes under slot path
                 dev_block_path = os.path.join(slot_path, "device", "block")
                 if os.path.exists(dev_block_path) and os.path.isdir(dev_block_path):
                     for b in os.listdir(dev_block_path):
@@ -1324,12 +1324,13 @@ def auto_detect_bays():
                         if name.startswith("sd") or name.startswith("nvme"):
                             block_devs.append(name)
 
-                # Map found devices to their stable by-path symbolic links
+                # Map enclosure slots directly to bay numbers
                 for sd_node in sorted(list(set(block_devs))):
                     real_dev = f"/dev/{sd_node}"
                     digits = re.findall(r'\d+', slot_id)
                     if digits:
                         slot_num = int(digits[0])
+                        # Map Slot 0-7 directly to bay0-bay7 with no offset
                         bay_id = f"bay{slot_num}"
                         
                         if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
@@ -1347,7 +1348,7 @@ def auto_detect_bays():
         if not discovered_slots:
             return jsonify({
                 "status": "success",
-                "message": "Auto-detection run finished, but no populated physical backplane slots or block devices were detected.",
+                "message": "Auto-detection run completed, but no populated physical backplane slots or block devices were detected.",
                 "bay_map": bay_map
             }), 200
 
@@ -1377,8 +1378,8 @@ def auto_detect_bays():
         }), 200
         
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
-        
+        return jsonify({"error": str(e)}), 500       
+
 @app.route("/api/admin/save-bay-map", methods=["POST"])
 def update_bay_map():
     try:

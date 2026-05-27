@@ -1026,15 +1026,21 @@ async function loadBayMappingConfig() {
     
     // Clear old layout
     bayMappingContainer.innerHTML = "";
-    
+
     // Only re-initialize from currentDrives if we do not already have configured staged keys in memory
     if (Object.keys(localBayMapCopy).length === 0) {
       currentDrives.forEach(drive => {
+        // Robust fallback: if drive.type is missing from the API payload, determine the default from interface_type
+        let localType = drive.type;
+        if (!localType) {
+            localType = (drive.interface_type === "nvme") ? "u2" : "sas_sata";
+        }
+
         localBayMapCopy[drive.bay] = {
           role: drive.role,
           locked: drive.locked,
           label: drive.label,
-          type: drive.type || "sas_sata",
+          type: localType,
           by_path: drive.configured_by_path || "",
           by_path_nvme: drive.configured_by_path_nvme || ""
         };
@@ -1086,9 +1092,12 @@ document.getElementById('btn-auto-detect').addEventListener('click', async () =>
     }
 });
 
-function populatePathDropdown(selectElement, unmappedDrives, currentValue) {
+// --- frontend/app.js ---
+
+function populatePathDropdown(selectElement, unmappedDrives, currentValue, filterType) {
     selectElement.innerHTML = '<option value="">-- Select Drive Path (Empty Slot) --</option>';
     
+    // Add the currently saved path to the top of the dropdown if it is configured
     if (currentValue) {
         const opt = document.createElement('option');
         opt.value = currentValue;
@@ -1098,12 +1107,20 @@ function populatePathDropdown(selectElement, unmappedDrives, currentValue) {
     }
 
     unmappedDrives.forEach(drive => {
-        if (drive.by_path !== currentValue) {
-            const opt = document.createElement('option');
-            opt.value = drive.by_path;
-            opt.textContent = `${drive.model} (${drive.serial}) - ${drive.capacity_str}`;
-            selectElement.appendChild(opt);
-        }
+        if (drive.by_path === currentValue) return;
+
+        // Differentiate NVMe devices by checking their system path descriptors
+        const isNvme = drive.by_path.includes("nvme") || drive.device.includes("nvme");
+        
+        // Filter elements to avoid cluttering selectors with incompatible device interfaces
+        if (filterType === "nvme" && !isNvme) return;
+        if (filterType === "sas_sata" && isNvme) return;
+
+        const opt = document.createElement('option');
+        opt.value = drive.by_path;
+        // Restore raw stable link at the front, followed by hardware details in brackets
+        opt.textContent = `${drive.by_path} [${drive.model} S/N: ${drive.serial} - ${drive.capacity_str}]`;
+        selectElement.appendChild(opt);
     });
 }
 

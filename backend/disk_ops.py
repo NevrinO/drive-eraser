@@ -670,9 +670,6 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
     os_dev_node, os_by_path = get_os_by_path()
 
-    # --- backend/disk_ops.py ---
-# Around line 520, inside discover_drives():
-
     for bay_id, config in bay_map.items():
         target_path = config.get('by_path')
         target_path_nvme = config.get('by_path_nvme')
@@ -686,7 +683,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             "resolved_by_path": None,
             "configured_by_path_nvme": target_path_nvme, 
             "resolved_by_path_nvme": None,
-            "type": config.get("type", "sas_sata"),  # <-- ADD THIS LINE HERE
+            "type": config.get("type", "sas_sata"),  # <-- Ensure this is explicitly set here
             "present": False, 
             "device": None, 
             "serial": None, 
