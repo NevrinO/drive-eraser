@@ -318,6 +318,7 @@ function renderBays(drives) {
   });
 
   // Determine grid columns based on template or default to 4
+  // Only use template columns if the template has been explicitly applied (saved)
   let gridCols = 4;
   if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
     const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
@@ -1405,6 +1406,8 @@ async function applyLayoutTemplate() {
     return;
   }
 
+  console.log("Applying template:", templateId, "with traversal:", traversalPreset);
+
   const customOverrides = {};
   Object.keys(localBayMapCopy).forEach((bayId) => {
     const conf = localBayMapCopy[bayId] || {};
@@ -1424,6 +1427,8 @@ async function applyLayoutTemplate() {
   });
 
   const data = await response.json();
+  console.log("Template apply response:", data);
+
   if (!response.ok) {
     throw new Error(data.error || "Template apply failed");
   }
@@ -1446,6 +1451,9 @@ async function applyLayoutTemplate() {
       physical_position: conf.physical_position || null
     };
   });
+
+  console.log("Updated localBayMapCopy with", Object.keys(localBayMapCopy).length, "bays");
+  console.log("Updated localLayoutMetadata:", localLayoutMetadata);
 
   applyLayoutMetadataToControls();
 
@@ -1702,6 +1710,7 @@ if (saveBayMapBtnTop) {
 if (layoutTemplateSelect) {
   layoutTemplateSelect.addEventListener("change", () => {
     // Don't auto-apply template - just show unsaved changes indicator
+    // The template_id will be updated when "Apply Template" is clicked
     showUnsavedChangesIndicator();
   });
 }
