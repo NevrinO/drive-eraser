@@ -8,6 +8,17 @@ DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+DEFAULT_POLICY = {
+    "prewipe_spot_check": True,
+    "post_erase_marker": True,
+    "allow_method_override": True,
+    "crypto_fail_retry_block": True,
+    "strict_audit_mode": True,
+    "crypto_verification_mode": "conservative_probe",
+    "health_soft_stop": True,
+    "lan_passphrase": "eraser123",
+}
+
 def get_data_dir():
     candidates = [
         os.getenv("DRIVE_ERASER_DATA_DIR"),
@@ -84,16 +95,15 @@ def load_policy(config_dir=None):
         config_dir = get_config_dir()
     policy_path = os.path.join(config_dir, "policy.json")
     if not os.path.exists(policy_path):
-        return {"lan_passphrase": "eraser123"}
+        return DEFAULT_POLICY.copy()
     try:
         with open(policy_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            # Ensure fallback key exists
-            if "lan_passphrase" not in data:
-                data["lan_passphrase"] = "eraser123"
-            return data
+            merged = DEFAULT_POLICY.copy()
+            merged.update(data if isinstance(data, dict) else {})
+            return merged
     except Exception:
-        return {"lan_passphrase": "eraser123"}
+        return DEFAULT_POLICY.copy()
 
 def save_policy(policy_data, config_dir=None):
     if config_dir is None:

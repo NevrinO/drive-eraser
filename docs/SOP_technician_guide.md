@@ -49,12 +49,12 @@ This guide covers the standard process for health checking and securely erasing 
 
 ### 6. Verification
 - Once the erase finishes, the station will automatically **Verify** the results.
-- **Crypto Erase:** The system checks internal logs (it will not check for zeros).
+- **Crypto Erase:** The system checks controller sanitize logs and performs the configured post-erase probe; it does not claim zero-filled media.
 - **Block/SATA Erase:** The system samples sectors to ensure they are blank (zeros).
 - **Note:** If a Crypto Erase fails verification, the station will prompt you to **"Retry with Block Erase."**
 
 ### 7. Marking & Completion
-- After verification passes, a small **Erase Marker** is written to the start of the disk. This allows future technicians to see that *this* station wiped the drive safely.
+- After verification passes, a small supplemental **Erase Marker** is written to the start of the disk. This allows future technicians to see that *this* station wiped the drive safely.
 - The status will turn **GREEN** when finished.
 - Download or print the **Data Destruction Certificate** from the "Compliance Audit Vault" tab (Tab 2).
 
@@ -64,7 +64,7 @@ This guide covers the standard process for health checking and securely erasing 
 
 - **Protected Bays:** You cannot click or wipe the OS drive or any bay marked as locked/reserved.
 - **Manual Overrides:** You may override a "Recommended Destruction" (Soft Stop) if the drive is stable enough for a wipe, but this will be noted in the audit log.
-- **Marker Errors:** If the "Erase Marker" fails to write but the wipe and verification passed, you may still proceed to generate the certificate.
+- **Marker Errors:** The "Erase Marker" is supplemental station evidence, not a NIST/DoD requirement. If marker writing fails but wipe verification passed, the certificate may still complete with a marker warning.
 
 ## 📚 Getting Help
 

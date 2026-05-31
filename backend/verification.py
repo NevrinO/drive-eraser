@@ -351,6 +351,105 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=10*102
         }
     }
 
+def detect_filesystem_signatures(data):
+    """Check the first 4KB of drive data for recognizable filesystem/boot sector signatures.
+    Returns a list of detected signature names.
+    """
+    signatures = []
+    if len(data) >= 11 and data[0:3] == b'\xEB\x52\x90' and data[3:7] == b'NTFS':
+        signatures.append("NTFS")
+    if len(data) >= 90 and data[0:3] in {b'\xEB\x3C\x90', b'\xEB\x58\x90', b'\xEB\x76\x90'}:
+        if b'FAT' in data[54:90]:
+            signatures.append("FAT")
+    if len(data) >= 8 and data[3:8] == b'EXFAT':
+        signatures.append("exFAT")
+    if len(data) >= 520 and data[512:520] == b'EFI PART':
+        signatures.append("GPT")
+    if len(data) >= 1082 and data[1080:1082] == b'\x53\xEF':
+        signatures.append("EXT")
+    return signatures
+
+def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, chunk_size_bytes=1024*1024, max_read_bytes=512*1024*1024):
+    selected_mode = str(mode or "conservative_probe").strip().lower()
+    if selected_mode in {"disabled", "controller_only"}:
+        return {"ok": True, "status": "skipped", "details": {"mode": selected_mode, "verification_level": "controller_attested_only"}}
+    try:
+        with open(device, "rb") as f:
+            f.seek(0, 2)
+            capacity = f.tell()
+            if capacity <= 0:
+                return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
+            f.seek(0)
+            first_read = f.read(min(4096, capacity))
+    except Exception as e:
+        return {"ok": False, "status": "verification_error", "error": "crypto_probe_read_failed", "details": {"mode": selected_mode, "exception": str(e)}}
+
+    details = {
+        "mode": selected_mode,
+        "verification_level": "controller_attested_with_probe",
+        "capacity_bytes": capacity,
+        "first_read_bytes": len(first_read),
+        "zero_fill_claimed": False
+    }
+
+    if selected_mode == "entropy_sample":
+        target_read_bytes = min(int(capacity * sample_ratio), max_read_bytes)
+        chunk_size = min(chunk_size_bytes, capacity)
+        chunks = max(1, target_read_bytes // chunk_size)
+        offsets = []
+        interval_size = max(1, capacity // chunks)
+        unique_digests = set()
+        total_read = 0
+        try:
+            with open(device, "rb") as f:
+                for i in range(chunks):
+                    start = i * interval_size
+                    end = max(start, min(capacity - chunk_size, ((i + 1) * interval_size) - chunk_size))
+                    offset = random.randint(start, end) if end > start else start
+                    offsets.append(offset)
+                    f.seek(offset)
+                    data = f.read(chunk_size)
+                    total_read += len(data)
+                    unique_digests.add(hashlib.sha256(data).hexdigest())
+        except Exception as e:
+            return {"ok": False, "status": "verification_error", "error": "crypto_entropy_probe_failed", "details": {"mode": selected_mode, "exception": str(e)}}
+
+        if len(unique_digests) == 1 and chunks > 1:
+            try:
+                with open(device, "rb") as f:
+                    f.seek(0)
+                    zero_check = f.read(min(chunk_size, capacity))
+            except Exception:
+                zero_check = b""
+            is_all_zeros = len(zero_check) > 0 and zero_check == b'\x00' * len(zero_check)
+            return {
+                "ok": False,
+                "status": "verification_error",
+                "error": "crypto_entropy_all_zeros" if is_all_zeros else "crypto_entropy_uniform_data",
+                "details": {"mode": selected_mode, "unique_digests": 1, "total_probe_bytes": total_read, "chunks": chunks, "all_zeros": is_all_zeros}
+            }
+
+        details.update({
+            "sample_ratio": sample_ratio,
+            "total_probe_bytes": total_read,
+            "chunks_read": chunks,
+            "unique_sample_digests": len(unique_digests),
+            "offsets": offsets[:25]
+        })
+        return {"ok": True, "status": "probed", "error": None, "details": details}
+
+    # conservative_probe (default): check for filesystem signatures in first 4KB
+    fs_sigs = detect_filesystem_signatures(first_read)
+    details["filesystem_signatures_detected"] = fs_sigs
+    if fs_sigs:
+        return {
+            "ok": False,
+            "status": "verification_failed",
+            "error": "crypto_probe_filesystem_signatures_found",
+            "details": {"mode": selected_mode, "signatures": fs_sigs, "first_read_bytes": len(first_read)}
+        }
+    return {"ok": True, "status": "probed", "error": None, "details": details}
+
 def write_marker_and_verify(job):
     dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
     if not dd_cmd:
@@ -442,7 +541,7 @@ def build_marker_payload(job):
 
     if passphrase:
         serialized_for_hmac = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        derived_key = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), b"DWS_SALT_v1", 10000)
+        derived_key = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), b"DWS_SALT_v1", 200000)
         payload["hmac"] = hmac.new(derived_key, serialized_for_hmac, hashlib.sha256).hexdigest()
 
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
@@ -468,8 +567,8 @@ def verification_for_method(device, interface_type, method, execution):
     else:
         return {"ok": False, "status": "unsupported_method", "error": f"verification_not_defined:{selected_method}:{iface}", "details": {"method": selected_method, "interface_type": iface}}
 
-    # Apply secondary spatial 10% zero-verification on success of any zero-writing sanitization routine
     if primary_result and primary_result.get("ok"):
+        primary_result.setdefault("details", {})
         if selected_method in {"overwrite", "block", "secure_erase", "enhanced_secure_erase"}:
             secondary_result = verify_sampled_zero_check(device, sample_ratio=0.10)
             if not secondary_result.get("ok"):
@@ -484,7 +583,29 @@ def verification_for_method(device, interface_type, method, execution):
                 }
             primary_result["details"]["secondary_validation"] = secondary_result.get("details")
             primary_result["details"]["secondary_status"] = "PASSED"
+            primary_result["details"]["verification_level"] = "full_overwrite_sampled"
         else:
-            primary_result["details"]["secondary_status"] = "SKIPPED_FOR_CRYPTO"
+            try:
+                policy = load_policy()
+            except Exception:
+                policy = {}
+            crypto_probe = verify_crypto_probe(device, policy.get("crypto_verification_mode", "conservative_probe"))
+            if not crypto_probe.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "verification_failed",
+                    "error": crypto_probe.get("error") or "crypto_probe_failed",
+                    "details": {
+                        "primary_details": primary_result.get("details"),
+                        "secondary_details": crypto_probe.get("details")
+                    }
+                }
+            primary_result["details"]["secondary_validation"] = crypto_probe.get("details")
+            probe_status = crypto_probe.get("status")
+            if probe_status == "skipped":
+                primary_result["details"]["secondary_status"] = "SKIPPED"
+            else:
+                primary_result["details"]["secondary_status"] = "PASSED_CRYPTO_PROBE"
+            primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_probe")
 
     return primary_result
