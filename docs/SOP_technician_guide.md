@@ -30,6 +30,8 @@ This guide covers the standard process for health checking and securely erasing 
 - **If the status is Yellow/Rejected:** The station recommends against software wiping. Pull the drive for physical destruction unless you have a specific reason to override.
 
 ### 3. Setup the Wipe
+- **Single Drive:** Click the drive tile to view details and configure wipe settings.
+- **Batch Wiping:** Enable "Sanitize Mode" toggle to select multiple bays simultaneously, then click "Configure Sanitization".
 - The station will **auto-select** the best wipe method (e.g., Crypto Erase for NVMe).
 - **Method Override:** Use the dropdown to choose a different method only if the primary one is unavailable or required by a specific project.
 - **Pre-Wipe Check:** The station will perform a quick read check to confirm data is present before starting (Default: ON).
@@ -37,8 +39,8 @@ This guide covers the standard process for health checking and securely erasing 
 ### 4. Confirmation
 - Enter your **Technician Name**.
 - Enter the **Ticket Number**.
-- Type the word **`ERASE`** into the confirmation box.
-- Click **Start Wipe**.
+- Type the confirmation text shown (e.g., "erase 1 drive" or "erase 3 drives") into the confirmation box.
+- Click **Validate & Execute Sanitization**.
 
 ### 5. Erasing & Monitoring
 - Do not remove the drive while the status is `ERASING`.
@@ -54,15 +56,21 @@ This guide covers the standard process for health checking and securely erasing 
 ### 7. Marking & Completion
 - After verification passes, a small **Erase Marker** is written to the start of the disk. This allows future technicians to see that *this* station wiped the drive safely.
 - The status will turn **GREEN** when finished.
-- Download or print the **Data Destruction Certificate** from the "Certificates" tab.
+- Download or print the **Data Destruction Certificate** from the "Compliance Audit Vault" tab (Tab 2).
 
 ---
 
 ## ⚠️ Safety & Override Policies
 
-- **Protected Bays:** You cannot click or wipe the OS drive in Bay 1 or the Reserved slot in Bay 2.
+- **Protected Bays:** You cannot click or wipe the OS drive or any bay marked as locked/reserved.
 - **Manual Overrides:** You may override a "Recommended Destruction" (Soft Stop) if the drive is stable enough for a wipe, but this will be noted in the audit log.
 - **Marker Errors:** If the "Erase Marker" fails to write but the wipe and verification passed, you may still proceed to generate the certificate.
+
+## 📚 Getting Help
+
+- **In-App Help:** Click the **Help** button in the header for quick access to documentation and common tasks.
+- **Bay Mapping:** Configure physical bay mappings via the **System Administration** tab (Tab 3) - use "Auto-Detect" or manual assignment.
+- **Full Documentation:** Access detailed guides via the Help modal or directly in the `/docs/` folder.
 
 ---
 

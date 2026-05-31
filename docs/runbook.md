@@ -25,9 +25,10 @@ sudo journalctl -u drive-eraser -f
 
 ## Configuration Paths
 - Runtime config directory: `/opt/drive-eraser/config`
-- Bay map: `/opt/drive-eraser/config/bay_map.json`
+- Bay map: `/opt/drive-eraser/config/bay_map.json` (configured via System Administration tab)
 - Policy: `/opt/drive-eraser/config/policy.json`
 - Command paths: `/opt/drive-eraser/config/command_paths.json`
+- Documentation: `/opt/drive-eraser/docs/` (served via `/docs/` route)
 
 ## API Smoke Checks
 
@@ -42,7 +43,7 @@ curl -sS http://127.0.0.1:5000/api/drives | jq '.[].health_score'
 curl -sS http://127.0.0.1:5000/api/drives | jq '.[].smart | {data_read_bytes, data_written_bytes}'
 ```
 
-### Start erase job
+### Start erase job (single drive)
 ```bash
 curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
   -H 'Content-Type: application/json' \
@@ -51,6 +52,18 @@ curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
     "ticket_number":"INC-1001",
     "bay":"bay3",
     "confirmation_text":"erase bay3"
+  }'
+```
+
+### Start batch erase job (multiple drives)
+```bash
+curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "technician":"test",
+    "ticket_number":"INC-1001",
+    "bays":["bay3","bay4","bay5"],
+    "confirmation_text":"erase 3 drives"
   }'
 ```
 
@@ -79,10 +92,16 @@ sudo bash scripts/update.sh
 
 ## Common Operational Tasks
 
+### Access Documentation
+- **In-App Help:** Click the **Help** button in the UI header for quick access to documentation.
+- **Web Access:** Documentation is served via `/docs/<filename>` route (e.g., `/docs/SOP_technician_guide.md`).
+- **Direct Access:** Files are located in `/opt/drive-eraser/docs/` on the server.
+
 ### Confirm bay mapping resolves
-1. Check `by_path` entries in `bay_map.json`.
-2. Call `/api/drives`.
-3. Confirm each wipe bay has:
+1. Use the **System Administration** tab (Tab 3) to view and configure bay mappings.
+2. Use "Auto-Detect" to automatically map physical bays to device paths.
+3. Call `/api/drives`.
+4. Confirm each wipe bay has:
    - `present: true` when populated
    - `device` resolved
    - `diagnostics.mapping.ok: true`
@@ -106,8 +125,9 @@ Use `/api/drives` and confirm `interface_type` is based on smart data behavior f
 
 ## Safety Notes
 - Never wipe locked, OS, or reserved bays.
-- Always require typed confirmation format: `erase <bay>`.
+- Always require typed confirmation format: `erase <bay>` for single or `erase X drives` for batch.
 - Treat transport details as troubleshooting context, not erase-method policy authority.
+- Use the **Help** button in the UI header for quick access to documentation when needed.
 
 ## Escalation Trigger
 Escalate if any of the following occur:

@@ -40,13 +40,15 @@ sudo visudo -cf /etc/sudoers.d/drive-eraser
 - Bay shows present false or missing device unexpectedly
 
 ### Checks
-1. Verify `by_path` entries in `bay_map.json`.
-2. Confirm `/dev/disk/by-path/` entries exist for attached drives.
-3. Inspect `diagnostics.mapping` and command diagnostics from `/api/drives`.
+1. Verify bay mapping configuration in the **System Administration** tab (Tab 3).
+2. Use "Auto-Detect" to automatically map physical bays to device paths.
+3. Confirm `/dev/disk/by-path/` entries exist for attached drives.
+4. Inspect `diagnostics.mapping` and command diagnostics from `/api/drives`.
 
 ### Common fixes
-- Correct bay mapping values.
+- Use the System Administration tab to correct bay mapping values.
 - Re-seat drive and re-check by-path links.
+- Click "Help" button in header for bay mapping guidance.
 
 ## Incorrect Interface Classification
 ### Symptoms
@@ -116,3 +118,16 @@ Collect:
 - `journalctl` excerpt around event time
 - relevant bay map entries
 - `/api/drives` snapshot for affected bay
+
+## Can't Access Documentation
+### Symptoms
+- Documentation links return 404 or errors
+
+### Checks
+1. Confirm backend is running and serving `/docs/` route.
+2. Check that documentation files exist in `/opt/drive-eraser/docs/`.
+
+### Common fixes
+- Click the **Help** button in the UI header for in-app documentation access.
+- Access documentation directly from the server's `/opt/drive-eraser/docs/` folder.
+- Restart the service if the `/docs/` route is not responding.
