@@ -1557,7 +1557,10 @@ async function saveBayMappingConfiguration() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
     });
-    
+
+    console.log("Save payload:", payload);
+    console.log("Save response status:", response.status);
+
     if (response.ok) {
         alert("Bay mapping successfully saved!");
         hideUnsavedChangesIndicator();
@@ -1565,6 +1568,7 @@ async function saveBayMappingConfiguration() {
         await loadBayMappingConfig();
     } else {
         const data = await response.json();
+        console.error("Save error:", data);
         throw new Error(data.error || "Failed to save configuration");
     }
 }
