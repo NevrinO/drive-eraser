@@ -8,6 +8,8 @@
     "sata": ["enhanced_secure_erase", "secure_erase", "overwrite"]
   },
   "crypto_fail_retry_block": true,
+  "strict_audit_mode": true,
+  "crypto_verification_mode": "conservative_probe",
   "health_soft_stop": true,
   "port": 5000,
   "bind_address": "0.0.0.0",

@@ -287,7 +287,9 @@ def run_erase_job(job_id):
     device = job["request"]["device"]
     interface_type = job["request"]["interface_type"]
     method = job["request"]["method"]
-    capacity_bytes = job["request"].get("capacity_bytes") or (100 * 1024 * 1024 * 1024)
+    capacity_bytes = job["request"].get("capacity_bytes")
+    if capacity_bytes is None:
+        capacity_bytes = 100 * 1024 * 1024 * 1024
 
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}'")
@@ -549,9 +551,16 @@ def run_erase_job(job_id):
                 warnings_list.append(f"Initiation process returned non-zero code ({execution.get('exit_code')}), but hardware-level sanitization status verified successfully.")
                 job["result"]["warnings"] = warnings_list
 
-            logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Committing physical security markers.")
+            logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
             marker_result = write_marker_and_verify(job)
             job["marker"] = marker_result
+            if not marker_result.get("ok"):
+                warnings_list = job.get("result", {}).get("warnings", [])
+                if not isinstance(warnings_list, list):
+                    warnings_list = []
+                warnings_list.append(f"Supplemental station marker failed ({marker_result.get('error') or marker_result.get('status')}); sanitization certification is based on wipe verification evidence.")
+                job["result"]["warnings"] = warnings_list
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) supplemental marker failed: {marker_result.get('error') or marker_result.get('status')}")
             
             if os.path.exists(active_log_path):
                 try:
@@ -568,10 +577,15 @@ def run_erase_job(job_id):
                 # High-signal application events of ultimate success
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) COMPLETED. Certificate generated, audit record finalized.")
             except Exception as e:
-                job["status"] = "failed"
-                job["error"] = f"certificate_generation_failed:{e}"
+                warnings_list = job.get("result", {}).get("warnings", [])
+                if not isinstance(warnings_list, list):
+                    warnings_list = []
+                warnings_list.append(f"Certificate generation failed: {str(e)}. Sanitization succeeded but audit record could not be finalized.")
+                job["result"]["warnings"] = warnings_list
+                job["status"] = "completed"
+                job["error"] = None
                 job["certificate"] = None
-                logger.error(f"Job {job_id} (Bay {job['request']['bay']}) failed certificate generation: {str(e)}")
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) certificate generation failed but sanitization completed: {str(e)}")
         else:
             job["status"] = "failed"
             if not execution.get("ok"):

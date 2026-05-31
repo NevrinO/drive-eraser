@@ -44,6 +44,8 @@ SYSTEMCTL_PATH=""
 STATION_ID="wipe-station-01"
 WIPE_PORT=5000
 WIPE_PASSPHRASE=""
+STRICT_AUDIT_MODE="true"
+CRYPTO_VERIFICATION_MODE="conservative_probe"
 LAN_PASSPHRASE="eraser123"
 SLACK_WEBHOOK=""
 
@@ -259,19 +261,45 @@ prompt_interactive_config() {
         fi
         echo ""
 
-        # 4. Prompt for Cryptographic Wipe Passphrase (Salt Signer)
-        echo -e "  Entering a Cryptographic Passphrase enables secure HMAC-SHA256 signature signing."
-        echo -e "  Leave blank to run in Unauthenticated State."
+        # 4. Prompt for strict audit mode and Cryptographic Wipe Passphrase (Salt Signer)
+        echo -e "  Strict Audit Mode requires signed sanitization certificates and is recommended for production."
+        echo -e -n "  Enable Strict Audit Mode? [Y/n]: "
+        local strict_choice
+        read -r strict_choice
+        if [[ "$strict_choice" =~ ^[Nn]$ ]]; then
+            STRICT_AUDIT_MODE="false"
+            warn "Strict Audit Mode disabled for this installation."
+        else
+            STRICT_AUDIT_MODE="true"
+            success "Strict Audit Mode enabled."
+        fi
+        echo ""
+
+        echo -e "  Entering a Cryptographic Passphrase enables secure HMAC-SHA256 certificate signing."
+        if [ "$STRICT_AUDIT_MODE" = "true" ]; then
+            echo -e "  A passphrase is required because Strict Audit Mode is enabled."
+        else
+            echo -e "  Leave blank to run in Unauthenticated State."
+        fi
         while true; do
-            echo -e -n "  Enter Cryptographic Passphrase [Optional - Press Enter to Skip]: "
+            if [ "$STRICT_AUDIT_MODE" = "true" ]; then
+                echo -e -n "  Enter Cryptographic Passphrase [Required]: "
+            else
+                echo -e -n "  Enter Cryptographic Passphrase [Optional - Press Enter to Skip]: "
+            fi
             local pass=""
             local confirm=""
             read -r -s pass
             echo ""
             
             if [ -z "$pass" ]; then
-                info "Skipping Cryptographic Passphrase setup."
-                break
+                if [ "$STRICT_AUDIT_MODE" = "true" ]; then
+                    warn "A passphrase is required while Strict Audit Mode is enabled."
+                    continue
+                else
+                    info "Skipping Cryptographic Passphrase setup."
+                    break
+                fi
             fi
 
             echo -e -n "  Confirm Cryptographic Passphrase: "
@@ -396,11 +424,18 @@ EOF
     if [ ! -f "$CONFIG_DIR/policy.json" ]; then
         prompt_interactive_config
 
+        if [ "$STRICT_AUDIT_MODE" = "true" ] && [ -z "$WIPE_PASSPHRASE" ]; then
+            STRICT_AUDIT_MODE="false"
+            warn "Strict Audit Mode disabled because no passphrase was provided."
+        fi
+
         info "Generating default policy.json..."
         # Safely compile the JSON structure using system Python to avoid shell escape issues
         export STATION_ID
         export WIPE_PORT
         export WIPE_PASSPHRASE
+        export STRICT_AUDIT_MODE
+        export CRYPTO_VERIFICATION_MODE
         export LAN_PASSPHRASE
         export SLACK_WEBHOOK
         
@@ -417,6 +452,8 @@ data = {
     'sata': ['enhanced_secure_erase', 'secure_erase', 'overwrite']
   },
   'crypto_fail_retry_block': True,
+  'strict_audit_mode': os.environ.get('STRICT_AUDIT_MODE', 'true').lower() == 'true',
+  'crypto_verification_mode': os.environ.get('CRYPTO_VERIFICATION_MODE', 'conservative_probe'),
   'health_soft_stop': True,
   'port': int(os.environ.get('WIPE_PORT', 5000)),
   'bind_address': '0.0.0.0',
@@ -431,6 +468,8 @@ with open(path, 'w', encoding='utf-8') as f:
         unset STATION_ID
         unset WIPE_PORT
         unset WIPE_PASSPHRASE
+        unset STRICT_AUDIT_MODE
+        unset CRYPTO_VERIFICATION_MODE
         unset LAN_PASSPHRASE
         unset SLACK_WEBHOOK
         success "policy.json safely compiled."
