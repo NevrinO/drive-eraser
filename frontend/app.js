@@ -325,6 +325,18 @@ function renderBays(drives) {
     if (template && template.cols) {
       gridCols = template.cols;
     }
+  } else {
+    // If no template is set, use the number of bays to determine a reasonable grid
+    const bayCount = drives.length;
+    if (bayCount <= 4) {
+      gridCols = 4;
+    } else if (bayCount <= 8) {
+      gridCols = 4;
+    } else if (bayCount <= 10) {
+      gridCols = 5;
+    } else {
+      gridCols = 4;
+    }
   }
   baysGrid.style.gridTemplateColumns = `repeat(${gridCols}, minmax(0, 1fr))`;
 
@@ -1733,6 +1745,8 @@ if (applyLayoutTemplateBtn) {
 
 (async () => {
   await loadSecurityStatus();
+  await loadLayoutTemplates();
+  await loadBayMappingConfig();
   await loadDrives(false);
   pollActiveWipes();
 })();
