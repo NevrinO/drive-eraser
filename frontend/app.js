@@ -1184,6 +1184,36 @@ async function loadBayMappingConfig() {
   }
 }
 
+async function renderBayMappingConfig() {
+  try {
+    const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+    if (!unmappedResponse.ok) throw new Error();
+    const unmappedDrives = await unmappedResponse.json();
+
+    bayMappingContainer.innerHTML = "";
+
+    // Sort active bays chronologically directly from our master staged layout copy in browser memory
+    const sortedBayKeys = Object.keys(localBayMapCopy).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      return numA - numB;
+    });
+
+    sortedBayKeys.forEach(bayKey => {
+      const conf = localBayMapCopy[bayKey];
+      if (!conf) return;
+
+      // Render advanced hybrid-capable layout rows
+      const rowElement = renderBayConfigurationRow(bayKey, conf, unmappedDrives);
+      bayMappingContainer.appendChild(rowElement);
+    });
+
+    bindDeleteBayButtons();
+  } catch (err) {
+    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to render mapping configurations: ${err.message}</div>`;
+  }
+}
+
 document.getElementById('btn-auto-detect').addEventListener('click', async () => {
     if (!confirm("Are you sure you want to scan and auto-detect your physical SAS/SATA backplane bays? This will match any populated slots with your config automatically.")) {
         return;
@@ -1393,7 +1423,7 @@ async function applyLayoutTemplate() {
   });
 
   applyLayoutMetadataToControls();
-  await loadBayMappingConfig();
+  await renderBayMappingConfig();
   showUnsavedChangesIndicator();
   showLayoutStatus(`Template applied: ${data.template?.name || templateId}`);
 }
@@ -1494,7 +1524,7 @@ function bindDeleteBayButtons() {
 
       currentDrives = currentDrives.filter(d => d.bay !== bayId);
       renderBays(currentDrives);
-      loadBayMappingConfig();
+      renderBayMappingConfig();
       showUnsavedChangesIndicator();
     });
   });
@@ -1548,7 +1578,7 @@ addBayBtn.addEventListener("click", () => {
   });
 
   renderBays(currentDrives);
-  loadBayMappingConfig();
+  renderBayMappingConfig();
   showUnsavedChangesIndicator();
 });
 
