@@ -20,8 +20,8 @@ DEFAULT_TEMPLATES = {
         "id": "dell_r440_10bay",
         "name": "Dell R440 10-Bay (2.5\")",
         "vendor": "Dell",
-        "rows": 5,
-        "cols": 2,
+        "rows": 2,
+        "cols": 5,
         "bay_count": 10,
         "traversal_preset": "top_left_down_then_across"
     },

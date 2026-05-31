@@ -313,6 +313,16 @@ function renderBays(drives) {
     return aNum - bNum;
   });
 
+  // Determine grid columns based on template or default to 4
+  let gridCols = 4;
+  if (localLayoutMetadata.template_id) {
+    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
+    if (template && template.cols) {
+      gridCols = template.cols;
+    }
+  }
+  baysGrid.style.gridTemplateColumns = `repeat(${gridCols}, minmax(0, 1fr))`;
+
   baysGrid.innerHTML = orderedDrives.map((drive) => {
     const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
     const isEmpty = !drive.present;
