@@ -465,8 +465,6 @@ data = {
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
 "
-        unset STATION_ID
-        unset WIPE_PORT
         unset WIPE_PASSPHRASE
         unset STRICT_AUDIT_MODE
         unset CRYPTO_VERIFICATION_MODE
