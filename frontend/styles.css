@@ -826,7 +826,7 @@ button:disabled {
 .bay-mapping-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   margin-top: 12px;
 }
 
