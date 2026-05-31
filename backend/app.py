@@ -41,6 +41,14 @@ from disk_ops import (
     discover_drives, get_smart_data, format_capacity_bytes, 
     get_raw_smart_diagnostics, get_os_by_path
 )
+from layout_templates import (
+    load_layout_templates,
+    normalize_bay_map_document,
+    compose_bay_map_document,
+    apply_template,
+    validate_layout_metadata,
+    SUPPORTED_TRAVERSALS
+)
 
 class PollingFilter(logging.Filter):
     """
@@ -1255,17 +1263,36 @@ def download_support_bundle():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/admin/bay-map")
+def get_admin_bay_map():
+    try:
+        config_dir = get_config_dir()
+        bay_map_path = os.path.join(config_dir, "bay_map.json")
+        try:
+            with open(bay_map_path, "r", encoding="utf-8") as f:
+                bay_map_doc = json.load(f)
+        except Exception:
+            bay_map_doc = {}
+        bays, metadata = normalize_bay_map_document(bay_map_doc)
+        return jsonify(compose_bay_map_document(bays, metadata)), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/admin/unmapped-drives")
 def get_unmapped_drives():
     try:
         config_dir = get_config_dir()
         bay_map_path = os.path.join(config_dir, "bay_map.json")
-        with open(bay_map_path, "r", encoding="utf-8") as f:
-            bay_map = json.load(f)
-            
+        try:
+            with open(bay_map_path, "r", encoding="utf-8") as f:
+                bay_map_doc = json.load(f)
+        except Exception:
+            bay_map_doc = {}
+
+        bay_map, _ = normalize_bay_map_document(bay_map_doc)
+
         mapped_paths = set()
         for config in bay_map.values():
-            # Exclude both mapped SAS/SATA paths and mapped PCIe NVMe paths from unmapped selections
             p = config.get("by_path")
             if p:
                 mapped_paths.add(os.path.basename(p))
@@ -1331,9 +1358,11 @@ def auto_detect_bays():
         
         try:
             with open(bay_map_path, "r", encoding="utf-8") as f:
-                bay_map = json.load(f)
+                bay_map_doc = json.load(f)
+            bay_map, layout_metadata = normalize_bay_map_document(bay_map_doc)
         except Exception:
             bay_map = {}
+            layout_metadata = {}
 
         path_to_dev = {}
         by_path_dir = '/dev/disk/by-path/'
@@ -1475,7 +1504,7 @@ def auto_detect_bays():
                 }
                 updates_count += 1
 
-        save_bay_map(bay_map, config_dir)
+        save_bay_map(compose_bay_map_document(bay_map, layout_metadata), config_dir)
         
         logger.info(f"Auto-detect bays updated {updates_count} map elements out of {len(discovered_slots)} total discovered enclosures.")
         return jsonify({
@@ -1487,24 +1516,88 @@ def auto_detect_bays():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/admin/layout-templates")
+def get_layout_templates():
+    try:
+        config_dir = get_config_dir()
+        templates = load_layout_templates(config_dir)
+        return jsonify({"templates": list(templates.values()), "supported_traversals": sorted(list(SUPPORTED_TRAVERSALS))}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/apply-template", methods=["POST"])
+def admin_apply_template():
+    try:
+        payload = request.get_json(silent=True) or {}
+        template_id = str(payload.get("template_id") or "").strip()
+        traversal_preset = str(payload.get("traversal_preset") or "").strip() or None
+        custom_overrides = payload.get("custom_overrides") or {}
+
+        if not template_id:
+            return jsonify({"error": "template_id is required"}), 400
+
+        config_dir = get_config_dir()
+        templates = load_layout_templates(config_dir)
+        template = templates.get(template_id)
+        if not template:
+            return jsonify({"error": f"Unknown template_id: {template_id}"}), 400
+
+        bay_map_path = os.path.join(config_dir, "bay_map.json")
+        try:
+            with open(bay_map_path, "r", encoding="utf-8") as f:
+                existing_doc = json.load(f)
+        except Exception:
+            existing_doc = {}
+
+        existing_bays, _ = normalize_bay_map_document(existing_doc)
+        generated_bays, resolved_traversal = apply_template(existing_bays, template, traversal_preset, custom_overrides)
+
+        metadata = {
+            "template_id": template_id,
+            "traversal_preset": resolved_traversal,
+            "custom_overrides": custom_overrides
+        }
+
+        validation_error = validate_layout_metadata(metadata, generated_bays, templates)
+        if validation_error:
+            return jsonify({"error": validation_error}), 400
+
+        return jsonify({
+            "status": "success",
+            "template": template,
+            "layout_metadata": metadata,
+            "bay_map": compose_bay_map_document(generated_bays, metadata)
+        }), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/admin/save-bay-map", methods=["POST"])
 def update_bay_map():
     try:
         payload = request.get_json(silent=True) or {}
         if not payload:
             return jsonify({"error": "Invalid payload"}), 400
-            
+
         config_dir = get_config_dir()
-        
+
         if not isinstance(payload, dict):
             return jsonify({"error": "Payload must be a dictionary map."}), 400
-            
-        for bay_id, conf in payload.items():
+
+        templates = load_layout_templates(config_dir)
+        bays, layout_metadata = normalize_bay_map_document(payload)
+        if not bays:
+            return jsonify({"error": "At least one bay configuration is required."}), 400
+
+        for bay_id, conf in bays.items():
             if not isinstance(conf, dict):
                 return jsonify({"error": f"Configuration for {bay_id} must be a dictionary."}), 400
-                
-        save_bay_map(payload, config_dir)
-        
+
+        validation_error = validate_layout_metadata(layout_metadata, bays, templates)
+        if validation_error:
+            return jsonify({"error": validation_error}), 400
+
+        save_bay_map(compose_bay_map_document(bays, layout_metadata), config_dir)
+
         logger.info("Enclosure bay map edited manually by administrator.")
         return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200
     except Exception as e:

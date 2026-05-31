@@ -677,8 +677,19 @@ def get_os_by_path():
 
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     try:
-        with open(bay_map_path, 'r', encoding='utf-8') as f: bay_map = json.load(f)
-    except Exception: return []
+        with open(bay_map_path, 'r', encoding='utf-8') as f:
+            bay_map_doc = json.load(f)
+    except Exception:
+        return []
+
+    if isinstance(bay_map_doc, dict) and isinstance(bay_map_doc.get("bays"), dict):
+        bay_map = bay_map_doc.get("bays", {})
+    else:
+        bay_map = {
+            k: v for k, v in (bay_map_doc or {}).items()
+            if isinstance(v, dict) and any(x in v for x in ["role", "by_path", "by_path_nvme", "type", "label", "locked"])
+        }
+
     path_to_dev = {}
     by_path_dir = '/dev/disk/by-path/'
     if os.path.exists(by_path_dir):
@@ -697,8 +708,10 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
         target_path_nvme = config.get('by_path_nvme')
         
         bay_info = {
-            "bay": bay_id, 
-            "label": config.get('label', bay_id), 
+            "bay": bay_id,
+            "display_number": config.get("display_number"),
+            "physical_position": config.get("physical_position"),
+            "label": config.get('label', bay_id),
             "role": config.get('role', 'wipe'), 
             "locked": config.get('locked', False),
             "configured_by_path": target_path, 
