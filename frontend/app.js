@@ -1648,6 +1648,16 @@ if (traversalPresetSelect) {
   });
 }
 
+if (applyLayoutTemplateBtn) {
+  applyLayoutTemplateBtn.addEventListener("click", async () => {
+    try {
+      await applyLayoutTemplate();
+    } catch (err) {
+      showLayoutStatus(err.message, true);
+    }
+  });
+}
+
 (async () => {
   await loadSecurityStatus();
   await loadDrives(false);
