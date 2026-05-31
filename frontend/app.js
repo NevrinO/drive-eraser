@@ -1484,14 +1484,15 @@ async function saveBayMappingConfiguration() {
     const configRows = document.querySelectorAll('.bay-config-row');
     const customOverrides = {};
     const seenDisplayNumbers = new Set();
-    
+
+    // Try to read from DOM first (for manual edits)
     configRows.forEach(row => {
         const typeSelector = row.querySelector('.bay-type-selector');
         const bayId = typeSelector.getAttribute('data-bay');
-        
+
         const type = typeSelector.value;
         const primaryPath = row.querySelector('.by-path-select').value || null;
-        
+
         let nvmePath = null;
         if (type === 'u2') {
             const nvmeSelect = row.querySelector('.by-path-nvme-select');
@@ -1524,6 +1525,23 @@ async function saveBayMappingConfiguration() {
             "physical_position": localBayMapCopy[bayId]?.physical_position || null
         };
     });
+
+    // If no config rows found or DOM is incomplete, use localBayMapCopy directly
+    if (Object.keys(updatedBayMap).length === 0 || Object.keys(updatedBayMap).length !== Object.keys(localBayMapCopy).length) {
+        Object.keys(localBayMapCopy).forEach((bayId) => {
+            const conf = localBayMapCopy[bayId];
+            updatedBayMap[bayId] = {
+                "role": conf.role,
+                "locked": conf.locked,
+                "type": conf.type,
+                "label": conf.label,
+                "by_path": conf.by_path || "",
+                "by_path_nvme": conf.by_path_nvme || "",
+                "display_number": conf.display_number || null,
+                "physical_position": conf.physical_position || null
+            };
+        });
+    }
 
     const payload = {
       layout_metadata: {
