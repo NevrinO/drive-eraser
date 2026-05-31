@@ -139,7 +139,7 @@
           </div>
           <p class="admin-desc">Correlate physical workstation slots with backend device disk-by-path references.</p>
 
-          <div class="layout-controls-row">
+          <div class="layout-controls-row" style="margin-top: 12px;">
             <label>
               Layout Template
               <select id="layoutTemplateSelect">
@@ -154,6 +154,8 @@
               </select>
             </label>
             <button type="button" id="applyLayoutTemplateBtn" class="btn-primary" style="height: fit-content;">Apply Template</button>
+            <button id="btn-auto-detect" class="btn btn-secondary" type="button">⚡ Auto-Detect</button>
+            <button type="button" id="saveBayMapBtnTop" class="btn-primary">Save Mapping</button>
           </div>
 
           <div id="bayLayoutStatus" class="layout-status-label hidden"></div>
@@ -168,7 +170,6 @@
 
           <div style="margin-top: 16px;">
             <button type="button" id="saveBayMapBtn" class="btn-primary">Save Mapping Configuration</button>
-            <button id="btn-auto-detect" class="btn btn-secondary" type="button" style="margin-right: 10px;">⚡ Auto-Detect Backplane Bays</button>
           </div>
         </div>
 

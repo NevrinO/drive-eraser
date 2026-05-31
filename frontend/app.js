@@ -34,6 +34,7 @@ const exportCsvBtn = document.getElementById("exportCsvBtn");
 const downloadBundleBtn = document.getElementById("downloadBundleBtn");
 const bayMappingContainer = document.getElementById("bayMappingContainer");
 const saveBayMapBtn = document.getElementById("saveBayMapBtn");
+const saveBayMapBtnTop = document.getElementById("saveBayMapBtnTop");
 const addBayBtn = document.getElementById("addBayBtn");
 const layoutTemplateSelect = document.getElementById("layoutTemplateSelect");
 const traversalPresetSelect = document.getElementById("traversalPresetSelect");
@@ -1635,7 +1636,7 @@ addBayBtn.addEventListener("click", () => {
 saveBayMapBtn.addEventListener("click", async () => {
   saveBayMapBtn.disabled = true;
   saveBayMapBtn.textContent = "Saving...";
-  
+
   try {
     await saveBayMappingConfiguration();
   } catch (err) {
@@ -1645,6 +1646,22 @@ saveBayMapBtn.addEventListener("click", async () => {
     saveBayMapBtn.textContent = "Save Mapping Configuration";
   }
 });
+
+if (saveBayMapBtnTop) {
+  saveBayMapBtnTop.addEventListener("click", async () => {
+    saveBayMapBtnTop.disabled = true;
+    saveBayMapBtnTop.textContent = "Saving...";
+
+    try {
+      await saveBayMappingConfiguration();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      saveBayMapBtnTop.disabled = false;
+      saveBayMapBtnTop.textContent = "Save Mapping";
+    }
+  });
+}
 
 if (layoutTemplateSelect) {
   layoutTemplateSelect.addEventListener("change", () => {
