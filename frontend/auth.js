@@ -45,7 +45,7 @@ authForm.addEventListener("submit", async (event) => {
     if (response.ok) {
       hideAuthOverlay();
       loadSecurityStatus();
-      // loadDrives() will be called by the main app initialization
+      loadDrives(false);
     } else {
       authErrorMsg.classList.remove("hidden");
     }
