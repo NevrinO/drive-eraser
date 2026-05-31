@@ -1,28 +1,35 @@
 {
-  "bay1": {
-    "role": "os",
-    "locked": true,
-    "label": "OS Drive (Slot 1)",
-    "by_path": "REPLACE_ME_WITH_OS_PATH"
+  "layout_metadata": {
+    "template_id": "dell_r320_4bay",
+    "traversal_preset": "top_left_down_then_across",
+    "custom_overrides": {}
   },
-  "bay2": {
-    "role": "reserved",
-    "locked": true,
-    "label": "Empty Slot (Slot 2)",
-    "by_path": ""
-  },
-  "bay3": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay A (Slot 3)",
-    "by_path": "REPLACE_ME_WITH_BAY3_PATH"
-  },
-  "bay4": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay B (Slot 4)",
-    "by_path": "REPLACE_ME_WITH_BAY4_PATH"
+  "bays": {
+    "bay1": {
+      "role": "os",
+      "locked": true,
+      "label": "OS Drive (Slot 1)",
+      "by_path": "REPLACE_ME_WITH_OS_PATH"
+    },
+    "bay2": {
+      "role": "reserved",
+      "locked": true,
+      "label": "Empty Slot (Slot 2)",
+      "by_path": ""
+    },
+    "bay3": {
+      "role": "wipe",
+      "locked": false,
+      "type": "sas_sata",
+      "label": "Work Bay A (Slot 3)",
+      "by_path": "REPLACE_ME_WITH_BAY3_PATH"
+    },
+    "bay4": {
+      "role": "wipe",
+      "locked": false,
+      "type": "sas_sata",
+      "label": "Work Bay B (Slot 4)",
+      "by_path": "REPLACE_ME_WITH_BAY4_PATH"
+    }
   }
 }

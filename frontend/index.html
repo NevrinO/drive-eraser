@@ -138,14 +138,40 @@
             <button type="button" id="addBayBtn" class="btn-primary" style="padding: 6px 12px; font-size: 0.75rem;">+ Add Bay</button>
           </div>
           <p class="admin-desc">Correlate physical workstation slots with backend device disk-by-path references.</p>
-          
+
+          <div class="layout-controls-row" style="margin-top: 12px;">
+            <label>
+              Layout Template
+              <select id="layoutTemplateSelect">
+                <option value="">-- Select Template --</option>
+              </select>
+            </label>
+            <label>
+              Numbering Traversal
+              <select id="traversalPresetSelect">
+                <option value="top_left_down_then_across">Top-Left Down Then Across (Dell)</option>
+                <option value="bottom_left_up_then_across">Bottom-Left Up Then Across (Supermicro)</option>
+              </select>
+            </label>
+          </div>
+          <div class="layout-controls-row" style="margin-top: 8px;">
+            <button type="button" id="applyLayoutTemplateBtn" class="btn-primary" style="height: fit-content;">Apply Template</button>
+            <button id="btn-auto-detect" class="btn btn-secondary" type="button">⚡ Auto-Detect</button>
+            <button type="button" id="saveBayMapBtnTop" class="btn-primary">Save Mapping</button>
+          </div>
+
+          <div id="bayLayoutStatus" class="layout-status-label hidden"></div>
+
+          <div id="unsavedChangesIndicator" class="unsaved-changes-indicator hidden">
+            ⚠️ You have unsaved changes
+          </div>
+
           <div id="bayMappingContainer" class="bay-mapping-list">
             <!-- Populated dynamically via javascript -->
           </div>
 
           <div style="margin-top: 16px;">
             <button type="button" id="saveBayMapBtn" class="btn-primary">Save Mapping Configuration</button>
-            <button id="btn-auto-detect" class="btn btn-secondary" type="button" style="margin-right: 10px;">⚡ Auto-Detect Backplane Bays</button>
           </div>
         </div>
 

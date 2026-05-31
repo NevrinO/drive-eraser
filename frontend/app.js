@@ -34,7 +34,13 @@ const exportCsvBtn = document.getElementById("exportCsvBtn");
 const downloadBundleBtn = document.getElementById("downloadBundleBtn");
 const bayMappingContainer = document.getElementById("bayMappingContainer");
 const saveBayMapBtn = document.getElementById("saveBayMapBtn");
+const saveBayMapBtnTop = document.getElementById("saveBayMapBtnTop");
 const addBayBtn = document.getElementById("addBayBtn");
+const layoutTemplateSelect = document.getElementById("layoutTemplateSelect");
+const traversalPresetSelect = document.getElementById("traversalPresetSelect");
+const applyLayoutTemplateBtn = document.getElementById("applyLayoutTemplateBtn");
+const bayLayoutStatus = document.getElementById("bayLayoutStatus");
+const unsavedChangesIndicator = document.getElementById("unsavedChangesIndicator");
 
 // Metric Elements
 const metricDiskBar = document.getElementById("metricDiskBar");
@@ -57,6 +63,9 @@ let selectedBays = new Set();
 let isBatchMode = false;
 let ledgerExpandedJobs = new Set(); 
 let localBayMapCopy = {};
+let localLayoutMetadata = {};
+let availableLayoutTemplates = [];
+let hasUnsavedBayMapChanges = false;
 
 const POLL_INTERVAL_MS = 2000;
 const METHOD_ORDER = ["crypto", "block", "enhanced_secure_erase", "secure_erase", "overwrite"];
@@ -251,10 +260,11 @@ async function pollActiveWipes() {
 async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
+
     const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
-    
+
     let fetchedDrives = Array.isArray(drives) ? drives : [];
 
     // Safety: Merge staged bays from memory into background pollers so they are not deleted
@@ -272,7 +282,9 @@ async function loadDrives(silent = false) {
             status: "EMPTY",
             interface_type: conf.type === "nvme" ? "nvme" : "sata",
             capacity_str: "-",
-            marker: { status: "none" }
+            marker: { status: "none" },
+            display_number: conf.display_number,
+            physical_position: conf.physical_position
           });
         }
       });
@@ -291,7 +303,44 @@ async function loadDrives(silent = false) {
 }
 
 function renderBays(drives) {
-  baysGrid.innerHTML = drives.map((drive) => {
+  const orderedDrives = [...drives].sort((a, b) => {
+    const aPos = a.physical_position || {};
+    const bPos = b.physical_position || {};
+    const hasAPos = Number.isInteger(aPos.row) && Number.isInteger(aPos.col);
+    const hasBPos = Number.isInteger(bPos.row) && Number.isInteger(bPos.col);
+    if (hasAPos && hasBPos) {
+      if (aPos.row !== bPos.row) return aPos.row - bPos.row;
+      if (aPos.col !== bPos.col) return aPos.col - bPos.col;
+    }
+    const aNum = parseInt(String(a.display_number || a.bay).replace(/\D/g, ""), 10) || 0;
+    const bNum = parseInt(String(b.display_number || b.bay).replace(/\D/g, ""), 10) || 0;
+    return aNum - bNum;
+  });
+
+  // Determine grid columns based on template or default to 4
+  // Only use template columns if the template has been explicitly applied (saved)
+  let gridCols = 4;
+  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
+    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
+    if (template && template.cols) {
+      gridCols = template.cols;
+    }
+  } else {
+    // If no template is set, use the number of bays to determine a reasonable grid
+    const bayCount = drives.length;
+    if (bayCount <= 4) {
+      gridCols = 4;
+    } else if (bayCount <= 8) {
+      gridCols = 4;
+    } else if (bayCount <= 10) {
+      gridCols = 5;
+    } else {
+      gridCols = 4;
+    }
+  }
+  baysGrid.style.gridTemplateColumns = `repeat(${gridCols}, minmax(0, 1fr))`;
+
+  baysGrid.innerHTML = orderedDrives.map((drive) => {
     const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
     const isEmpty = !drive.present;
     const isCritical = String(drive.status).toUpperCase() === "FAILED";
@@ -328,6 +377,8 @@ function renderBays(drives) {
     const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const phaseLabel = drive.current_phase || "Sanitizing...";
 
+    const bayPrimaryText = (drive.display_number ? `BAY ${drive.display_number}` : drive.bay.toUpperCase());
+    const baySecondaryText = (drive.display_number ? drive.bay.toUpperCase() : "");
     const displayLabel = drive.label && drive.label !== drive.bay ? ` (${drive.label})` : "";
 
     return `
@@ -336,8 +387,8 @@ function renderBays(drives) {
         <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
         <div class="bay-header-row">
           <div class="bay-number">
-            ${escapeHtml(drive.bay.toUpperCase())}
-            <span style="font-size: 0.72rem; font-weight: normal; opacity: 0.7;">${escapeHtml(displayLabel)}</span>
+            ${escapeHtml(bayPrimaryText)}
+            <span style="font-size: 0.72rem; font-weight: normal; opacity: 0.7;">${escapeHtml(baySecondaryText ? `${baySecondaryText}${displayLabel}` : displayLabel)}</span>
           </div>
           ${isEmpty ? "" : `<div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>`}
         </div>
@@ -1018,19 +1069,119 @@ downloadBundleBtn.addEventListener("click", () => {
 
 // --- frontend/app.js ---
 
+function showLayoutStatus(message, isError = false) {
+  if (!bayLayoutStatus) return;
+  bayLayoutStatus.classList.remove("hidden", "status-ok", "status-error");
+  bayLayoutStatus.classList.add(isError ? "status-error" : "status-ok");
+  bayLayoutStatus.textContent = message;
+}
+
+function showUnsavedChangesIndicator() {
+  if (!unsavedChangesIndicator) return;
+  unsavedChangesIndicator.classList.remove("hidden");
+  hasUnsavedBayMapChanges = true;
+}
+
+function hideUnsavedChangesIndicator() {
+  if (!unsavedChangesIndicator) return;
+  unsavedChangesIndicator.classList.add("hidden");
+  hasUnsavedBayMapChanges = false;
+}
+
+async function loadLayoutTemplates() {
+  const response = await safeFetch("/api/admin/layout-templates");
+  if (!response.ok) throw new Error("Failed to load layout templates");
+  const data = await response.json();
+  availableLayoutTemplates = Array.isArray(data.templates) ? data.templates : [];
+
+  if (layoutTemplateSelect) {
+    const currentValue = layoutTemplateSelect.value;
+    layoutTemplateSelect.innerHTML = '<option value="">-- Select Template --</option>';
+    availableLayoutTemplates.forEach((template) => {
+      const option = document.createElement("option");
+      option.value = template.id;
+      option.textContent = `${template.name} (${template.vendor || "Generic"})`;
+      layoutTemplateSelect.appendChild(option);
+    });
+    // Restore the selected value if it still exists in the options
+    if (currentValue && Array.from(layoutTemplateSelect.options).some(opt => opt.value === currentValue)) {
+      layoutTemplateSelect.value = currentValue;
+    }
+  }
+}
+
+function applyLayoutMetadataToControls() {
+  if (layoutTemplateSelect && localLayoutMetadata.template_id) {
+    // Only set the value if it's different from the current value to avoid resetting user selection
+    if (layoutTemplateSelect.value !== localLayoutMetadata.template_id) {
+      layoutTemplateSelect.value = localLayoutMetadata.template_id;
+    }
+  }
+  if (traversalPresetSelect) {
+    traversalPresetSelect.value = localLayoutMetadata.traversal_preset || "top_left_down_then_across";
+  }
+}
+
+async function fetchCurrentBayMapDocument() {
+  const response = await safeFetch("/api/admin/bay-map");
+  if (!response.ok) throw new Error("Failed to load bay map");
+  const payload = await response.json();
+
+  if (payload && payload.bays && typeof payload.bays === "object") {
+    return {
+      bays: payload.bays,
+      layout_metadata: payload.layout_metadata || {}
+    };
+  }
+
+  const bays = {};
+  Object.keys(payload || {}).forEach((key) => {
+    const val = payload[key];
+    if (key !== "layout_metadata" && val && typeof val === "object") {
+      bays[key] = val;
+    }
+  });
+
+  return {
+    bays,
+    layout_metadata: payload?.layout_metadata || {}
+  };
+}
+
 async function loadBayMappingConfig() {
   try {
+    await loadLayoutTemplates();
+    const bayMapDoc = await fetchCurrentBayMapDocument();
+    localLayoutMetadata = bayMapDoc.layout_metadata || {};
+    applyLayoutMetadataToControls();
+    hideUnsavedChangesIndicator();
+
     const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
     if (!unmappedResponse.ok) throw new Error();
     const unmappedDrives = await unmappedResponse.json();
-    
-    // Clear old layout
+
     bayMappingContainer.innerHTML = "";
 
-    // Only re-initialize from currentDrives if we do not already have configured staged keys in memory
+    localBayMapCopy = {};
+    Object.keys(bayMapDoc.bays || {}).forEach((bayId) => {
+      const conf = bayMapDoc.bays[bayId] || {};
+      localBayMapCopy[bayId] = {
+        role: conf.role,
+        locked: conf.locked,
+        label: conf.label,
+        type: conf.type || "sas_sata",
+        by_path: conf.by_path || "",
+        by_path_nvme: conf.by_path_nvme || "",
+        display_number: conf.display_number || "",
+        physical_position: conf.physical_position || null
+      };
+    });
+
+    console.log("Loaded bay map with template:", localLayoutMetadata.template_id);
+    console.log("Loaded bays:", Object.keys(localBayMapCopy));
+
     if (Object.keys(localBayMapCopy).length === 0) {
       currentDrives.forEach(drive => {
-        // Robust fallback: if drive.type is missing from the API payload, determine the default from interface_type
         let localType = drive.type;
         if (!localType) {
             localType = (drive.interface_type === "nvme") ? "u2" : "sas_sata";
@@ -1042,7 +1193,9 @@ async function loadBayMappingConfig() {
           label: drive.label,
           type: localType,
           by_path: drive.configured_by_path || "",
-          by_path_nvme: drive.configured_by_path_nvme || ""
+          by_path_nvme: drive.configured_by_path_nvme || "",
+          display_number: drive.display_number || "",
+          physical_position: drive.physical_position || null
         };
       });
     }
@@ -1066,6 +1219,36 @@ async function loadBayMappingConfig() {
     bindDeleteBayButtons();
   } catch (err) {
     bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
+  }
+}
+
+async function renderBayMappingConfig() {
+  try {
+    const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+    if (!unmappedResponse.ok) throw new Error();
+    const unmappedDrives = await unmappedResponse.json();
+
+    bayMappingContainer.innerHTML = "";
+
+    // Sort active bays chronologically directly from our master staged layout copy in browser memory
+    const sortedBayKeys = Object.keys(localBayMapCopy).sort((a, b) => {
+      const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+      const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+      return numA - numB;
+    });
+
+    sortedBayKeys.forEach(bayKey => {
+      const conf = localBayMapCopy[bayKey];
+      if (!conf) return;
+
+      // Render advanced hybrid-capable layout rows
+      const rowElement = renderBayConfigurationRow(bayKey, conf, unmappedDrives);
+      bayMappingContainer.appendChild(rowElement);
+    });
+
+    bindDeleteBayButtons();
+  } catch (err) {
+    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to render mapping configurations: ${err.message}</div>`;
   }
 }
 
@@ -1132,6 +1315,7 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
     
     const isU2 = bayConfig.type === 'u2';
     const lockStatusText = bayConfig.locked ? "Locked" : "Editable";
+    const hasOverride = !!String(bayConfig.display_number || "").trim();
     
     const deleteBtnHtml = bayConfig.locked ? "" : `
         <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayId)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
@@ -1147,6 +1331,15 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
                 ${deleteBtnHtml}
             </div>
         </div>
+
+        <div class="form-group" style="margin-bottom: 8px; display: grid; grid-template-columns: 180px 1fr 1fr; gap: 8px; align-items: end;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Display Number</label>
+            <input id="display-number-${bayId}" class="display-number-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+            <label style="font-size: 0.75rem; color: #aaa; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 6px;">
+              <input id="override-number-${bayId}" class="override-number-toggle" data-bay="${bayId}" type="checkbox" ${hasOverride ? "checked" : ""} />
+              Manual Override
+            </label>
+        </div>
         
         <div class="form-group" style="margin-bottom: 8px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Drive Interface Type</label>
@@ -1156,19 +1349,15 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
             </select>
         </div>
 
-        <!-- Primary SATA/SAS Selector -->
         <div class="form-group" style="margin-bottom: 8px;">
             <label id="primary-label-${bayId}" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Primary SAS/SATA Controller Port Path</label>
             <select id="path-${bayId}" class="by-path-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
-                <!-- Populated dynamically -->
             </select>
         </div>
 
-        <!-- Secondary NVMe Selector -->
         <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'} margin-bottom: 8px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px; color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
             <select id="path-nvme-${bayId}" class="by-path-nvme-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
-                <!-- Populated dynamically -->
             </select>
         </div>
         <hr style="border: 0; border-top: 1px solid #333; margin: 16px 0;">
@@ -1180,11 +1369,25 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
     const nvmeSelect = container.querySelector(`#path-nvme-${bayId}`);
     populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme);
 
+    const overrideToggle = container.querySelector(`#override-number-${bayId}`);
+    const displayInput = container.querySelector(`#display-number-${bayId}`);
+    overrideToggle.addEventListener("change", (e) => {
+      displayInput.disabled = !e.target.checked;
+      if (!e.target.checked) {
+        displayInput.value = "";
+      }
+      showUnsavedChangesIndicator();
+    });
+
+    displayInput.addEventListener("input", () => {
+      showUnsavedChangesIndicator();
+    });
+
     const typeSelector = container.querySelector(`#type-${bayId}`);
     typeSelector.addEventListener('change', (e) => {
         const nvmeGroup = container.querySelector(`#nvme-group-${bayId}`);
         const primaryLabel = container.querySelector(`#primary-label-${bayId}`);
-        
+
         if (e.target.value === 'u2') {
             nvmeGroup.style.display = 'block';
             primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path (SATA Mode)';
@@ -1193,26 +1396,153 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
             primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path';
             nvmeSelect.value = "";
         }
+        showUnsavedChangesIndicator();
+    });
+
+    primarySelect.addEventListener("change", () => {
+      showUnsavedChangesIndicator();
+    });
+
+    nvmeSelect.addEventListener("change", () => {
+      showUnsavedChangesIndicator();
     });
 
     return container;
 }
 
+async function applyLayoutTemplate() {
+  const templateId = layoutTemplateSelect?.value;
+  const traversalPreset = traversalPresetSelect?.value;
+  if (!templateId) {
+    showLayoutStatus("Select a layout template first.", true);
+    return;
+  }
+
+  console.log("Applying template:", templateId, "with traversal:", traversalPreset);
+
+  const customOverrides = {};
+  Object.keys(localBayMapCopy).forEach((bayId) => {
+    const conf = localBayMapCopy[bayId] || {};
+    if (conf.display_number && String(conf.display_number).trim() !== "") {
+      customOverrides[bayId] = { display_number: String(conf.display_number).trim() };
+    }
+  });
+
+  const response = await safeFetch("/api/admin/apply-template", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      template_id: templateId,
+      traversal_preset: traversalPreset,
+      custom_overrides: customOverrides
+    })
+  });
+
+  const data = await response.json();
+  console.log("Template apply response:", data);
+
+  if (!response.ok) {
+    throw new Error(data.error || "Template apply failed");
+  }
+
+  const bayMapDoc = data.bay_map || {};
+  const newBays = bayMapDoc.bays || {};
+  localLayoutMetadata = bayMapDoc.layout_metadata || {};
+  localBayMapCopy = {};
+
+  Object.keys(newBays).forEach((bayId) => {
+    const conf = newBays[bayId] || {};
+    localBayMapCopy[bayId] = {
+      role: conf.role,
+      locked: conf.locked,
+      label: conf.label,
+      type: conf.type || "sas_sata",
+      by_path: conf.by_path || "",
+      by_path_nvme: conf.by_path_nvme || "",
+      display_number: conf.display_number || "",
+      physical_position: conf.physical_position || null
+    };
+  });
+
+  console.log("Updated localBayMapCopy with", Object.keys(localBayMapCopy).length, "bays");
+  console.log("Updated localLayoutMetadata:", localLayoutMetadata);
+
+  applyLayoutMetadataToControls();
+
+  // Update currentDrives to match the new bay configuration for workbench view
+  // Preserve existing drive data where possible, add empty slots for new bays
+  const existingDriveMap = {};
+  currentDrives.forEach(drive => {
+    existingDriveMap[drive.bay] = drive;
+  });
+
+  currentDrives = Object.keys(localBayMapCopy).map((bayId) => {
+    const conf = localBayMapCopy[bayId];
+    const existingDrive = existingDriveMap[bayId];
+    if (existingDrive) {
+      // Preserve existing drive data but update layout metadata
+      return {
+        ...existingDrive,
+        label: conf.label,
+        role: conf.role,
+        locked: conf.locked,
+        display_number: conf.display_number,
+        physical_position: conf.physical_position
+      };
+    } else {
+      // Add empty slot for new bay
+      return {
+        bay: bayId,
+        label: conf.label,
+        role: conf.role,
+        locked: conf.locked,
+        present: false,
+        status: "EMPTY",
+        interface_type: conf.type === "u2" ? "nvme" : "sata",
+        capacity_str: "-",
+        marker: { status: "none" },
+        display_number: conf.display_number,
+        physical_position: conf.physical_position
+      };
+    }
+  });
+
+  renderBays(currentDrives);
+  await renderBayMappingConfig();
+  showUnsavedChangesIndicator();
+  showLayoutStatus(`Template applied: ${data.template?.name || templateId}`);
+}
+
 async function saveBayMappingConfiguration() {
     const updatedBayMap = {};
     const configRows = document.querySelectorAll('.bay-config-row');
-    
+    const customOverrides = {};
+    const seenDisplayNumbers = new Set();
+
+    // Try to read from DOM first (for manual edits)
     configRows.forEach(row => {
         const typeSelector = row.querySelector('.bay-type-selector');
         const bayId = typeSelector.getAttribute('data-bay');
-        
+
         const type = typeSelector.value;
         const primaryPath = row.querySelector('.by-path-select').value || null;
-        
+
         let nvmePath = null;
         if (type === 'u2') {
             const nvmeSelect = row.querySelector('.by-path-nvme-select');
             nvmePath = (nvmeSelect && nvmeSelect.value) || null;
+        }
+
+        const overrideEnabled = row.querySelector('.override-number-toggle')?.checked;
+        const displayInput = row.querySelector('.display-number-input');
+        const displayNumber = overrideEnabled ? (displayInput?.value || "").trim() : "";
+        if (displayNumber) {
+            const dedupeKey = displayNumber.toLowerCase();
+            if (seenDisplayNumbers.has(dedupeKey)) {
+              throw new Error(`Duplicate display number: ${displayNumber}`);
+            }
+            seenDisplayNumbers.add(dedupeKey);
+            customOverrides[bayId] = { display_number: displayNumber };
         }
 
         const labelNum = bayId.startsWith("bay") ? bayId.slice(3) : bayId;
@@ -1220,27 +1550,59 @@ async function saveBayMappingConfiguration() {
 
         updatedBayMap[bayId] = {
             "role": localBayMapCopy[bayId]?.role || "wipe",
-            "locked": localBayMapCopy[bayId]?.locked || false, // Fixed Python Capitalized 'False' ReferenceError
+            "locked": localBayMapCopy[bayId]?.locked || false,
             "type": type,
             "label": localBayMapCopy[bayId]?.label || defaultLabel,
             "by_path": primaryPath,
-            "by_path_nvme": nvmePath
+            "by_path_nvme": nvmePath,
+            "display_number": displayNumber || null,
+            "physical_position": localBayMapCopy[bayId]?.physical_position || null
         };
     });
+
+    // If no config rows found or DOM is incomplete, use localBayMapCopy directly
+    if (Object.keys(updatedBayMap).length === 0 || Object.keys(updatedBayMap).length !== Object.keys(localBayMapCopy).length) {
+        Object.keys(localBayMapCopy).forEach((bayId) => {
+            const conf = localBayMapCopy[bayId];
+            updatedBayMap[bayId] = {
+                "role": conf.role,
+                "locked": conf.locked,
+                "type": conf.type,
+                "label": conf.label,
+                "by_path": conf.by_path || "",
+                "by_path_nvme": conf.by_path_nvme || "",
+                "display_number": conf.display_number || null,
+                "physical_position": conf.physical_position || null
+            };
+        });
+    }
+
+    const payload = {
+      layout_metadata: {
+        template_id: layoutTemplateSelect?.value || localLayoutMetadata.template_id || null,
+        traversal_preset: traversalPresetSelect?.value || localLayoutMetadata.traversal_preset || "top_left_down_then_across",
+        custom_overrides: customOverrides
+      },
+      bays: updatedBayMap
+    };
 
     const response = await safeFetch('/api/admin/save-bay-map', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedBayMap)
+        body: JSON.stringify(payload)
     });
-    
+
+    console.log("Save payload:", payload);
+    console.log("Save response status:", response.status);
+
     if (response.ok) {
         alert("Bay mapping successfully saved!");
-        localBayMapCopy = {}; 
+        hideUnsavedChangesIndicator();
         await loadDrives();
         await loadBayMappingConfig();
     } else {
         const data = await response.json();
+        console.error("Save error:", data);
         throw new Error(data.error || "Failed to save configuration");
     }
 }
@@ -1266,10 +1628,11 @@ function bindDeleteBayButtons() {
 
       delete localBayMapCopy[bayId];
       selectedBays.delete(bayId);
-      
+
       currentDrives = currentDrives.filter(d => d.bay !== bayId);
       renderBays(currentDrives);
-      loadBayMappingConfig();
+      renderBayMappingConfig();
+      showUnsavedChangesIndicator();
     });
   });
 }
@@ -1281,12 +1644,12 @@ addBayBtn.addEventListener("click", () => {
   }
 
   const label = prompt("Enter a descriptive label for the new physical bay:");
-  if (label === null) return; 
-  
+  if (label === null) return;
+
   const cleanLabel = label.trim() || "Work Bay Extension";
   const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'u2' for hybrid NVMe):", "sas_sata");
   if (typeSelection === null) return;
-  
+
   const cleanType = typeSelection.trim().toLowerCase() === "u2" ? "u2" : "sas_sata";
 
   const bayKeys = Object.keys(localBayMapCopy);
@@ -1297,7 +1660,7 @@ addBayBtn.addEventListener("click", () => {
       highestNum = num;
     }
   });
-  
+
   const nextBayId = `bay${highestNum + 1}`;
 
   localBayMapCopy[nextBayId] = {
@@ -1322,13 +1685,14 @@ addBayBtn.addEventListener("click", () => {
   });
 
   renderBays(currentDrives);
-  loadBayMappingConfig();
+  renderBayMappingConfig();
+  showUnsavedChangesIndicator();
 });
 
 saveBayMapBtn.addEventListener("click", async () => {
   saveBayMapBtn.disabled = true;
   saveBayMapBtn.textContent = "Saving...";
-  
+
   try {
     await saveBayMappingConfiguration();
   } catch (err) {
@@ -1339,8 +1703,50 @@ saveBayMapBtn.addEventListener("click", async () => {
   }
 });
 
+if (saveBayMapBtnTop) {
+  saveBayMapBtnTop.addEventListener("click", async () => {
+    saveBayMapBtnTop.disabled = true;
+    saveBayMapBtnTop.textContent = "Saving...";
+
+    try {
+      await saveBayMappingConfiguration();
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    } finally {
+      saveBayMapBtnTop.disabled = false;
+      saveBayMapBtnTop.textContent = "Save Mapping";
+    }
+  });
+}
+
+if (layoutTemplateSelect) {
+  layoutTemplateSelect.addEventListener("change", () => {
+    // Don't auto-apply template - just show unsaved changes indicator
+    // The template_id will be updated when "Apply Template" is clicked
+    showUnsavedChangesIndicator();
+  });
+}
+
+if (traversalPresetSelect) {
+  traversalPresetSelect.addEventListener("change", () => {
+    showUnsavedChangesIndicator();
+  });
+}
+
+if (applyLayoutTemplateBtn) {
+  applyLayoutTemplateBtn.addEventListener("click", async () => {
+    try {
+      await applyLayoutTemplate();
+    } catch (err) {
+      showLayoutStatus(err.message, true);
+    }
+  });
+}
+
 (async () => {
   await loadSecurityStatus();
+  await loadLayoutTemplates();
+  await loadBayMappingConfig();
   await loadDrives(false);
   pollActiveWipes();
 })();

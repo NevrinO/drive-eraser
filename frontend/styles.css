@@ -826,7 +826,7 @@ button:disabled {
 .bay-mapping-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 8px;
   margin-top: 12px;
 }
 
@@ -896,6 +896,23 @@ button:disabled {
 }
 
 .auth-overlay.hidden {
+  display: none !important;
+}
+
+.unsaved-changes-indicator {
+  background: var(--color-warning);
+  color: #000;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unsaved-changes-indicator.hidden {
   display: none !important;
 }
 
