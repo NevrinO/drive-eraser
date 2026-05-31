@@ -9,21 +9,22 @@ import random
 from datetime import datetime, timezone
 from common import load_policy
 
-from disk_ops import (
-    get_smart_data,
+from disk_utils import (
     read_marker_status,
     check_write_tolerance,
     MARKER_SIGNATURE,
-    MARKER_BLOCK_SIZE
+    MARKER_BLOCK_SIZE,
+    COMMAND_PATH_OVERRIDES
 )
+from smart_parsing import get_smart_data
 
 def resolve_verify_command_path(command_name, env_var_name, override_key, fallbacks):
     env_value = os.getenv(env_var_name)
     if env_value and os.path.exists(env_value) and os.access(env_value, os.X_OK):
         return env_value
     
-    # Sibling import resolution directly from disk_ops
-    from disk_ops import COMMAND_PATH_OVERRIDES
+    # Sibling import resolution directly from disk_utils
+    from disk_utils import COMMAND_PATH_OVERRIDES
     configured = COMMAND_PATH_OVERRIDES.get(override_key)
     if configured and os.path.exists(configured) and os.access(configured, os.X_OK):
         return configured
