@@ -10,13 +10,13 @@ from datetime import datetime, timezone
 from common import load_policy
 
 from disk_utils import (
-    get_smart_data,
     read_marker_status,
     check_write_tolerance,
     MARKER_SIGNATURE,
     MARKER_BLOCK_SIZE,
     COMMAND_PATH_OVERRIDES
 )
+from smart_parsing import get_smart_data
 
 def resolve_verify_command_path(command_name, env_var_name, override_key, fallbacks):
     env_value = os.getenv(env_var_name)
