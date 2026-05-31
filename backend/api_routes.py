@@ -12,7 +12,7 @@ import tarfile
 import socket
 from datetime import datetime, timezone
 from threading import Thread
-from flask import request, jsonify, send_from_directory, send_file
+from flask import request, jsonify, send_from_directory, send_file, g
 
 from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, logger, get_local_ip, calculate_session_token
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
@@ -21,7 +21,7 @@ from common import (
     get_config_dir, load_policy, get_data_dir, get_db_path, get_logs_dir, get_failed_logs_dir,
     save_policy, save_bay_map
 )
-from database import init_wipe_db, persist_job
+from database import init_wipe_db
 from disk_ops import discover_drives, get_os_by_path
 from disk_utils import format_capacity_bytes
 from smart_parsing import get_smart_data
@@ -450,6 +450,17 @@ def export_csv_ledger():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.after_request
+def cleanup_support_bundle(response):
+    if request.path == "/api/admin/support-bundle" and response.status_code == 200:
+        tar_path = getattr(g, 'support_bundle_tar_path', None)
+        if tar_path and os.path.exists(tar_path):
+            try:
+                os.remove(tar_path)
+            except Exception:
+                pass
+    return response
+
 @app.route("/api/admin/support-bundle")
 def download_support_bundle():
     try:
@@ -514,9 +525,10 @@ def download_support_bundle():
         tar_path = f"/tmp/{bundle_name}.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             tar.add(workspace_dir, arcname=bundle_name)
-            
+
         shutil.rmtree(workspace_dir, ignore_errors=True)
-        
+
+        g.support_bundle_tar_path = tar_path
         logger.info(f"Support bundle built successfully: {tar_path}")
         return send_file(
             tar_path,

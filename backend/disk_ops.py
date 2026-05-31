@@ -5,7 +5,8 @@ import os
 import json
 import subprocess
 
-from disk_utils import get_config_dir, load_policy, resolve_bay_device, check_write_tolerance, read_marker_status
+from common import get_config_dir, load_policy
+from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
 from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation
 from disk_capabilities import detect_drive_capabilities
 

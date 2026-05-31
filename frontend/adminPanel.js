@@ -314,7 +314,7 @@ document.getElementById('btn-auto-detect').addEventListener('click', async () =>
     }
     
     try {
-        const response = await fetch('/api/admin/auto-detect-bays', {
+        const response = await safeFetch('/api/admin/auto-detect-bays', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });

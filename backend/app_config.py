@@ -77,15 +77,18 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 def get_local_ip():
+    s = None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(0)
         s.connect(('8.8.8.8', 1))
         ip = s.getsockname()[0]
-        s.close()
         return ip
     except Exception:
         return "127.0.0.1"
+    finally:
+        if s:
+            s.close()
 
 def calculate_session_token(passphrase):
     return hmac.new(passphrase.encode('utf-8'), b"dws_admin_session", hashlib.sha256).hexdigest()

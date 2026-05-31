@@ -207,7 +207,6 @@ def prepare_erase_command(device, interface_type, method):
             return {"ok": False, "error": "hdparm_not_available"}
         user_password = "wipestation"
         erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
-        set_pass_cmd = [hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
         return {"ok": True, "command": erase_cmd}
 
