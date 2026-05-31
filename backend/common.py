@@ -3,6 +3,9 @@ import os
 import json
 import time
 
+# Constants
+DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def get_data_dir():
@@ -38,9 +41,9 @@ def get_failed_logs_dir():
     os.makedirs(path, exist_ok=True)
     return path
 
-def purge_old_logs(max_age_days=30):
+def purge_old_logs(max_age_days=DEFAULT_LOG_RETENTION_DAYS):
     """
-    Scans active and failed log directories and purges any files 
+    Scans active and failed log directories and purges any files
     whose last modified time exceeds max_age_days.
     """
     now = time.time()
