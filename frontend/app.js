@@ -4,6 +4,9 @@
 
 // DOM Elements
 const mainTabs = document.getElementById("mainTabs");
+const helpButton = document.getElementById("helpButton");
+const helpModal = document.getElementById("helpModal");
+const helpClose = document.getElementById("helpClose");
 
 // State variables
 let currentDrives = [];
@@ -32,6 +35,21 @@ mainTabs.addEventListener("click", (event) => {
     loadBayMappingConfig();
   }
 });
+
+// Help modal
+if (helpButton && helpModal) {
+  helpButton.addEventListener("click", () => {
+    helpModal.classList.add("open");
+    helpModal.setAttribute("aria-hidden", "false");
+  });
+}
+
+if (helpClose && helpModal) {
+  helpClose.addEventListener("click", () => {
+    helpModal.classList.remove("open");
+    helpModal.setAttribute("aria-hidden", "true");
+  });
+}
 
 // Application initialization
 (async () => {

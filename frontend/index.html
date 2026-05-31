@@ -12,6 +12,7 @@
       <h1>Drive Sanitization Station</h1>
       <div class="header-actions">
         <div id="securityBadge" class="reliability-badge">SECURE MODE</div>
+        <button id="helpButton" type="button">Help</button>
         <button id="refreshButton" type="button">Refresh Bays</button>
       </div>
     </header>
@@ -240,6 +241,39 @@
         <button type="button" id="bayDetailClose" class="close-button" data-close-modal="true">Close</button>
       </header>
       <div id="bayDetailContent" class="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- HELP MODAL -->
+  <div id="helpModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="helpTitle">
+      <header class="modal-header">
+        <h3 id="helpTitle">Help & Documentation</h3>
+        <button type="button" id="helpClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+        <h4>Quick Start</h4>
+        <ul>
+          <li><strong>Configure Bay Mapping:</strong> Go to System Administration tab (Tab 3) and use "Auto-Detect" or manually map bays</li>
+          <li><strong>Wipe a Drive:</strong> Insert drive, select it in Active Workbench, click "Configure Sanitization"</li>
+          <li><strong>View Certificates:</strong> Check the Compliance Audit Vault tab (Tab 2) for completed wipes</li>
+        </ul>
+
+        <h4>Detailed Documentation</h4>
+        <ul>
+          <li><a href="/docs/SOP_technician_guide.md" target="_blank">Technician SOP</a> - Step-by-step workflow for health checking and erasing drives</li>
+          <li><a href="/docs/troubleshooting.md" target="_blank">Troubleshooting</a> - Common issues and solutions</li>
+          <li><a href="/docs/runbook.md" target="_blank">Runbook</a> - Operational commands and procedures</li>
+        </ul>
+
+        <h4>Common Tasks</h4>
+        <ul>
+          <li><strong>Check Service Status:</strong> <code>sudo systemctl status drive-eraser</code></li>
+          <li><strong>View Logs:</strong> <code>sudo journalctl -u drive-eraser -f</code></li>
+          <li><strong>Restart Service:</strong> <code>sudo systemctl restart drive-eraser</code></li>
+        </ul>
+      </div>
     </div>
   </div>
 

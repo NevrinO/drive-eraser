@@ -50,6 +50,14 @@ def frontend_assets(path):
         return send_from_directory(FRONTEND_DIR, path)
     return jsonify({"error": "not found"}), 404
 
+@app.route("/docs/<path:path>")
+def serve_docs(path):
+    docs_dir = os.path.join(PROJECT_ROOT, "docs")
+    doc_path = os.path.join(docs_dir, path)
+    if os.path.exists(doc_path) and os.path.isfile(doc_path):
+        return send_from_directory(docs_dir, path)
+    return jsonify({"error": "documentation not found"}), 404
+
 @app.route("/api/drives")
 def get_drives():
     try:
