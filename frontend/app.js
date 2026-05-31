@@ -1423,6 +1423,46 @@ async function applyLayoutTemplate() {
   });
 
   applyLayoutMetadataToControls();
+
+  // Update currentDrives to match the new bay configuration for workbench view
+  // Preserve existing drive data where possible, add empty slots for new bays
+  const existingDriveMap = {};
+  currentDrives.forEach(drive => {
+    existingDriveMap[drive.bay] = drive;
+  });
+
+  currentDrives = Object.keys(localBayMapCopy).map((bayId) => {
+    const conf = localBayMapCopy[bayId];
+    const existingDrive = existingDriveMap[bayId];
+    if (existingDrive) {
+      // Preserve existing drive data but update layout metadata
+      return {
+        ...existingDrive,
+        label: conf.label,
+        role: conf.role,
+        locked: conf.locked,
+        display_number: conf.display_number,
+        physical_position: conf.physical_position
+      };
+    } else {
+      // Add empty slot for new bay
+      return {
+        bay: bayId,
+        label: conf.label,
+        role: conf.role,
+        locked: conf.locked,
+        present: false,
+        status: "EMPTY",
+        interface_type: conf.type === "u2" ? "nvme" : "sata",
+        capacity_str: "-",
+        marker: { status: "none" },
+        display_number: conf.display_number,
+        physical_position: conf.physical_position
+      };
+    }
+  });
+
+  renderBays(currentDrives);
   await renderBayMappingConfig();
   showUnsavedChangesIndicator();
   showLayoutStatus(`Template applied: ${data.template?.name || templateId}`);
