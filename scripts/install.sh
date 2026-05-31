@@ -646,12 +646,26 @@ print_summary() {
     echo -e "  Service status: ${BLUE}systemctl status $SERVICE_NAME${NC}"
     echo -e "  View logs:      ${BLUE}journalctl -u $SERVICE_NAME -f${NC}"
     echo ""
+
+    local detected_ip=""
+    if command -v ip &>/dev/null; then
+        detected_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -n1)
+    fi
+    if [ -z "$detected_ip" ] && command -v hostname &>/dev/null; then
+        detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [ -z "$detected_ip" ]; then
+        detected_ip="<server-ip>"
+    fi
+
     echo -e "${GREEN}  Web UI Access:${NC}"
-    echo -e "    Open browser to: ${BLUE}http://<server-ip>:$WIPE_PORT${NC}"
+    echo -e "    Open browser to: ${BLUE}http://${detected_ip}:${WIPE_PORT}${NC}"
+    echo -e "    Or locally:      ${BLUE}http://127.0.0.1:${WIPE_PORT}${NC}"
     echo -e "    Configure bay mapping via System Administration tab"
     echo ""
     echo -e "${YELLOW}  Documentation:${NC}"
-    echo -e "    See ${BLUE}$INSTALL_DIR/docs/${NC} for detailed guides"
+    echo -e "    Guides are available inside the web UI (Audit / Help tabs)"
+    echo -e "    Local copies: ${BLUE}$INSTALL_DIR/docs/${NC} (requires admin/sudo access)"
     echo ""
     echo -e "${GREEN}============================================${NC}"
     echo ""
