@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from threading import Thread
 from flask import request, jsonify, send_from_directory, send_file, g
 
-from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, logger, get_local_ip, calculate_session_token
+from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, get_local_ip, calculate_session_token
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from job_management import validate_single_bay, create_erase_job, run_erase_job
 from common import (
