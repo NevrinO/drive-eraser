@@ -260,10 +260,14 @@ async function pollActiveWipes() {
 async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
+
+    // Ensure layout templates are loaded before loading drives
+    await loadLayoutTemplates();
+
     const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
-    
+
     let fetchedDrives = Array.isArray(drives) ? drives : [];
 
     // Safety: Merge staged bays from memory into background pollers so they are not deleted
@@ -281,7 +285,9 @@ async function loadDrives(silent = false) {
             status: "EMPTY",
             interface_type: conf.type === "nvme" ? "nvme" : "sata",
             capacity_str: "-",
-            marker: { status: "none" }
+            marker: { status: "none" },
+            display_number: conf.display_number,
+            physical_position: conf.physical_position
           });
         }
       });
@@ -1135,7 +1141,7 @@ async function loadBayMappingConfig() {
     const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
     if (!unmappedResponse.ok) throw new Error();
     const unmappedDrives = await unmappedResponse.json();
-    
+
     bayMappingContainer.innerHTML = "";
 
     localBayMapCopy = {};
@@ -1152,6 +1158,9 @@ async function loadBayMappingConfig() {
         physical_position: conf.physical_position || null
       };
     });
+
+    console.log("Loaded bay map with template:", localLayoutMetadata.template_id);
+    console.log("Loaded bays:", Object.keys(localBayMapCopy));
 
     if (Object.keys(localBayMapCopy).length === 0) {
       currentDrives.forEach(drive => {
