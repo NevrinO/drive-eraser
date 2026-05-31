@@ -629,6 +629,14 @@ button:disabled {
   padding: 24px;
 }
 
+.modal-section-header {
+  font-size: 1.1em;
+  font-weight: bold;
+  margin-bottom: 10px;
+  margin-top: 16px;
+  color: var(--color-text);
+}
+
 .form-fields-stack {
   display: grid;
   grid-template-columns: 1fr 1fr;
