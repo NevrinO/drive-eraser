@@ -261,9 +261,6 @@ async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
 
-    // Ensure layout templates are loaded before loading drives
-    await loadLayoutTemplates();
-
     const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const drives = await response.json();
@@ -322,7 +319,7 @@ function renderBays(drives) {
 
   // Determine grid columns based on template or default to 4
   let gridCols = 4;
-  if (localLayoutMetadata.template_id) {
+  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
     const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
     if (template && template.cols) {
       gridCols = template.cols;
@@ -1085,6 +1082,7 @@ async function loadLayoutTemplates() {
   availableLayoutTemplates = Array.isArray(data.templates) ? data.templates : [];
 
   if (layoutTemplateSelect) {
+    const currentValue = layoutTemplateSelect.value;
     layoutTemplateSelect.innerHTML = '<option value="">-- Select Template --</option>';
     availableLayoutTemplates.forEach((template) => {
       const option = document.createElement("option");
@@ -1092,12 +1090,19 @@ async function loadLayoutTemplates() {
       option.textContent = `${template.name} (${template.vendor || "Generic"})`;
       layoutTemplateSelect.appendChild(option);
     });
+    // Restore the selected value if it still exists in the options
+    if (currentValue && Array.from(layoutTemplateSelect.options).some(opt => opt.value === currentValue)) {
+      layoutTemplateSelect.value = currentValue;
+    }
   }
 }
 
 function applyLayoutMetadataToControls() {
-  if (layoutTemplateSelect) {
-    layoutTemplateSelect.value = localLayoutMetadata.template_id || "";
+  if (layoutTemplateSelect && localLayoutMetadata.template_id) {
+    // Only set the value if it's different from the current value to avoid resetting user selection
+    if (layoutTemplateSelect.value !== localLayoutMetadata.template_id) {
+      layoutTemplateSelect.value = localLayoutMetadata.template_id;
+    }
   }
   if (traversalPresetSelect) {
     traversalPresetSelect.value = localLayoutMetadata.traversal_preset || "top_left_down_then_across";
@@ -1696,6 +1701,7 @@ if (saveBayMapBtnTop) {
 
 if (layoutTemplateSelect) {
   layoutTemplateSelect.addEventListener("change", () => {
+    // Don't auto-apply template - just show unsaved changes indicator
     showUnsavedChangesIndicator();
   });
 }
