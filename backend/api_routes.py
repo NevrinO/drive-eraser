@@ -136,10 +136,13 @@ def start_erase():
 
         technician = str(payload.get("technician") or "").strip()
         ticket_number = str(payload.get("ticket_number") or "").strip()
-        if not technician:
-            technician = "System Operator"
-        if not ticket_number:
-            ticket_number = "INTERNAL"
+
+        # Only set defaults in unsecured mode (strict_audit_mode disabled)
+        if not strict_audit:
+            if not technician:
+                technician = "System Operator"
+            if not ticket_number:
+                ticket_number = "INTERNAL"
 
         confirmation_text = str(payload.get("confirmation_text") or "").strip().lower()
         
