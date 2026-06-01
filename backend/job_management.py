@@ -18,6 +18,7 @@ from verification import (
     verification_for_method,
     write_marker_and_verify,
     verify_sata_sanitize,
+    verify_sata_secure_erase,
     verify_nvme_sanitize,
     verify_sas_block,
     resolve_verify_command_path,
@@ -462,7 +463,7 @@ def run_erase_job(job_id):
         "exit_code": exit_code
     }
 
-    if method in {"crypto", "block"}:
+    if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
         firmware_complete = False
         poll_start_time = datetime.now(timezone.utc)
         max_poll_seconds = 1200 if method == "crypto" else 7200
@@ -482,7 +483,11 @@ def run_erase_job(job_id):
             phase_text = "Sanitizing in background..."
             
             if interface_type == "sata":
-                status_report = verify_sata_sanitize(device, method)
+                if method in {"secure_erase", "enhanced_secure_erase"}:
+                    # ATA secure erase doesn't have sanitize-status, check if security is disabled
+                    status_report = verify_sata_secure_erase(device, method)
+                else:
+                    status_report = verify_sata_sanitize(device, method)
             elif interface_type == "nvme":
                 status_report = verify_nvme_sanitize(device, method)
             elif interface_type == "sas":
@@ -494,7 +499,7 @@ def run_erase_job(job_id):
                     progress_pct = 100.0
                     phase_text = "Sanitization completed"
                     consecutive_errors = 0
-                elif status_report.get("error") in {"sata_sanitize_still_in_progress", "nvme_sanitize_still_in_progress", "sas_sanitize_still_in_progress"}:
+                elif status_report.get("error") in {"sata_sanitize_still_in_progress", "sata_security_still_enabled", "nvme_sanitize_still_in_progress", "sas_sanitize_still_in_progress"}:
                     firmware_complete = False
                     consecutive_errors = 0
                     parsed_pct = None
@@ -510,7 +515,11 @@ def run_erase_job(job_id):
                         prog_val = poll_sas_sanitize_progress(device)
                         if prog_val is not None:
                             parsed_pct = prog_val
-                            
+
+                    if parsed_pct is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
+                        # ATA secure erase doesn't provide progress, use time-based estimate
+                        pass
+
                     if parsed_pct is None and interface_type == "nvme":
                         sprog_val = details.get("sprog")
                         if sprog_val is not None:
@@ -519,7 +528,8 @@ def run_erase_job(job_id):
                     if parsed_pct is not None:
                         progress_pct = min(99.9, parsed_pct)
                     else:
-                        progress_pct = min(99.9, (elapsed_poll / (30.0 if method == "crypto" else 300.0)) * 100.0)
+                        fallback_timeout = 30.0 if method == "crypto" else 300.0
+                        progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                         
                     phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
                 else:
@@ -527,13 +537,15 @@ def run_erase_job(job_id):
                     if consecutive_errors >= max_consecutive_errors:
                         break
                     phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
-                    progress_pct = min(99.9, (elapsed_poll / (30.0 if method == "crypto" else 300.0)) * 100.0)
+                    fallback_timeout = 30.0 if method == "crypto" else 300.0
+                    progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
             else:
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     break
                 phase_text = f"Polling drive (no response... {consecutive_errors}/{max_consecutive_errors})"
-                progress_pct = min(99.9, (elapsed_poll / (30.0 if method == "crypto" else 300.0)) * 100.0)
+                fallback_timeout = 30.0 if method == "crypto" else 300.0
+                progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                 
             with ERASE_JOBS_LOCK:
                 job = ERASE_JOBS.get(job_id)
