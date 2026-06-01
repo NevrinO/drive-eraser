@@ -113,9 +113,13 @@ def parse_sata_erase_time_estimate(output):
     if not security_section:
         return None
 
-    # Look for erase-specific time patterns in the security section
-    # Match patterns like "6 min for SECURITY ERASE UNIT" or "30 min" with erase context
-    time_match = re.search(r"(\d+)\s*(min|minute|m|h|hour)\s*(?:for\s+)?(?:security\s+)?(?:erase)?", security_section)
+    # Look for time patterns in the security section
+    # Try multiple patterns to handle different hdparm output formats
+    # Pattern 1: "X min" or "X minute" or "X m"
+    time_match = re.search(r"(\d+)\s*(min|minute|m|h|hour)", security_section)
+    if not time_match:
+        # Pattern 2: "Xmin" without space
+        time_match = re.search(r"(\d+)(min|minute|m|h|hour)", security_section)
     if not time_match:
         return None
 

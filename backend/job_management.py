@@ -348,8 +348,9 @@ def run_erase_job(job_id):
             identify_result = subprocess.run(["sudo", hdparm_cmd, "-I", device], capture_output=True, text=True)
             if identify_result.returncode == 0:
                 erase_time_estimate_seconds = parse_sata_erase_time_estimate(identify_result.stdout)
-        except Exception:
-            pass
+                logger.info(f"Job {job_id} (Bay {job['request']['bay']}) captured erase time estimate: {erase_time_estimate_seconds} seconds")
+        except Exception as e:
+            logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) failed to capture erase time estimate: {e}")
 
         erase_flag = "--security-erase-enhanced" if method == "enhanced_secure_erase" else "--security-erase"
         command = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
