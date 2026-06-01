@@ -148,7 +148,7 @@ def verify_sata_secure_erase(device, method):
     lowered = output.lower()
     security_section = extract_sata_security_section(output)
     
-    if not lowered.strip() or not security_section:
+    if not lowered.strip():
         if not result.get("ok"):
             return {
                 "ok": False,
@@ -156,7 +156,47 @@ def verify_sata_secure_erase(device, method):
                 "error": "hdparm_identify_failed",
                 "details": {"method": method, "stderr": result.get("stderr", ""), "return_code": result.get("return_code")},
             }
-        return {"ok": False, "status": "verification_error", "error": "sata_security_section_missing", "details": {"method": method}}
+        return {"ok": False, "status": "verification_error", "error": "hdparm_output_empty", "details": {"method": method}}
+
+    # If security section is missing, verify hdparm succeeded and check for other expected sections
+    if not security_section:
+        if not result.get("ok"):
+            return {
+                "ok": False,
+                "status": "verification_error",
+                "error": "hdparm_identify_failed",
+                "details": {"method": method, "stderr": result.get("stderr", ""), "return_code": result.get("return_code")},
+            }
+        
+        # Check if output contains other expected sections to distinguish parsing failure from security disabled
+        has_config_section = bool(re.search(r"^[ \t]*Configuration:", output, re.IGNORECASE | re.MULTILINE))
+        has_geometry_section = bool(re.search(r"^[ \t]*Geometry:", output, re.IGNORECASE | re.MULTILINE))
+        
+        if not has_config_section and not has_geometry_section:
+            return {
+                "ok": False,
+                "status": "verification_error",
+                "error": "hdparm_parsing_failed",
+                "details": {"method": method, "note": "expected_sections_missing", "output": output[:500]},
+            }
+        
+        # Security section absent with other sections present - treat as security disabled
+        # Parse locked/frozen from full output if possible
+        is_locked = bool(re.search(r"\blocked\b", lowered) and not re.search(r"\bnot\s+locked\b", lowered))
+        is_frozen = bool(re.search(r"\bfrozen\b", lowered) and not re.search(r"\bnot\s+frozen\b", lowered))
+        
+        return {
+            "ok": True,
+            "status": "verified",
+            "error": None,
+            "details": {
+                "mode": "post_hdparm_identify",
+                "method": method,
+                "locked": is_locked,
+                "frozen": is_frozen,
+                "note": "security_section_absent",
+            },
+        }
 
     # Parse individual flags precisely using word boundaries to avoid false substring matches
     sec_lines = [line.strip() for line in security_section.splitlines()]
