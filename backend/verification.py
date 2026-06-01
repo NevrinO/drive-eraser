@@ -289,10 +289,10 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=10*102
         blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
         result = subprocess.run(blockdev_cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            return {"ok": False, "error": "secondary_capacity_check_failed", "details": f"blockdev failed: {result.stderr}"}
+            return {"ok": False, "error": "secondary_capacity_check_failed", "details": f"blockdev failed (exit code {result.returncode}): stderr={result.stderr}, stdout={result.stdout}"}
         capacity = int(result.stdout.strip())
     except Exception as e:
-        return {"ok": False, "error": "secondary_capacity_check_failed", "details": str(e)}
+        return {"ok": False, "error": "secondary_capacity_check_failed", "details": f"exception: {str(e)}"}
 
     # Calculate total bytes to verify based on 10% sample ratio
     target_read_bytes = int(capacity * sample_ratio)
@@ -403,7 +403,7 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
             blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
             result = subprocess.run(blockdev_cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                raise Exception(f"blockdev failed: {result.stderr}")
+                raise Exception(f"blockdev failed (exit code {result.returncode}): stderr={result.stderr}, stdout={result.stdout}")
             capacity = int(result.stdout.strip())
             if capacity <= 0:
                 return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
@@ -412,7 +412,7 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
             dd_read_cmd = ["sudo", dd_cmd, f"if={device}", "bs=4096", "count=1", "status=none"]
             result = subprocess.run(dd_read_cmd, capture_output=True)
             if result.returncode != 0:
-                raise Exception(f"dd read failed: {result.stderr.decode('utf-8', errors='replace')}")
+                raise Exception(f"dd read failed (exit code {result.returncode}): stderr={result.stderr.decode('utf-8', errors='replace')}")
             first_read = result.stdout
             break  # Success, exit retry loop
         except Exception as e:
