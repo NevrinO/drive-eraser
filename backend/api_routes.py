@@ -213,7 +213,7 @@ def get_erase_job(job_id):
         row = conn.execute(
             """
             SELECT job_number, id, friendly_id, status, created_at, started_at, finished_at, error,
-                   request_json, result_json, verification_json, marker_json, certificate_json 
+                   request_json, result_json, verification_json, marker_json, certificate_json
             FROM erase_jobs WHERE id = ? OR friendly_id = ?
             """,
             (job_id, job_id),
@@ -236,6 +236,23 @@ def get_erase_job(job_id):
         "marker": json.loads(row["marker_json"] or "{}"),
         "certificate": json.loads(row["certificate_json"] or "{}"),
     }), 200
+
+@app.route("/api/erase/jobs/<job_id>/cancel", methods=["POST"])
+def cancel_erase_job(job_id):
+    from job_management import finalize_failed_job
+    try:
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job and job.get("status") in {"running", "queued"}:
+                job["status"] = "failed"
+                job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                job["error"] = "Job cancelled by user"
+                persist_job(job)
+                ERASE_JOBS.pop(job_id, None)
+                return jsonify({"status": "cancelled", "job_id": job_id}), 200
+        return jsonify({"error": f"job not found or not cancellable: {job_id}"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/api/erase/history", methods=["GET"])
 def get_erase_history():
