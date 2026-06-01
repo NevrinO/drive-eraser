@@ -39,6 +39,7 @@ DD_PATH=""
 LSBLK_PATH=""
 LSHW_PATH=""
 SYSTEMCTL_PATH=""
+BLOCKDEV_PATH=""
 
 # Default config parameters (overwritten if run interactively)
 STATION_ID="wipe-station-01"
@@ -93,6 +94,7 @@ resolve_command_paths() {
     LSBLK_PATH="$(find_cmd_path lsblk)"
     LSHW_PATH="$(find_cmd_path lshw)"
     SYSTEMCTL_PATH="$(find_cmd_path systemctl)"
+    BLOCKDEV_PATH="$(find_cmd_path blockdev)"
 
     success "Command paths resolved."
 }
@@ -111,7 +113,8 @@ write_command_paths_config() {
   "dd": "$DD_PATH",
   "lsblk": "$LSBLK_PATH",
   "lshw": "$LSHW_PATH",
-  "systemctl": "$SYSTEMCTL_PATH"
+  "systemctl": "$SYSTEMCTL_PATH",
+  "blockdev": "$BLOCKDEV_PATH"
 }
 EOF
 
@@ -554,6 +557,7 @@ $APP_USER ALL=(root) NOPASSWD: $DD_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSBLK_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSHW_PATH
 $APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH
+$APP_USER ALL=(root) NOPASSWD: $BLOCKDEV_PATH
 EOF
 
     chmod 440 "$TMP_SUDOERS_FILE"
