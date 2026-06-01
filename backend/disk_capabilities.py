@@ -12,11 +12,16 @@ def detect_sata_capabilities(device, diagnostics=None):
         return capabilities
     output = run_command([HDPARM_CMD, "-I", device], diagnostics, "hdparm")
     if not output: return capabilities
-    
+
+    # INTENTIONALLY DISABLED: secure_erase and enhanced_secure_erase methods disabled due to drives getting locked out
+    # These methods caused drives to become unresponsive/locked, requiring physical removal/reinsertion
+    # The underlying code remains intact if needed in the future, but capabilities are forced to False here
+    # to prevent these methods from appearing in the UI.
     if re.search(r"Security:", output, re.IGNORECASE):
-        if re.search(r"\bsupported\b", output, re.IGNORECASE): capabilities["supports_secure_erase"] = True
-        if re.search(r"\benhanced erase\b", output, re.IGNORECASE): capabilities["supports_enhanced_secure_erase"] = True
-            
+        # if re.search(r"\bsupported\b", output, re.IGNORECASE): capabilities["supports_secure_erase"] = True
+        # if re.search(r"\benhanced erase\b", output, re.IGNORECASE): capabilities["supports_enhanced_secure_erase"] = True
+        pass
+
     output_lowered = output.lower()
     if "sanitize feature set" in output_lowered:
         if "crypto_scramble_ext" in output_lowered or "cryptographic scramble" in output_lowered: capabilities["supports_crypto_erase"] = True
