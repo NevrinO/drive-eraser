@@ -102,6 +102,32 @@ def extract_sata_security_section(output):
     fallback_match = re.search(r"security:\s*(.*?)(?:\n\s*\n|$)", output, re.IGNORECASE | re.DOTALL)
     return (fallback_match.group(1) if fallback_match else "").lower()
 
+def parse_sata_erase_time_estimate(output):
+    """
+    Parse the erase time estimate from hdparm -I output.
+    Returns estimated time in seconds, or None if not found.
+    Expected format: "6 min for SECURITY ERASE UNIT", "30 min", "2h", etc.
+    """
+    # Extract security section first to avoid matching unrelated time fields
+    security_section = extract_sata_security_section(output)
+    if not security_section:
+        return None
+
+    # Look for erase-specific time patterns in the security section
+    # Match patterns like "6 min for SECURITY ERASE UNIT" or "30 min" with erase context
+    time_match = re.search(r"(\d+)\s*(min|minute|m|h|hour)\s*(?:for\s+)?(?:security\s+)?(?:erase)?", security_section)
+    if not time_match:
+        return None
+
+    value = int(time_match.group(1))
+    unit = time_match.group(2)
+
+    if unit in {"h", "hour"}:
+        return value * 60
+    elif unit in {"min", "minute", "m"}:
+        return value
+    return None
+
 def verify_nvme_sanitize(device, method):
     nvme_cmd = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
     if not nvme_cmd:

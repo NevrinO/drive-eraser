@@ -22,7 +22,8 @@ from verification import (
     verify_nvme_sanitize,
     verify_sas_block,
     resolve_verify_command_path,
-    capture_before_state
+    capture_before_state,
+    parse_sata_erase_time_estimate
 )
 from certificates import build_certificate
 from notifier import send_slack_notification
@@ -319,12 +320,15 @@ def run_erase_job(job_id):
                     job["verification_state"] = {"before": before_state}
                     persist_job(job)
 
+    # Initialize erase time estimate for SATA secure erase
+    erase_time_estimate_seconds = None
+
     if method in {"secure_erase", "enhanced_secure_erase"} and interface_type == "sata":
         hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
         if not hdparm_cmd:
             finalize_failed_job(job_id, "hdparm_not_available")
             return
-        
+
         user_password = "wipestation"
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         try:
@@ -338,6 +342,14 @@ def run_erase_job(job_id):
         except Exception as e:
             finalize_failed_job(job_id, f"security_set_password_exception: {str(e)}")
             return
+
+        # Capture erase time estimate from hdparm -I before starting erase
+        try:
+            identify_result = subprocess.run(["sudo", hdparm_cmd, "-I", device], capture_output=True, text=True)
+            if identify_result.returncode == 0:
+                erase_time_estimate_seconds = parse_sata_erase_time_estimate(identify_result.stdout)
+        except Exception:
+            pass
 
         erase_flag = "--security-erase-enhanced" if method == "enhanced_secure_erase" else "--security-erase"
         command = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
@@ -413,7 +425,9 @@ def run_erase_job(job_id):
                     progress = min(99.9, prog_val)
                     phase = f"SATA sanitize active ({progress:.1f}%)"
                 else:
-                    progress = min(99.9, (elapsed / estimated_seconds) * 100)
+                    # Use drive-specific estimate if available, otherwise fall back to default
+                    timeout_for_progress = erase_time_estimate_seconds if erase_time_estimate_seconds and erase_time_estimate_seconds > 0 else estimated_seconds
+                    progress = min(99.9, (elapsed / timeout_for_progress) * 100)
                     phase = f"SATA Secure Erase running ({progress:.1f}%)"
 
             elif method == "block" and interface_type == "sas":
@@ -466,6 +480,8 @@ def run_erase_job(job_id):
     if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
         firmware_complete = False
         poll_start_time = datetime.now(timezone.utc)
+        # Use erase command start time for progress calculation, not polling start time
+        erase_start_time = start_time
         max_poll_seconds = 1200 if method == "crypto" else 7200
         
         time.sleep(5)
@@ -518,33 +534,41 @@ def run_erase_job(job_id):
 
                     if parsed_pct is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
                         # ATA secure erase doesn't provide progress, use time-based estimate
-                        pass
+                        # Use total elapsed time from erase command start, not just polling start
+                        total_elapsed = (datetime.now(timezone.utc) - erase_start_time).total_seconds()
+                        if erase_time_estimate_seconds and erase_time_estimate_seconds > 0:
+                            progress_pct = min(99.9, (total_elapsed / erase_time_estimate_seconds) * 100)
+                            if total_elapsed > erase_time_estimate_seconds:
+                                phase_text = f"Verifying completion (taking longer than estimated {erase_time_estimate_seconds/60:.0f} min)"
+                            else:
+                                phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
+                        else:
+                            # No estimate available, use generic fallback (15 minutes)
+                            fallback_timeout = 900.0
+                            progress_pct = min(99.9, (total_elapsed / fallback_timeout) * 100.0)
+                            phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
 
                     if parsed_pct is None and interface_type == "nvme":
                         sprog_val = details.get("sprog")
                         if sprog_val is not None:
                             parsed_pct = (sprog_val / 65535.0) * 100.0
-                            
+
                     if parsed_pct is not None:
                         progress_pct = min(99.9, parsed_pct)
-                    else:
-                        fallback_timeout = 30.0 if method == "crypto" else 300.0
-                        progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
-                        
-                    phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
+                        phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
                 else:
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive_errors:
                         break
                     phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
-                    fallback_timeout = 30.0 if method == "crypto" else 300.0
+                    fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                     progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
             else:
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     break
                 phase_text = f"Polling drive (no response... {consecutive_errors}/{max_consecutive_errors})"
-                fallback_timeout = 30.0 if method == "crypto" else 300.0
+                fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                 progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                 
             with ERASE_JOBS_LOCK:
