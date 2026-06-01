@@ -280,10 +280,17 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=10*102
     samples across the drive LBA range. Combines random sampling with sequential chunk
     reads to avoid disk head seek bottlenecks on HDDs.
     """
+    dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
+    if not dd_cmd:
+        return {"ok": False, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
+
     try:
-        with open(device, "rb") as f:
-            f.seek(0, 2)
-            capacity = f.tell()
+        # Get capacity using blockdev
+        blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
+        result = subprocess.run(blockdev_cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            return {"ok": False, "error": "secondary_capacity_check_failed", "details": f"blockdev failed: {result.stderr}"}
+        capacity = int(result.stdout.strip())
     except Exception as e:
         return {"ok": False, "error": "secondary_capacity_check_failed", "details": str(e)}
 
@@ -314,17 +321,21 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=10*102
     first_non_zero_offset = None
 
     try:
-        with open(device, "rb") as f:
-            for offset in offsets:
-                f.seek(offset)
-                data = f.read(chunk_size_bytes)
-                total_verified_bytes += len(data)
-                
-                # Highly optimized C-level block evaluation in Python
-                if data != b'\x00' * len(data):
-                    non_zero_found = True
-                    first_non_zero_offset = offset
-                    break
+        for offset in offsets:
+            # Use dd with skip for seeking to specific offset
+            skip_blocks = offset // chunk_size_bytes
+            dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={chunk_size_bytes}", f"skip={skip_blocks}", "count=1", "status=none"]
+            result = subprocess.run(dd_cmd_str, capture_output=True)
+            if result.returncode != 0:
+                return {"ok": False, "error": "secondary_sampled_read_failed", "details": f"dd read failed at offset {offset}: {result.stderr.decode('utf-8', errors='replace')}"}
+            data = result.stdout
+            total_verified_bytes += len(data)
+
+            # Highly optimized C-level block evaluation in Python
+            if data != b'\x00' * len(data):
+                non_zero_found = True
+                first_non_zero_offset = offset
+                break
     except Exception as e:
         return {"ok": False, "error": "secondary_sampled_read_failed", "details": str(e)}
 
@@ -374,6 +385,11 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
     if selected_mode in {"disabled", "controller_only"}:
         return {"ok": True, "status": "skipped", "details": {"mode": selected_mode, "verification_level": "controller_attested_only"}}
 
+    # Use dd with sudo for device reads (requires root permissions)
+    dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
+    if not dd_cmd:
+        return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_crypto_probe", "details": {"mode": selected_mode}}
+
     # Retry initial read with delays - drives may need time to become readable after crypto sanitize
     first_read = None
     capacity = None
@@ -383,13 +399,21 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
 
     for attempt in range(max_retries):
         try:
-            with open(device, "rb") as f:
-                f.seek(0, 2)
-                capacity = f.tell()
-                if capacity <= 0:
-                    return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
-                f.seek(0)
-                first_read = f.read(min(4096, capacity))
+            # Get capacity using blockdev
+            blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
+            result = subprocess.run(blockdev_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                raise Exception(f"blockdev failed: {result.stderr}")
+            capacity = int(result.stdout.strip())
+            if capacity <= 0:
+                return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
+
+            # Read first 4KB using dd
+            dd_read_cmd = ["sudo", dd_cmd, f"if={device}", "bs=4096", "count=1", "status=none"]
+            result = subprocess.run(dd_read_cmd, capture_output=True)
+            if result.returncode != 0:
+                raise Exception(f"dd read failed: {result.stderr.decode('utf-8', errors='replace')}")
+            first_read = result.stdout
             break  # Success, exit retry loop
         except Exception as e:
             last_exception = e
@@ -416,26 +440,28 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
         unique_digests = set()
         total_read = 0
         try:
-            with open(device, "rb") as f:
-                for i in range(chunks):
-                    start = i * interval_size
-                    end = max(start, min(capacity - chunk_size, ((i + 1) * interval_size) - chunk_size))
-                    offset = random.randint(start, end) if end > start else start
-                    offsets.append(offset)
-                    f.seek(offset)
-                    data = f.read(chunk_size)
-                    total_read += len(data)
-                    unique_digests.add(hashlib.sha256(data).hexdigest())
+            for i in range(chunks):
+                start = i * interval_size
+                end = max(start, min(capacity - chunk_size, ((i + 1) * interval_size) - chunk_size))
+                offset = random.randint(start, end) if end > start else start
+                offsets.append(offset)
+                # Use dd with skip for seeking
+                skip_blocks = offset // chunk_size
+                dd_chunk_cmd = ["sudo", dd_cmd, f"if={device}", f"bs={chunk_size}", f"skip={skip_blocks}", "count=1", "status=none"]
+                result = subprocess.run(dd_chunk_cmd, capture_output=True)
+                if result.returncode != 0:
+                    raise Exception(f"dd chunk read failed at offset {offset}: {result.stderr.decode('utf-8', errors='replace')}")
+                data = result.stdout
+                total_read += len(data)
+                unique_digests.add(hashlib.sha256(data).hexdigest())
         except Exception as e:
             return {"ok": False, "status": "verification_error", "error": "crypto_entropy_probe_failed", "details": {"mode": selected_mode, "exception": str(e)}}
 
         if len(unique_digests) == 1 and chunks > 1:
-            try:
-                with open(device, "rb") as f:
-                    f.seek(0)
-                    zero_check = f.read(min(chunk_size, capacity))
-            except Exception:
-                zero_check = b""
+            # Read first chunk for zero check
+            dd_zero_cmd = ["sudo", dd_cmd, f"if={device}", f"bs={chunk_size}", "count=1", "status=none"]
+            result = subprocess.run(dd_zero_cmd, capture_output=True)
+            zero_check = result.stdout if result.returncode == 0 else b""
             is_all_zeros = len(zero_check) > 0 and zero_check == b'\x00' * len(zero_check)
             return {
                 "ok": False,
