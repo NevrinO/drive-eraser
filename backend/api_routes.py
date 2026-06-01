@@ -21,7 +21,7 @@ from common import (
     get_config_dir, load_policy, get_data_dir, get_db_path, get_logs_dir, get_failed_logs_dir,
     save_policy, save_bay_map
 )
-from database import init_wipe_db
+from database import init_wipe_db, persist_job
 from disk_ops import discover_drives, get_os_by_path
 from disk_utils import format_capacity_bytes
 from smart_parsing import get_smart_data
