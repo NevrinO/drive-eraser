@@ -295,34 +295,48 @@ function renderBatchModalForm() {
 
 batchEraseForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  
+
   let tech = document.getElementById("technician").value.trim();
   let ticket = document.getElementById("ticketNumber").value.trim();
   const confirmTextVal = confirmationText.value.trim().toLowerCase();
-  
+
   if (!confirmTextVal) {
     alert("Validation Error: Please type the confirmation phrase to continue.");
     return;
   }
 
-  if (!tech || !ticket) {
-    let missingInfo = [];
-    if (!tech) missingInfo.push("Technician Name");
-    if (!ticket) missingInfo.push("Ticket Number");
+  // Check if secure mode is enabled
+  const securityBadge = document.getElementById("securityBadge");
+  const isSecureMode = securityBadge && securityBadge.classList.contains("secure");
 
-    const proceed = confirm(
-      `Notice: You left the following audit fields blank:\n- ${missingInfo.join("\n- ")}\n\nWould you like to continue anyway using the default placeholders?\n- Technician: "System Operator"\n- Ticket Number: "INTERNAL"\n\nPress Cancel to go back and write your audit info.`
-    );
-    if (!proceed) {
+  if (!tech || !ticket) {
+    if (isSecureMode) {
+      // In secure mode, require actual values - no defaults allowed
+      let missingInfo = [];
+      if (!tech) missingInfo.push("Technician Name");
+      if (!ticket) missingInfo.push("Ticket Number");
+      alert(`Secure Mode requires valid audit information.\n\nPlease provide:\n- ${missingInfo.join("\n- ")}`);
       return;
-    }
-    if (!tech) {
-      tech = "System Operator";
-      document.getElementById("technician").value = tech;
-    }
-    if (!ticket) {
-      ticket = "INTERNAL";
-      document.getElementById("ticketNumber").value = ticket;
+    } else {
+      // In unsecured mode, allow defaults with confirmation
+      let missingInfo = [];
+      if (!tech) missingInfo.push("Technician Name");
+      if (!ticket) missingInfo.push("Ticket Number");
+
+      const proceed = confirm(
+        `Notice: You left the following audit fields blank:\n- ${missingInfo.join("\n- ")}\n\nWould you like to continue anyway using the default placeholders?\n- Technician: "System Operator"\n- Ticket Number: "INTERNAL"\n\nPress Cancel to go back and write your audit info.`
+      );
+      if (!proceed) {
+        return;
+      }
+      if (!tech) {
+        tech = "System Operator";
+        document.getElementById("technician").value = tech;
+      }
+      if (!ticket) {
+        ticket = "INTERNAL";
+        document.getElementById("ticketNumber").value = ticket;
+      }
     }
   }
 

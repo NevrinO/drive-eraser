@@ -56,6 +56,14 @@ def validate_single_bay(technician, ticket_number, bay, method_override, drives,
     if not selected_drive.get("present"):
         return None, {"error": f"no drive present in bay: {bay}"}, 409
 
+    # Validate secure mode requirements before proceeding
+    strict_audit = policy.get("strict_audit_mode", False)
+    if strict_audit:
+        if not technician or technician.strip() == "" or technician == "System Operator":
+            return None, {"error": "Strict audit mode requires a valid technician name (cannot be empty or 'System Operator')"}, 400
+        if not ticket_number or ticket_number.strip() == "" or ticket_number == "INTERNAL":
+            return None, {"error": "Strict audit mode requires a valid ticket number (cannot be empty or 'INTERNAL')"}, 400
+
     device = selected_drive.get("device")
     if not device:
         return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
