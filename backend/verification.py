@@ -127,9 +127,9 @@ def parse_sata_erase_time_estimate(output):
     unit = time_match.group(2)
 
     if unit in {"h", "hour"}:
-        return value * 60
+        return value * 3600
     elif unit in {"min", "minute", "m"}:
-        return value
+        return value * 60
     return None
 
 def verify_nvme_sanitize(device, method):
