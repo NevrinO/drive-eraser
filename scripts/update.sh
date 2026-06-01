@@ -34,6 +34,7 @@ DD_PATH=""
 LSBLK_PATH=""
 LSHW_PATH=""
 SYSTEMCTL_PATH=""
+BLOCKDEV_PATH=""
 
 DRY_RUN=false
 NO_RESTART=false
@@ -121,6 +122,7 @@ resolve_command_paths() {
     LSBLK_PATH="$(find_cmd_path lsblk)"
     LSHW_PATH="$(find_cmd_path lshw)"
     SYSTEMCTL_PATH="$(find_cmd_path systemctl)"
+    BLOCKDEV_PATH="$(find_cmd_path blockdev)"
 
     success "Command paths resolved."
 }
@@ -192,7 +194,8 @@ write_command_paths_config() {
   "dd": "$DD_PATH",
   "lsblk": "$LSBLK_PATH",
   "lshw": "$LSHW_PATH",
-  "systemctl": "$SYSTEMCTL_PATH"
+  "systemctl": "$SYSTEMCTL_PATH",
+  "blockdev": "$BLOCKDEV_PATH"
 }
 EOF
     fi
@@ -217,6 +220,9 @@ setup_python() {
     success "Python environment updated."
 }
 
+# IMPORTANT: If you modify the sudoers rules here, you MUST also update
+# scripts/install.sh setup_sudo() to keep both files in sync.
+# -----------------------------------------------------------------------------
 setup_sudo() {
     info "Refreshing sudo rules for disk commands..."
 
@@ -236,6 +242,7 @@ $APP_USER ALL=(root) NOPASSWD: $DD_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSBLK_PATH
 $APP_USER ALL=(root) NOPASSWD: $LSHW_PATH
 $APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH
+$APP_USER ALL=(root) NOPASSWD: $BLOCKDEV_PATH
 EOF
 
     run_cmd chmod 440 "$TMP_SUDOERS_FILE"

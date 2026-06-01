@@ -537,6 +537,9 @@ setup_python() {
 # -----------------------------------------------------------------------------
 # STEP 8 - Set up sudo rules for disk commands
 # -----------------------------------------------------------------------------
+# IMPORTANT: If you modify the sudoers rules here, you MUST also update
+# scripts/update.sh setup_sudo() to keep both files in sync.
+# -----------------------------------------------------------------------------
 
 setup_sudo() {
     info "Configuring sudo rules for disk commands..."
