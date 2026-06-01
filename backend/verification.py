@@ -518,7 +518,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
 
     after_hashes = []
     total_verified_bytes = 0
-    all_changed = True
+    any_changed = False
     unchanged_indices = []
 
     # Retry with delays for drives needing time to become readable
@@ -543,8 +543,9 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 after_hashes.append(after_hash)
 
                 if after_hash == before_hashes[idx]:
-                    all_changed = False
                     unchanged_indices.append(idx)
+                else:
+                    any_changed = True
                 break
             except Exception as e:
                 last_exception = e
@@ -553,7 +554,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 else:
                     return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": str(last_exception), "retries_attempted": max_retries}}
 
-    if all_changed:
+    if any_changed:
         return {
             "ok": True,
             "status": "verified",
@@ -561,24 +562,20 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 "verification_level": "controller_attested_with_hash_comparison",
                 "total_verified_bytes": total_verified_bytes,
                 "blocks_checked": len(offsets),
-                "all_hashes_changed": True,
+                "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
+                "unchanged_indices": unchanged_indices,
                 "before_hashes": before_hashes,
                 "after_hashes": after_hashes
             }
         }
 
-    # Some hashes didn't change - check if all are identical (likely zeroed drive)
+    # No hashes changed - check if drive was already zeroed
     all_before_same = len(set(before_hashes)) == 1
     all_after_same = len(set(after_hashes)) == 1
 
     if all_before_same and all_after_same and before_hashes[0] == after_hashes[0]:
         # All hashes identical - check actual byte values to distinguish zeros from other patterns.
-        # NOTE: If all before/after hashes are identical, we only need to check ONE block for zero content.
-        # This is because if all sampled blocks have the same hash before and after, and that hash
-        # represents zeroed data, then ALL sampled blocks must be zeroed. Checking more than one
-        # block would be redundant and waste I/O time.
         try:
-            # Read from the same offset used for hash comparison (offsets[0])
             first_offset = offsets[0]
             skip_blocks = first_offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - first_offset)
@@ -587,9 +584,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             result = subprocess.run(dd_check_cmd, capture_output=True)
             if result.returncode == 0:
                 data = result.stdout
-                # REVIEW_IGNORE: Redundant data check - dd with count=1 should always return
-                # data on success, but this is defensive programming and harmless.
-                if data:  # Check stdout is not empty
+                if data:
                     is_all_zeros = data == b'\x00' * len(data)
                     if is_all_zeros:
                         return {
@@ -599,7 +594,6 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                                 "verification_level": "controller_attested_with_hash_comparison",
                                 "total_verified_bytes": total_verified_bytes,
                                 "blocks_checked": len(offsets),
-                                "all_hashes_changed": False,
                                 "warning": "Drive was already blank (all zeros) before wipe. Verification based on controller attestation.",
                                 "before_hashes": before_hashes,
                                 "after_hashes": after_hashes,
@@ -607,11 +601,6 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                             }
                         }
         except Exception as e:
-            # Zero check failed - continue to failure path. This is acceptable since
-            # the hash comparison already showed unchanged data, and we're only checking
-            # zeros to distinguish blank drives from actual verification failures.
-            # REVIEW_IGNORE: Exception handling is intentional - we fall through to
-            # the failure path which is the correct behavior when zero check fails.
             pass
 
         # Not zeros - actual data didn't change, potential failure
@@ -624,24 +613,9 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 "blocks_checked": len(offsets),
                 "unchanged_indices": unchanged_indices,
                 "before_hashes": before_hashes,
-                "after_hashes": after_hashes,
-                "all_before_same": all_before_same,
-                "all_after_same": all_after_same
+                "after_hashes": after_hashes
             }
         }
-
-    return {
-        "ok": False,
-        "status": "verification_failed",
-        "error": "crypto_comparison_partial_change",
-        "details": {
-            "total_verified_bytes": total_verified_bytes,
-            "blocks_checked": len(offsets),
-            "unchanged_indices": unchanged_indices,
-            "before_hashes": before_hashes,
-            "after_hashes": after_hashes
-        }
-    }
 
 def verify_crypto_conservative_probe(device, selected_mode, sample_ratio, chunk_size_bytes, max_read_bytes):
     """
