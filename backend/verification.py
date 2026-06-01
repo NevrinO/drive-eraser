@@ -373,16 +373,31 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
     selected_mode = str(mode or "conservative_probe").strip().lower()
     if selected_mode in {"disabled", "controller_only"}:
         return {"ok": True, "status": "skipped", "details": {"mode": selected_mode, "verification_level": "controller_attested_only"}}
-    try:
-        with open(device, "rb") as f:
-            f.seek(0, 2)
-            capacity = f.tell()
-            if capacity <= 0:
-                return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
-            f.seek(0)
-            first_read = f.read(min(4096, capacity))
-    except Exception as e:
-        return {"ok": False, "status": "verification_error", "error": "crypto_probe_read_failed", "details": {"mode": selected_mode, "exception": str(e)}}
+
+    # Retry initial read with delays - drives may need time to become readable after crypto sanitize
+    first_read = None
+    capacity = None
+    last_exception = None
+    max_retries = 5
+    retry_delays = [2, 4, 8, 15, 30]  # Progressive delays in seconds
+
+    for attempt in range(max_retries):
+        try:
+            with open(device, "rb") as f:
+                f.seek(0, 2)
+                capacity = f.tell()
+                if capacity <= 0:
+                    return {"ok": False, "status": "verification_error", "error": "crypto_probe_capacity_invalid", "details": {"mode": selected_mode}}
+                f.seek(0)
+                first_read = f.read(min(4096, capacity))
+            break  # Success, exit retry loop
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                delay = retry_delays[attempt]
+                time.sleep(delay)
+            else:
+                return {"ok": False, "status": "verification_error", "error": "crypto_probe_read_failed", "details": {"mode": selected_mode, "exception": str(last_exception), "retries_attempted": max_retries}}
 
     details = {
         "mode": selected_mode,

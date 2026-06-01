@@ -11,7 +11,7 @@ ESTIMATED_ERASE_TIMEOUT_SECONDS = 600  # Default estimated timeout for erase ope
 
 from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
-    purge_old_logs, DEFAULT_LOG_RETENTION_DAYS
+    purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy
 )
 from database import persist_job
 from verification import (
@@ -559,16 +559,24 @@ def run_erase_job(job_id):
                 warnings_list.append(f"Initiation process returned non-zero code ({execution.get('exit_code')}), but hardware-level sanitization status verified successfully.")
                 job["result"]["warnings"] = warnings_list
 
-            logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
-            marker_result = write_marker_and_verify(job)
-            job["marker"] = marker_result
-            if not marker_result.get("ok"):
-                warnings_list = job.get("result", {}).get("warnings", [])
-                if not isinstance(warnings_list, list):
-                    warnings_list = []
-                warnings_list.append(f"Supplemental station marker failed ({marker_result.get('error') or marker_result.get('status')}); sanitization certification is based on wipe verification evidence.")
-                job["result"]["warnings"] = warnings_list
-                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) supplemental marker failed: {marker_result.get('error') or marker_result.get('status')}")
+            # Check if post-erase marker is enabled in policy
+            policy = load_policy(get_config_dir())
+            post_erase_marker = policy.get("post_erase_marker", True)
+
+            if post_erase_marker:
+                logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
+                marker_result = write_marker_and_verify(job)
+                job["marker"] = marker_result
+                if not marker_result.get("ok"):
+                    warnings_list = job.get("result", {}).get("warnings", [])
+                    if not isinstance(warnings_list, list):
+                        warnings_list = []
+                    warnings_list.append(f"Supplemental station marker failed ({marker_result.get('error') or marker_result.get('status')}); sanitization certification is based on wipe verification evidence.")
+                    job["result"]["warnings"] = warnings_list
+                    logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) supplemental marker failed: {marker_result.get('error') or marker_result.get('status')}")
+            else:
+                logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Post-erase marker disabled by policy, skipping marker write.")
+                job["marker"] = {"ok": True, "status": "disabled_by_policy", "error": None, "details": {}}
             
             if os.path.exists(active_log_path):
                 try:
