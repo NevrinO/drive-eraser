@@ -608,7 +608,12 @@ def run_erase_job(job_id):
                 job["error"] = f"Initiation failed ({execution.get('exit_code')}). Verification report: {verification.get('error') or 'failed'}"
             else:
                 job["error"] = verification.get("error") or "erase_verification_failed"
-            
+
+            # Include verification details in error for debugging
+            verification_details = verification.get("details", {})
+            if verification_details:
+                job["error"] += f" | Details: {verification_details}"
+
             # High-signal error event written to the global app.log
             logger.error(f"Job {job_id} (Bay {job['request']['bay']}) FAILED: {job['error']}")
 
