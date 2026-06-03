@@ -126,3 +126,7 @@ This file contains generalized architectural guardrails derived from past agent 
 ### 26. Complete Security Implementations
 - **Rule**: Never implement partial security measures that provide no actual protection.
 - **Guardrail**: If you implement a security feature (e.g., hash calculation for integrity validation, authentication checks, input sanitization), you must complete the full security chain. Calculating a hash without validating it on use, or checking authentication without enforcing it, creates a false sense of security while providing no actual protection. Either implement the complete security measure or remove the partial implementation entirely.
+
+### 27. Root Cause Investigation Over Surface Fixes
+- **Rule**: Always investigate the root cause of an issue before implementing fixes or adding debug logging.
+- **Guardrail**: When a user reports a problem (e.g., "logo appears wrong size"), trace the data flow from source to display to find where the transformation occurs. Adding logging or surface-level fixes without understanding the underlying issue leads to incomplete solutions and technical debt. Follow the bug fixing discipline: identify root cause before implementing, prefer minimal upstream fixes over downstream workarounds.
