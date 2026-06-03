@@ -239,5 +239,4 @@ __marimo__/
 !/data/certs/.gitkeep
 
 # Agent logs and scratchpad
-.windsurf/archive/
-CRITIQUE.md
+.devon/archive/
