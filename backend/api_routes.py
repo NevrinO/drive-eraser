@@ -1112,7 +1112,7 @@ def manage_logo():
                 # Use atomic write: save to temporary file first, then rename
                 temp_path = logo_path + ".tmp"
                 file.seek(0)
-                img.save(temp_path, format="PNG")
+                img.save(temp_path, format="PNG", optimize=True, compress_level=9)
                 
                 # Validate converted PNG file size (max 500KB)
                 png_size = os.path.getsize(temp_path)
