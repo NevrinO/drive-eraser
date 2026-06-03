@@ -188,7 +188,7 @@ def build_standard_claims(method, interface_type, verification):
         "nist_sp_800_88_category": nist_category,
         "nist_basis": basis,
         "dod_5220_22_m": dod_text,
-        "claim_limitations": "Certificate describes observed tool/controller evidence and does not assert third-party certification."
+        "claim_limitations": "Certificate describes tool/controller attestation with independent sampled verification. Does not assert third-party certification."
     }
 
 def build_verification_evidence(verification, marker):
