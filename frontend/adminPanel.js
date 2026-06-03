@@ -852,9 +852,9 @@ logoFileInput.addEventListener("change", (e) => {
   const file = e.target.files[0];
   if (!file) return;
 
-  // Validate file size (max 500KB)
-  if (file.size > 500 * 1024) {
-    showLogoStatus("File exceeds 500KB limit", true);
+  // Validate file size (max 1MB)
+  if (file.size > 1024 * 1024) {
+    showLogoStatus("File exceeds 1MB limit", true);
     logoFileInput.value = "";
     return;
   }

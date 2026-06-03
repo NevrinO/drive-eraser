@@ -50,10 +50,10 @@ def get_custom_logo_base64():
         return ""
     
     try:
-        # Check file size (max 500KB)
+        # Check file size (max 1MB)
         file_size = os.path.getsize(logo_path)
-        if file_size > 500 * 1024:  # 500KB
-            logger.warning(f"Logo file exceeds 500KB limit: {file_size} bytes")
+        if file_size > 1024 * 1024:  # 1MB
+            logger.warning(f"Logo file exceeds 1MB limit: {file_size} bytes")
             return ""
         
         # Validate file integrity by checking hash

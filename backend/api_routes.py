@@ -1115,14 +1115,14 @@ def manage_logo():
                 # Use atomic write: save to temporary file first, then rename
                 temp_path = logo_path + ".tmp"
                 file.seek(0)
-                img.save(temp_path, format="PNG", optimize=True, compress_level=6)
+                img.save(temp_path, format="PNG", optimize=True, compress_level=3)
                 
-                # Validate converted PNG file size (max 500KB)
+                # Validate converted PNG file size (max 1MB)
                 png_size = os.path.getsize(temp_path)
                 logger.info(f"Converted PNG size: {png_size} bytes ({png_size / 1024:.2f} KB)")
-                if png_size > 500 * 1024:
+                if png_size > 1024 * 1024:
                     os.remove(temp_path)
-                    return jsonify({"error": f"Converted PNG exceeds 500KB limit (was {png_size / 1024:.2f} KB)"}), 400
+                    return jsonify({"error": f"Converted PNG exceeds 1MB limit (was {png_size / 1024:.2f} KB)"}), 400
                 
                 # Atomic rename operation
                 os.replace(temp_path, logo_path)
