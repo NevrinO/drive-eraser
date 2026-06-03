@@ -1109,6 +1109,9 @@ def manage_logo():
                 # Ensure data directory exists
                 os.makedirs(get_data_dir(), exist_ok=True)
                 
+                # Resize to target dimensions (max 200x60) to reduce file size
+                img.thumbnail((200, 60), Image.Resampling.LANCZOS)
+                
                 # Use atomic write: save to temporary file first, then rename
                 temp_path = logo_path + ".tmp"
                 file.seek(0)
