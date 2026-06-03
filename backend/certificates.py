@@ -248,12 +248,12 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
 <div class="header">
   <div class="header-left">
     <h1>{{TITLE}}</h1>
+    <div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
   </div>
   <div class="header-right">
-    <img src="{{LOGO}}" alt="Logo" style="max-height: 200px; max-width: 500px;">
+    <img src="{{LOGO}}" alt="Logo" style="max-height: 100px; max-width: 500px;">
   </div>
 </div>
-<div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
 <div class="section">
 <table>
 <tr><th>Job Number</th><td>{{FRIENDLY_ID}}</td></tr>
