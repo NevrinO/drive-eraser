@@ -105,3 +105,12 @@ This file contains generalized architectural guardrails derived from past agent 
 ### 23. Admin Endpoint URL Path Convention
 - **Rule**: All administrative endpoints must be under the `/api/admin/` path to inherit global security middleware.
 - **Guardrail**: When adding new administrative functions, always place them under `/api/admin/` rather than directly under `/api/`. This ensures they automatically inherit the global authentication middleware and follows the established security architecture. Endpoints under `/api/` that are not in the explicit exclusion list (`/api/auth/verify`, `/api/status`) will be protected by the security gate, but placing admin functions under `/api/admin/` makes the intent explicit and consistent with the codebase pattern.
+
+### 24. Dependency Version Management for Reproducibility
+- **Rule**: Do not change from pinned versions (`==`) to minimum versions (`>=`) without establishing a dependency update process.
+- **Guardrail**: If allowing dependency updates is desired, implement safeguards first:
+  - Create a documented dependency update policy (when to update, how to test)
+  - Add automated testing against latest dependency versions in CI/CD
+  - Consider using dependency management tools (pip-tools, poetry) to separate development constraints from production locks
+  - Document specific library features used and their version requirements
+  - For production systems, prefer pinned versions unless there is a clear, tested process for handling updates
