@@ -1116,9 +1116,10 @@ def manage_logo():
                 
                 # Validate converted PNG file size (max 500KB)
                 png_size = os.path.getsize(temp_path)
+                logger.info(f"Converted PNG size: {png_size} bytes ({png_size / 1024:.2f} KB)")
                 if png_size > 500 * 1024:
                     os.remove(temp_path)
-                    return jsonify({"error": "Converted PNG exceeds 500KB limit"}), 400
+                    return jsonify({"error": f"Converted PNG exceeds 500KB limit (was {png_size / 1024:.2f} KB)"}), 400
                 
                 # Atomic rename operation
                 os.replace(temp_path, logo_path)
