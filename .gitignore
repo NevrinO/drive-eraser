@@ -237,3 +237,6 @@ __marimo__/
 
 # Keep tracking the certificates folder layout even if empty [5]
 !/data/certs/.gitkeep
+
+# Agent logs and scratchpad
+.windsurf/archive/

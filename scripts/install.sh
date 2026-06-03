@@ -527,8 +527,8 @@ setup_python() {
         error "Virtual environment python binary not found at $VENV_DIR/bin/python"
     fi
 
-    if ! "$VENV_DIR/bin/python" -c "import flask, flask_cors" >/dev/null 2>&1; then
-        error "Virtual environment validation failed: cannot import flask/flask_cors"
+    if ! "$VENV_DIR/bin/python" -c "import flask, flask_cors, bs4" >/dev/null 2>&1; then
+        error "Virtual environment validation failed: cannot import flask/flask_cors/bs4"
     fi
 
     success "Python dependencies installed."
@@ -620,8 +620,8 @@ verify_install() {
 
     if [ ! -x "$VENV_DIR/bin/python" ]; then
         warn "Virtual environment python missing: $VENV_DIR/bin/python"
-    elif ! "$VENV_DIR/bin/python" -c "import flask, flask_cors" >/dev/null 2>&1; then
-        warn "Virtual environment import check failed for flask/flask_cors"
+    elif ! "$VENV_DIR/bin/python" -c "import flask, flask_cors, bs4" >/dev/null 2>&1; then
+        warn "Virtual environment import check failed for flask/flask_cors/bs4"
     else
         success "Virtual environment check passed."
     fi

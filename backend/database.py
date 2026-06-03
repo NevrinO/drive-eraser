@@ -1,13 +1,34 @@
 import sqlite3
 import json
 import os
+import re
 from common import get_db_path, get_cert_dir
 
 def ensure_column(conn, table_name, column_name, column_def):
-    columns = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    # Validate table_name and column_name are safe identifiers (alphanumeric + underscore)
+    if not table_name.replace("_", "").isalnum():
+        raise ValueError(f"Invalid table name: {table_name}")
+    if not column_name.replace("_", "").isalnum():
+        raise ValueError(f"Invalid column name: {column_name}")
+    # Validate column_def matches expected pattern: "column_name TYPE"
+    # Allowed types: TEXT, INTEGER, REAL, BLOB
+    allowed_types = {"TEXT", "INTEGER", "REAL", "BLOB"}
+    column_def_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s+(TEXT|INTEGER|REAL|BLOB)$')
+    if not column_def_pattern.match(column_def):
+        raise ValueError(f"Invalid column definition: {column_def}")
+    # Ensure column_name in column_def matches the provided column_name parameter
+    def_column_name = column_def.split()[0]
+    if def_column_name != column_name:
+        raise ValueError(f"Column name mismatch: definition has '{def_column_name}' but parameter is '{column_name}'")
+    
+    columns = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
     names = {col[1] for col in columns}
     if column_name not in names:
-        conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_def}")
+        try:
+            conn.execute(f'ALTER TABLE "{table_name}" ADD COLUMN {column_def}')
+        except sqlite3.OperationalError as e:
+            if "duplicate column name" not in str(e).lower():
+                raise
 
 def init_wipe_db():
     os.makedirs(os.path.dirname(get_db_path()), exist_ok=True)

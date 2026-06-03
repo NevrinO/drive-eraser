@@ -8,10 +8,19 @@ import re
 import shutil
 import hashlib
 import hmac
+import time
+import logging
+import threading
 from common import get_config_dir, load_policy
 
 MARKER_SIGNATURE = "DWS_MARKER_V1"
 MARKER_BLOCK_SIZE = 4096
+
+# Single source of truth for marker HMAC key derivation. Both the write path
+# (verification.build_marker_payload) and read path (read_marker_status) must
+# use these identical parameters or HMAC verification will always fail.
+PBKDF2_ITERATIONS = 200000
+PBKDF2_SALT = b"DWS_SALT_v1"
 
 def safe_int(val, default=0):
     try: return int(val) if val is not None else default
@@ -20,6 +29,109 @@ def safe_int(val, default=0):
 def safe_float(val, default=0.0):
     try: return float(val) if val is not None else default
     except (ValueError, TypeError): return default
+
+_MAX_JSON_SIZE = 65536
+# \Z (not $) anchors strictly at end-of-string; $ would also match just before a
+# trailing newline, allowing "/dev/sda\n" to pass the whitelist.
+_DEVICE_PATH_RE = re.compile(r'^/dev(/[a-zA-Z0-9_\-:.]+)+\Z')
+
+def validate_device_path(device):
+    if not device or not isinstance(device, str):
+        return False
+    if ".." in device or "\n" in device or "\r" in device:
+        return False
+    return bool(_DEVICE_PATH_RE.match(device))
+
+_QUOTE = ord(b'"')
+_BACKSLASH = ord(b'\\')
+_OPEN_BRACE = ord(b'{')
+_CLOSE_BRACE = ord(b'}')
+
+def _find_json_bounds(data, marker_index):
+    """Find the JSON object enclosing marker_index using string-aware brace matching.
+
+    Braces inside JSON string literals (e.g. a ticket_number or serial value
+    containing '{' or '}') must not be counted as structural delimiters. The
+    forward scan locates the enclosing object's opening brace by tracking string
+    state, then matches the corresponding closing brace.
+    """
+    n = len(data)
+    if marker_index < 0 or marker_index >= n:
+        return -1, -1
+
+    # Forward scan from the start of the buffer to the marker, maintaining a
+    # stack of structural '{' positions while ignoring braces inside strings.
+    in_string = False
+    escaped = False
+    brace_stack = []
+    for i in range(0, marker_index + 1):
+        c = data[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == _BACKSLASH:
+                escaped = True
+            elif c == _QUOTE:
+                in_string = False
+            continue
+        if c == _QUOTE:
+            in_string = True
+        elif c == _OPEN_BRACE:
+            brace_stack.append(i)
+        elif c == _CLOSE_BRACE:
+            if brace_stack:
+                brace_stack.pop()
+    if not brace_stack:
+        return -1, -1
+    start = brace_stack[0]
+
+    # Forward scan from start to find the matching closing brace, again ignoring
+    # braces that appear inside string literals.
+    in_string = False
+    escaped = False
+    depth = 0
+    for i in range(start, n):
+        c = data[i]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif c == _BACKSLASH:
+                escaped = True
+            elif c == _QUOTE:
+                in_string = False
+            continue
+        if c == _QUOTE:
+            in_string = True
+        elif c == _OPEN_BRACE:
+            depth += 1
+        elif c == _CLOSE_BRACE:
+            depth -= 1
+            if depth == 0:
+                return start, i
+    return -1, -1
+
+_COMMAND_RESOLUTION_CACHE = {}
+_COMMAND_TTL_SECONDS = 60
+_COMMAND_CACHE_LOCK = threading.Lock()
+
+def get_command_path(command_name):
+    # Unconfigured commands return None (the documented "not available" contract
+    # every call site checks for) rather than raising KeyError.
+    config = _COMMAND_CONFIG.get(command_name)
+    if config is None:
+        return None
+    now = time.time()
+    with _COMMAND_CACHE_LOCK:
+        cached = _COMMAND_RESOLUTION_CACHE.get(command_name)
+        if cached is None or (now - cached["ts"]) > _COMMAND_TTL_SECONDS:
+            candidates, env_var = config
+            _COMMAND_RESOLUTION_CACHE[command_name] = {"path": resolve_command_path(command_name, candidates, env_var), "ts": now}
+        return _COMMAND_RESOLUTION_CACHE[command_name]["path"]
+
+def __getattr__(name):
+    if name in ("SMARTCTL_CMD", "NVME_CMD", "HDPARM_CMD", "SG_SANITIZE_CMD", "DD_CMD"):
+        return get_command_path(name.replace("_CMD", "").lower())
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 def resolve_command_path(command_name, candidates, env_var_name=None):
     env_value = os.getenv(env_var_name) if env_var_name else None
@@ -42,17 +154,19 @@ def load_command_path_overrides():
                 return data if isinstance(data, dict) else {}
         except Exception as e:
             # Log error but continue with empty overrides
-            import logging
             logging.getLogger(__name__).warning(f"Failed to load command path overrides from {config_path}: {e}")
     return {}
 
 COMMAND_PATH_OVERRIDES = load_command_path_overrides()
 
-SMARTCTL_CMD = resolve_command_path("smartctl", [COMMAND_PATH_OVERRIDES.get("smartctl"), "/usr/sbin/smartctl", "/usr/bin/smartctl", "/bin/smartctl"], "DRIVE_ERASER_SMARTCTL_PATH")
-NVME_CMD = resolve_command_path("nvme", [COMMAND_PATH_OVERRIDES.get("nvme"), "/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"], "DRIVE_ERASER_NVME_PATH")
-HDPARM_CMD = resolve_command_path("hdparm", [COMMAND_PATH_OVERRIDES.get("hdparm"), "/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"], "DRIVE_ERASER_HDPARM_PATH")
-SG_SANITIZE_CMD = resolve_command_path("sg_sanitize", [COMMAND_PATH_OVERRIDES.get("sg_sanitize"), "/usr/bin/sg_sanitize", "/usr/sbin/sg_sanitize", "/bin/sg_sanitize"], "DRIVE_ERASER_SG_SANITIZE_PATH")
-DD_CMD = resolve_command_path("dd", [COMMAND_PATH_OVERRIDES.get("dd"), "/usr/bin/dd", "/bin/dd"], "DRIVE_ERASER_DD_PATH")
+_COMMAND_CONFIG = {
+    "smartctl": ([COMMAND_PATH_OVERRIDES.get("smartctl"), "/usr/sbin/smartctl", "/usr/bin/smartctl", "/bin/smartctl"], "DRIVE_ERASER_SMARTCTL_PATH"),
+    "nvme": ([COMMAND_PATH_OVERRIDES.get("nvme"), "/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"], "DRIVE_ERASER_NVME_PATH"),
+    "hdparm": ([COMMAND_PATH_OVERRIDES.get("hdparm"), "/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"], "DRIVE_ERASER_HDPARM_PATH"),
+    "sg_sanitize": ([COMMAND_PATH_OVERRIDES.get("sg_sanitize"), "/usr/bin/sg_sanitize", "/usr/sbin/sg_sanitize", "/bin/sg_sanitize"], "DRIVE_ERASER_SG_SANITIZE_PATH"),
+    "dd": ([COMMAND_PATH_OVERRIDES.get("dd"), "/usr/bin/dd", "/bin/dd"], "DRIVE_ERASER_DD_PATH"),
+}
+
 
 def format_capacity_bytes(num_bytes):
     if not num_bytes: return "-"
@@ -70,34 +184,39 @@ def check_write_tolerance(interface_type, current, stored):
         iface = str(interface_type or "unknown").lower()
         return (diff <= 4) if "nvme" in iface else (diff <= 4096)
     except Exception as e:
-        import logging
         logging.getLogger(__name__).warning(f"Failed to check write tolerance: {e}")
         return False
 
 def read_marker_status(device, interface_type="unknown", passphrase=None):
-    if not DD_CMD: return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_read", "details": {}}
-    command = [DD_CMD, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "iflag=direct", "status=none"]
+    if not validate_device_path(device):
+        return {"ok": False, "status": "marker_error", "error": "invalid_device_path", "details": {}}
+    dd_cmd = get_command_path("dd")
+    if not dd_cmd: return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_read", "details": {}}
+    command = [dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "iflag=direct", "status=none"]
     try:
         result = subprocess.run(["sudo"] + command, capture_output=True)
         if result.returncode != 0:
-            result = subprocess.run(["sudo", DD_CMD, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True)
+            result = subprocess.run(["sudo", dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True)
         if result.returncode != 0:
             return {"ok": False, "status": "marker_error", "error": "marker_read_failed", "details": {"return_code": result.returncode, "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip()}}
         output_bytes = result.stdout or b""
     except Exception as e:
-        return {"ok": False, "status": "marker_error", "error": f"marker_read_exception:{e}", "details": {}}
+        logging.getLogger(__name__).warning(f"marker_read_exception: {e}")
+        return {"ok": False, "status": "marker_error", "error": "marker_read_exception", "details": {}}
 
     marker_index = output_bytes.find(MARKER_SIGNATURE.encode("utf-8"))
     if marker_index < 0: return {"ok": True, "status": "none", "error": None, "details": {}}
 
-    start = output_bytes.rfind(b"{", 0, marker_index)
-    end = output_bytes.find(b"}", marker_index)
-    if start < 0 or end < start: return {"ok": True, "status": "corrupted", "error": "json_parse_failed", "details": {}}
+    start, end = _find_json_bounds(output_bytes, marker_index)
+    if start < 0 or end < 0 or end < start: return {"ok": True, "status": "corrupted", "error": "json_parse_failed", "details": {}}
+
+    json_bytes = output_bytes[start:end + 1]
+    if len(json_bytes) > _MAX_JSON_SIZE:
+        return {"ok": True, "status": "corrupted", "error": "json_too_large", "details": {}}
 
     try:
-        parsed = json.loads(output_bytes[start:end + 1].decode("utf-8", errors="strict"))
+        parsed = json.loads(json_bytes.decode("utf-8", errors="strict"))
     except Exception as e:
-        import logging
         logging.getLogger(__name__).warning(f"Failed to parse marker JSON: {e}")
         return {"ok": True, "status": "corrupted", "error": "json_parse_failed", "details": {}}
 
@@ -113,7 +232,7 @@ def read_marker_status(device, interface_type="unknown", passphrase=None):
     hmac_verified = False
     if passphrase and stored_hmac:
         serialized_for_hmac = json.dumps(parsed, sort_keys=True, separators=(',', ':')).encode('utf-8')
-        derived_key = hashlib.pbkdf2_hmac('sha256', passphrase.encode('utf-8'), b'DWS_SALT_v1', 10000)
+        derived_key = hashlib.pbkdf2_hmac('sha256', passphrase.encode('utf-8'), PBKDF2_SALT, PBKDF2_ITERATIONS)
         calculated_hmac = hmac.new(derived_key, serialized_for_hmac, hashlib.sha256).hexdigest()
         hmac_verified = hmac.compare_digest(calculated_hmac, stored_hmac)
 

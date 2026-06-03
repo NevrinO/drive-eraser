@@ -6,7 +6,7 @@ import json
 import os
 import re
 
-from disk_utils import SMARTCTL_CMD, safe_int, safe_float, format_capacity_bytes, run_command
+from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command
 
 SSD_HIGH_POH_THRESHOLD = 40000
 HDD_HIGH_POH_THRESHOLD = 40000
@@ -51,8 +51,9 @@ def get_smart_data(device, diagnostics=None):
         "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
         "rotation_rate": None
     }
-    if not SMARTCTL_CMD: return empty_template
-    raw_output = run_command([SMARTCTL_CMD, "-j", "-x", device], diagnostics, "smartctl")
+    smartctl_cmd = get_command_path("smartctl")
+    if not smartctl_cmd: return empty_template
+    raw_output = run_command([smartctl_cmd, "-j", "-x", device], diagnostics, "smartctl")
     if not raw_output: return empty_template
     try: data = json.loads(raw_output)
     except Exception: return empty_template
@@ -177,10 +178,11 @@ def get_smart_data(device, diagnostics=None):
     }
 
 def get_raw_smart_diagnostics(device):
-    if not SMARTCTL_CMD or not device:
+    smartctl_cmd = get_command_path("smartctl")
+    if not smartctl_cmd or not device:
         return "SMARTCTL command not resolved or invalid device target.\n"
     try:
-        result = subprocess.run(["sudo", SMARTCTL_CMD, "-a", device], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(["sudo", smartctl_cmd, "-a", device], capture_output=True, text=True, timeout=15)
         output = result.stdout or ""
         stderr = result.stderr or ""
         return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nExit Code: {result.returncode}\nSTDOUT:\n{output}\nSTDERR:\n{stderr}\n"

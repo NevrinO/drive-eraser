@@ -7,10 +7,37 @@ import hmac
 import copy
 import base64
 import secrets
+import re
 from datetime import datetime, timezone
+from bs4 import BeautifulSoup
 from common import load_policy, get_cert_dir
+from app_config import logger
 
 SIGNATURE_KDF_ITERATIONS = 200000
+
+# Base64 encoded SVG logo placeholder (simple shield icon with company name)
+LOGO_BASE64 = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiB2aWV3Qm94PSIwIDAgMTIwIDQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNDAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSIxMCIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxZTNhOGEiPkRyaXZlIFdhc2hlciBTdGF0aW9uPC90ZXh0Pgo8L3N2Zz4="
+
+# Shared CSS for certificate HTML templates
+CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1.4; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.header-left { flex: 1; }
+.header-right { flex: 0 0 auto; }
+.meta { color: #555; margin-bottom: 24px; font-family: monospace; font-size: 1.1rem; }
+.section { margin-bottom: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 10px; text-align: left; vertical-align: top; }
+th { width: 240px; background: #f8fafc; color: #334155; }
+pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
+.status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
+.status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
+.certificate-container { page-break-after: always; }
+.certificate-container:last-child { page-break-after: auto; }
+@media print {
+  body { margin: 0; }
+  .certificate-container { page-break-after: always; }
+  .certificate-container:last-child { page-break-after: auto; }
+}"""
 
 def calculate_certificate_hash(certificate, passphrase, salt=None, iterations=SIGNATURE_KDF_ITERATIONS):
     if not passphrase:
@@ -30,10 +57,66 @@ def calculate_certificate_hash(certificate, passphrase, salt=None, iterations=SI
     derived_key = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt_bytes, iterations)
     return hmac.new(derived_key, serialized, hashlib.sha256).hexdigest()
 
+def serialize_safe(item):
+    """Safely serialize item to string, handling non-JSON-serializable types."""
+    try:
+        return json.dumps(item, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        return str(item)
+
+def summarize_array(arr, max_items=5):
+    """Collapse large arrays to summary format for HTML display."""
+    if not isinstance(arr, list) or len(arr) == 0 or len(arr) <= max_items:
+        return None
+    
+    # Check if all items are identical using JSON serialization for accurate comparison
+    unique_items = list(set(serialize_safe(item) for item in arr))
+    if len(unique_items) == 1:
+        sample = str(arr[0])
+        # Truncate long strings (hashes)
+        if len(sample) > 20:
+            sample = sample[:20] + "..."
+        return f"{len(arr)} items, all identical: {sample}"
+    
+    # Mixed items - show first and last
+    first = str(arr[0])
+    last = str(arr[-1])
+    if len(first) > 20:
+        first = first[:20] + "..."
+    if len(last) > 20:
+        last = last[:20] + "..."
+    return f"{len(arr)} items: [{first}, ..., {last}]"
+
 def json_cell(value):
-    if isinstance(value, (dict, list)):
-        return html.escape(json.dumps(value, indent=2, sort_keys=True))
-    return html.escape(str(value if value is not None else ""))
+    def process(val, visited=None):
+        """Recursively process value without HTML escaping, with cycle detection."""
+        if visited is None:
+            visited = set()
+        
+        # Cycle detection: use object id to track visited containers
+        val_id = id(val)
+        if val_id in visited:
+            return "[circular reference]"
+        
+        if isinstance(val, (list, dict)):
+            visited.add(val_id)
+            try:
+                if isinstance(val, list):
+                    summary = summarize_array(val)
+                    if summary:
+                        return summary
+                    return [process(item, visited) for item in val]
+                if isinstance(val, dict):
+                    return {k: process(v, visited) for k, v in val.items()}
+            finally:
+                visited.remove(val_id)
+        
+        return val if val is not None else ""
+    
+    processed = process(value)
+    if isinstance(processed, (list, dict)):
+        return html.escape(json.dumps(processed, indent=2, sort_keys=True))
+    return html.escape(str(processed))
 
 def build_standard_claims(method, interface_type, verification):
     selected_method = str(method or "").lower()
@@ -109,20 +192,20 @@ def build_certificate_html(certificate):
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
 <style>
-body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1.4; }
-h1 { margin: 0 0 6px 0; color: {{HEADER_COLOR}}; }
-.meta { color: #555; margin-bottom: 24px; font-family: monospace; font-size: 1.1rem; }
-.section { margin-bottom: 20px; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 10px; text-align: left; vertical-align: top; }
-th { width: 240px; background: #f8fafc; color: #334155; }
-pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
-.status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
-.status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
+h1 { margin: 0; color: {{HEADER_COLOR}}; }
+{{CERTIFICATE_CSS}}
 </style>
 </head>
 <body>
-<h1>{{TITLE}}</h1>
+<div class="certificate-container">
+<div class="header">
+  <div class="header-left">
+    <h1>{{TITLE}}</h1>
+  </div>
+  <div class="header-right">
+    <img src="{{LOGO}}" alt="Logo" style="height: 40px;">
+  </div>
+</div>
 <div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
 <div class="section">
 <table>
@@ -139,14 +222,13 @@ pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px;
 <tr><th>Capacity Bytes</th><td>{{CAPACITY_BYTES}}</td></tr>
 <tr><th>Interface protocol</th><td>{{INTERFACE_TYPE}}</td></tr>
 <tr><th>Method Used</th><td>{{METHOD}}</td></tr>
-<tr><th>Recommended Method</th><td>{{RECOMMENDED_METHOD}}</td></tr>
-<tr><th>Method Override Used</th><td>{{METHOD_OVERRIDE}}</td></tr>
 <tr><th>Verification Integrity</th><td class="{{STATUS_CLASS}}">{{STATUS_TEXT}}</td></tr>
 <tr><th>Certificate Integrity</th><td>{{SIGNATURE_STATUS}}</td></tr>
 <tr><th>Audit Signature (HMAC)</th><td><small>{{SIGNATURE}}</small></td></tr>
 {{STANDARD_ROWS}}
 {{EVIDENCE_ROWS}}
 </table>
+</div>
 </div>
 </body>
 </html>
@@ -156,6 +238,8 @@ pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px;
     content = template
     content = content.replace("{{TITLE}}", esc(title))
     content = content.replace("{{HEADER_COLOR}}", esc(header_color))
+    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
+    content = content.replace("{{LOGO}}", LOGO_BASE64)
     content = content.replace("{{CERTIFICATE_ID}}", esc(certificate.get("id")))
     content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
     content = content.replace("{{ISSUED_AT}}", esc(certificate.get("issued_at")))
@@ -170,8 +254,6 @@ pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px;
     content = content.replace("{{CAPACITY_BYTES}}", esc(certificate.get("capacity_bytes")))
     content = content.replace("{{INTERFACE_TYPE}}", esc(certificate.get("interface_type")))
     content = content.replace("{{METHOD}}", esc(certificate.get("method")))
-    content = content.replace("{{RECOMMENDED_METHOD}}", esc(certificate.get("recommended_method")))
-    content = content.replace("{{METHOD_OVERRIDE}}", esc(certificate.get("method_override_used")))
     content = content.replace("{{STATUS_CLASS}}", esc(status_class))
     content = content.replace("{{STATUS_TEXT}}", esc(status_text))
     content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
@@ -179,6 +261,58 @@ pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px;
     content = content.replace("{{STANDARD_ROWS}}", standard_rows)
     content = content.replace("{{EVIDENCE_ROWS}}", evidence_rows)
 
+    return content
+
+def build_bulk_certificate_html(certificates):
+    """Generate a single HTML file containing multiple certificates for bulk printing."""
+    if not certificates:
+        return "<!doctype html><html><body><p>No certificates found.</p></body></html>"
+    
+    # Generate HTML for each certificate
+    cert_htmls = []
+    failed_count = 0
+    for cert in certificates:
+        try:
+            cert_html = build_certificate_html(cert)
+            # Extract the body content using BeautifulSoup (not regex)
+            soup = BeautifulSoup(cert_html, 'html.parser')
+            if soup.body:
+                body_content = str(soup.body)
+                cert_htmls.append(f'<div class="certificate-container">{body_content}</div>')
+            else:
+                # Skip certificate if body extraction fails - indicates malformed HTML
+                logger.warning(f"Skipping certificate with id {cert.get('id', 'unknown')}: could not extract body content from generated HTML")
+                failed_count += 1
+                continue
+        except Exception as e:
+            # Skip certificates that fail to generate HTML
+            logger.warning(f"Skipping certificate with id {cert.get('id', 'unknown')}: failed to generate HTML: {str(e)}")
+            failed_count += 1
+            continue
+    
+    # If all certificates failed, return error message
+    if failed_count == len(certificates):
+        return "<!doctype html><html><body><p>All certificates failed to generate. Check certificate data format.</p></body></html>"
+    
+    # Build bulk HTML with shared head and individual certificate bodies
+    bulk_template = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Bulk Certificates</title>
+<style>
+h1 { margin: 0; }
+{{CERTIFICATE_CSS}}
+</style>
+</head>
+<body>
+{{CERTIFICATE_BODIES}}
+</body>
+</html>
+"""
+    
+    content = bulk_template.replace("{{CERTIFICATE_BODIES}}", "\n".join(cert_htmls))
+    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
     return content
 
 def build_certificate(job):
