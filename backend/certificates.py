@@ -253,7 +253,7 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     <h1>{{TITLE}}</h1>
   </div>
   <div class="header-right">
-    <img src="{{LOGO}}" alt="Logo" style="height: 60px;">
+    <img src="{{LOGO}}" alt="Logo" style="height: 120px;">
   </div>
 </div>
 <div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
