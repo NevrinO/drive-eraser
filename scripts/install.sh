@@ -152,9 +152,10 @@ install_packages() {
     apt-get update -qq
 
     info "Installing system dependencies..."
+    # python3-dev: Required for building Pillow 11.x from source on Ubuntu 26.04
+    # (Pillow C extensions need build headers when pre-built wheels unavailable)
     apt-get install -y \
         python3 \
-        python3-dev \
         python3-dev \
         python3-pip \
         python3-venv \
@@ -168,8 +169,6 @@ install_packages() {
         util-linux \
         lshw \
         rsync \
-        # python3-dev: Required for building Pillow 11.x from source on Ubuntu 26.04
-        # (Pillow C extensions need build headers when pre-built wheels unavailable)
         libjpeg-dev \
         zlib1g-dev \
         libfreetype6-dev \
