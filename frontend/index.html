@@ -132,7 +132,28 @@
           </div>
         </div>
 
-        <!-- Zone D: Interactive Bay Mapping -->
+        <!-- Zone D: Certificate Logo -->
+        <div class="admin-card">
+          <div class="card-title">Certificate Logo</div>
+          <p class="admin-desc">Upload a custom logo for certificate headers.</p>
+          <div class="logo-constraints" style="margin-bottom: 12px; font-size: 0.75rem; color: #888; background: #222; padding: 8px; border-radius: 4px;">
+            <div><strong>Accepted formats:</strong> PNG, JPG, JPEG</div>
+            <div><strong>Maximum file size:</strong> 500KB</div>
+            <div><strong>Logo will be scaled to fit within 200px × 60px</strong></div>
+          </div>
+          <div id="logoPreviewContainer" style="margin-bottom: 12px; min-height: 60px; display: flex; align-items: center; justify-content: center; background: #222; border-radius: 4px;">
+            <img id="logoPreview" src="" alt="Logo Preview" style="max-height: 60px; display: none;">
+            <span id="noLogoText" style="color: #666; font-size: 0.8rem;">No custom logo set</span>
+          </div>
+          <div class="button-stack">
+            <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/jpg" style="display: none;">
+            <button type="button" id="uploadLogoBtn" class="btn-primary" style="width: 100%; margin-bottom: 8px;">Upload Logo</button>
+            <button type="button" id="deleteLogoBtn" class="btn-secondary" style="width: 100%;">Remove Logo</button>
+          </div>
+          <div id="logoStatus" class="test-result-label hidden"></div>
+        </div>
+
+        <!-- Zone E: Interactive Bay Mapping -->
         <div class="admin-card" style="grid-column: span 2;">
           <div class="card-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
             <div class="card-title" style="margin-bottom: 0;">Interactive Physical Bay Mapping</div>
@@ -273,6 +294,24 @@
           <li><strong>View Logs:</strong> <code>sudo journalctl -u drive-eraser -f</code></li>
           <li><strong>Restart Service:</strong> <code>sudo systemctl restart drive-eraser</code></li>
         </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOGO CONFIRMATION MODAL -->
+  <div id="logoConfirmModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="logoConfirmTitle">
+      <header class="modal-header">
+        <h3 id="logoConfirmTitle">Confirm Logo Replacement</h3>
+        <button type="button" id="logoConfirmClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <p>A logo already exists. Are you sure you want to replace it?</p>
+        <div style="display: flex; gap: 12px; margin-top: 16px;">
+          <button type="button" id="logoConfirmYes" class="btn-primary">Yes, Replace</button>
+          <button type="button" id="logoConfirmNo" class="btn-secondary" data-close-modal="true">Cancel</button>
+        </div>
       </div>
     </div>
   </div>

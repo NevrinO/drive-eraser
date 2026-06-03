@@ -73,3 +73,35 @@ This file contains generalized architectural guardrails derived from past agent 
 ### 17. Caching Effectiveness Across Import Styles
 - **Rule**: A lazy/TTL cache is defeated when consumers bind its result once via `from module import VALUE`.
 - **Guardrail**: If a value is meant to be re-resolved over time (TTL, hot-reload), expose it through a function call (`get_x()`) and require call sites to invoke it at use time. Snapshotting via module-level `from ... import` (including values produced by module `__getattr__`) freezes the value at import and silently bypasses the cache's refresh semantics, producing inconsistent behavior across modules.
+
+### 18. Authentication Consistency on Admin Endpoints
+- **Rule**: All admin endpoints must follow the same authentication pattern.
+- **Guardrail**: When adding new admin endpoints (e.g., file upload, configuration changes), always verify they include the same authentication checks as existing admin routes. In Flask applications, this typically means checking admin session cookies or using a decorator. Missing authentication on admin endpoints is a critical security vulnerability that allows unauthorized access to administrative functions.
+
+### 19. Import Verification for New Code
+- **Rule**: Never add code that uses modules without verifying the imports exist.
+- **Guardrail**: When adding new functionality that requires standard library or third-party modules, immediately add the corresponding import statement at the top of the file. Run a syntax check or linting tool before committing. Missing imports cause immediate runtime failures that are easily preventable.
+
+### 20. TOCTOU in File Operations
+- **Rule**: Time-of-check to time-of-use (TOCTOU) race conditions occur when file existence checks and subsequent operations are not atomic.
+- **Guardrail**: For file upload/delete operations, use atomic patterns like:
+  - Write to a temporary file then use `os.rename()` (atomic on POSIX)
+  - Use file locking mechanisms (e.g., `fcntl.flock()` on Unix)
+  - Design APIs to be idempotent or handle concurrent operations gracefully
+  - Avoid separate "check if exists" then "act" patterns when possible
+
+### 21. Flask Route Definition Best Practices
+- **Rule**: Do not define multiple route handlers for the same endpoint path.
+- **Guardrail**: When an endpoint needs to handle multiple HTTP methods, use a single `@app.route()` decorator with all methods listed (e.g., `methods=["GET", "POST", "DELETE"]`) and dispatch within the handler function using `request.method`. Duplicate route definitions for the same path lead to code duplication, authentication logic duplication, and maintenance issues.
+
+### 22. File Integrity Validation for User-Uploaded Content
+- **Rule**: User-uploaded files that are used later (e.g., logos, templates) should be protected against tampering after upload.
+- **Guardrail**: When files are uploaded and stored for later use, consider:
+  - Storing a cryptographic hash of the file at upload time and validating it on each use
+  - Moving files to a directory with restricted write permissions after validation
+  - Implementing file permissions that prevent modification after upload
+  - Validating not just format/size but also content integrity when the file is used
+
+### 23. Admin Endpoint URL Path Convention
+- **Rule**: All administrative endpoints must be under the `/api/admin/` path to inherit global security middleware.
+- **Guardrail**: When adding new administrative functions, always place them under `/api/admin/` rather than directly under `/api/`. This ensures they automatically inherit the global authentication middleware and follows the established security architecture. Endpoints under `/api/` that are not in the explicit exclusion list (`/api/auth/verify`, `/api/status`) will be protected by the security gate, but placing admin functions under `/api/admin/` makes the intent explicit and consistent with the codebase pattern.

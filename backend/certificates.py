@@ -10,7 +10,9 @@ import secrets
 import re
 from datetime import datetime, timezone
 from bs4 import BeautifulSoup
-from common import load_policy, get_cert_dir
+from PIL import Image
+import io
+from common import load_policy, get_cert_dir, get_data_dir
 from app_config import logger
 
 SIGNATURE_KDF_ITERATIONS = 200000
@@ -38,6 +40,54 @@ pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px;
   .certificate-container { page-break-after: always; }
   .certificate-container:last-child { page-break-after: auto; }
 }"""
+
+def get_custom_logo_base64():
+    """Load and convert custom logo to base64 data URI if it exists."""
+    logo_path = os.path.join(get_data_dir(), "logo.png")
+    hash_path = logo_path + ".sha256"
+    
+    if not os.path.exists(logo_path):
+        return ""
+    
+    try:
+        # Check file size (max 500KB)
+        file_size = os.path.getsize(logo_path)
+        if file_size > 500 * 1024:  # 500KB
+            logger.warning(f"Logo file exceeds 500KB limit: {file_size} bytes")
+            return ""
+        
+        # Validate file integrity by checking hash
+        if os.path.exists(hash_path):
+            with open(logo_path, "rb") as f:
+                current_hash = hashlib.sha256(f.read()).hexdigest()
+            with open(hash_path, "r") as f:
+                stored_hash = f.read().strip()
+            if current_hash != stored_hash:
+                logger.warning(f"Logo file integrity check failed: hash mismatch. File may have been tampered with.")
+                return ""
+        
+        # Open and validate image
+        with Image.open(logo_path) as img:
+            # Validate format (only PNG, JPG, JPEG allowed)
+            if img.format not in ("PNG", "JPEG", "JPG"):
+                logger.warning(f"Unsupported logo format: {img.format}")
+                return ""
+            
+            # Resize to fit within 200x60px while maintaining aspect ratio
+            img.thumbnail((200, 60), Image.Resampling.LANCZOS)
+            
+            # Convert to PNG bytes
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            img_bytes = buffer.getvalue()
+            
+            # Convert to base64 data URI
+            base64_str = base64.b64encode(img_bytes).decode("utf-8")
+            return f"data:image/png;base64,{base64_str}"
+    
+    except Exception as e:
+        logger.warning(f"Failed to load custom logo: {str(e)}")
+        return ""
 
 def calculate_certificate_hash(certificate, passphrase, salt=None, iterations=SIGNATURE_KDF_ITERATIONS):
     if not passphrase:
@@ -239,7 +289,9 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     content = content.replace("{{TITLE}}", esc(title))
     content = content.replace("{{HEADER_COLOR}}", esc(header_color))
     content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
-    content = content.replace("{{LOGO}}", LOGO_BASE64)
+    # Use custom logo if available, otherwise use default
+    custom_logo = get_custom_logo_base64()
+    content = content.replace("{{LOGO}}", custom_logo if custom_logo else LOGO_BASE64)
     content = content.replace("{{CERTIFICATE_ID}}", esc(certificate.get("id")))
     content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
     content = content.replace("{{ISSUED_AT}}", esc(certificate.get("issued_at")))

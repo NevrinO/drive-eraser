@@ -10,9 +10,12 @@ import io
 import csv
 import tarfile
 import socket
+import base64
+import hashlib
 from datetime import datetime, timezone
 from threading import Thread
 from flask import request, jsonify, send_from_directory, send_file, g
+from PIL import Image
 
 from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, get_local_ip, calculate_session_token
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
@@ -1056,4 +1059,112 @@ def admin_policy():
             return jsonify({"status": "success", "message": "System policies updated successfully."}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
+
+@app.route("/api/admin/logo", methods=["GET", "POST", "DELETE"])
+def manage_logo():
+    logo_path = os.path.join(get_data_dir(), "logo.png")
+    
+    if request.method == "GET":
+        try:
+            has_logo = os.path.exists(logo_path)
+            dimensions = None
+            base64_data = None
+            if has_logo:
+                try:
+                    with Image.open(logo_path) as img:
+                        dimensions = {"width": img.width, "height": img.height}
+                    # Read file and convert to base64 for preview
+                    with open(logo_path, "rb") as f:
+                        img_bytes = f.read()
+                    base64_data = base64.b64encode(img_bytes).decode("utf-8")
+                except Exception:
+                    dimensions = None
+                    base64_data = None
+            return jsonify({"has_logo": has_logo, "dimensions": dimensions, "base64": base64_data}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "POST":
+        try:
+            # Check for confirmation if logo already exists
+            confirm = request.args.get("confirm", "false").lower() == "true"
+            if os.path.exists(logo_path) and not confirm:
+                return jsonify({"error": "confirmation_required", "message": "A logo already exists. Confirm replacement by adding ?confirm=true to the request."}), 400
+            
+            # Check if file is present
+            if "logo" not in request.files:
+                return jsonify({"error": "No file provided"}), 400
+            
+            file = request.files["logo"]
+            if file.filename == "":
+                return jsonify({"error": "No file selected"}), 400
+            
+            # Validate format by reading with PIL
+            try:
+                img = Image.open(file)
+                file_format = img.format
+                if file_format not in ("PNG", "JPEG", "JPG"):
+                    return jsonify({"error": f"Unsupported format: {file_format}. Only PNG, JPG, JPEG allowed."}), 400
+                
+                # Ensure data directory exists
+                os.makedirs(get_data_dir(), exist_ok=True)
+                
+                # Use atomic write: save to temporary file first, then rename
+                temp_path = logo_path + ".tmp"
+                file.seek(0)
+                img.save(temp_path, format="PNG")
+                
+                # Validate converted PNG file size (max 500KB)
+                png_size = os.path.getsize(temp_path)
+                if png_size > 500 * 1024:
+                    os.remove(temp_path)
+                    return jsonify({"error": "Converted PNG exceeds 500KB limit"}), 400
+                
+                # Atomic rename operation
+                os.replace(temp_path, logo_path)
+                
+                # Calculate hash of the committed file for integrity validation
+                with open(logo_path, "rb") as f:
+                    file_hash = hashlib.sha256(f.read()).hexdigest()
+                
+                # Store hash alongside the logo file
+                hash_path = logo_path + ".sha256"
+                with open(hash_path, "w") as f:
+                    f.write(file_hash)
+                
+                logger.info(f"Custom logo uploaded successfully: {logo_path}")
+                return jsonify({"status": "success", "message": "Logo uploaded successfully"}), 200
+                
+            except Exception as e:
+                # Clean up temporary file if it exists
+                temp_path = logo_path + ".tmp"
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except Exception:
+                        pass
+                return jsonify({"error": f"Invalid image file: {str(e)}"}), 400
+                
+        except Exception as e:
+            logger.error(f"Logo upload failed: {str(e)}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "DELETE":
+        try:
+            # Direct removal without existence check to avoid TOCTOU race condition
+            os.remove(logo_path)
+            # Also remove the hash file if it exists
+            hash_path = logo_path + ".sha256"
+            try:
+                os.remove(hash_path)
+            except FileNotFoundError:
+                pass
+            logger.info("Custom logo deleted by administrator.")
+            return jsonify({"status": "success", "message": "Logo deleted successfully"}), 200
+        except FileNotFoundError:
+            # File doesn't exist, which is fine
+            return jsonify({"status": "success", "message": "No logo to delete"}), 200
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
 # --- END OF FILE backend/api_routes.py ---

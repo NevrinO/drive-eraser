@@ -165,7 +165,14 @@ install_packages() {
         curl \
         util-linux \
         lshw \
-        rsync
+        rsync \
+        libjpeg-dev \
+        zlib1g-dev \
+        libfreetype6-dev \
+        liblcms2-dev \
+        libwebp-dev \
+        libopenjp2-7-dev \
+        libtiff5-dev
 
     success "System packages installed."
 }
@@ -527,8 +534,8 @@ setup_python() {
         error "Virtual environment python binary not found at $VENV_DIR/bin/python"
     fi
 
-    if ! "$VENV_DIR/bin/python" -c "import flask, flask_cors, bs4" >/dev/null 2>&1; then
-        error "Virtual environment validation failed: cannot import flask/flask_cors/bs4"
+    if ! "$VENV_DIR/bin/python" -c "import flask, flask_cors, bs4, PIL" >/dev/null 2>&1; then
+        error "Virtual environment validation failed: cannot import flask/flask_cors/bs4/PIL"
     fi
 
     success "Python dependencies installed."
