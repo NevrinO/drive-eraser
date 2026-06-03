@@ -114,3 +114,11 @@ This file contains generalized architectural guardrails derived from past agent 
   - Consider using dependency management tools (pip-tools, poetry) to separate development constraints from production locks
   - Document specific library features used and their version requirements
   - For production systems, prefer pinned versions unless there is a clear, tested process for handling updates
+
+### 25. Document Build Dependency Fixes
+- **Rule**: When adding system-level build dependencies (e.g., `python3-dev`) to fix installation failures, document the specific error and OS version in comments or changelog.
+- **Guardrail**: Installation script changes should include inline comments explaining:
+  - The specific error that prompted the change
+  - The OS version/distribution where the error occurred
+  - Why the dependency resolves the issue (e.g., "Pillow 11.x requires build headers on Ubuntu 26.04")
+  - This prevents future maintainers from removing "unnecessary" dependencies and provides context for troubleshooting
