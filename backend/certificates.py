@@ -28,8 +28,8 @@ CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color:
 .header .meta { color: #555; margin-bottom: 0; font-family: monospace; font-size: 1.1rem; }
 .section { margin-bottom: 20px; }
 table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 10px; text-align: left; vertical-align: top; }
-th { width: 240px; background: #f8fafc; color: #334155; padding: 4px; }
+th, td { border: 1px solid #ccc; padding: 4px; text-align: left; vertical-align: top; }
+th { width: 240px; background: #f8fafc; color: #334155; }
 pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
 .status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
 .status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
