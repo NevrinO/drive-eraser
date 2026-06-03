@@ -21,15 +21,15 @@ SIGNATURE_KDF_ITERATIONS = 200000
 LOGO_BASE64 = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiB2aWV3Qm94PSIwIDAgMTIwIDQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNDAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSIxMCIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxZTNhOGEiPkRyaXZlIFdhc2hlciBTdGF0aW9uPC90ZXh0Pgo8L3N2Zz4="
 
 # Shared CSS for certificate HTML templates
-CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1.4; }
+CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1; }
 .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
 .header-left { flex: 1; }
 .header-right { flex: 0 0 auto; }
-.meta { color: #555; margin-bottom: 24px; font-family: monospace; font-size: 1.1rem; }
+.header .meta { color: #555; margin-bottom: 0; font-family: monospace; font-size: 1.1rem; }
 .section { margin-bottom: 20px; }
 table { border-collapse: collapse; width: 100%; margin-top: 10px; }
 th, td { border: 1px solid #ccc; padding: 10px; text-align: left; vertical-align: top; }
-th { width: 240px; background: #f8fafc; color: #334155; }
+th { width: 240px; background: #f8fafc; color: #334155; padding: 4px; }
 pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
 .status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
 .status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
@@ -251,7 +251,7 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     <div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
   </div>
   <div class="header-right">
-    <img src="{{LOGO}}" alt="Logo" style="max-height: 100px; max-width: 500px;">
+    <img src="{{LOGO}}" alt="Logo" style="max-height: 75px; max-width: 500px;">
   </div>
 </div>
 <div class="section">
