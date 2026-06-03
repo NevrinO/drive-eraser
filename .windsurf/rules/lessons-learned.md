@@ -122,3 +122,7 @@ This file contains generalized architectural guardrails derived from past agent 
   - The OS version/distribution where the error occurred
   - Why the dependency resolves the issue (e.g., "Pillow 11.x requires build headers on Ubuntu 26.04")
   - This prevents future maintainers from removing "unnecessary" dependencies and provides context for troubleshooting
+
+### 26. Complete Security Implementations
+- **Rule**: Never implement partial security measures that provide no actual protection.
+- **Guardrail**: If you implement a security feature (e.g., hash calculation for integrity validation, authentication checks, input sanitization), you must complete the full security chain. Calculating a hash without validating it on use, or checking authentication without enforcing it, creates a false sense of security while providing no actual protection. Either implement the complete security measure or remove the partial implementation entirely.

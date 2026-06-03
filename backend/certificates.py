@@ -73,10 +73,7 @@ def get_custom_logo_base64():
                 logger.warning(f"Unsupported logo format: {img.format}")
                 return ""
             
-            # Resize to fit within 200x60px while maintaining aspect ratio
-            img.thumbnail((200, 60), Image.Resampling.LANCZOS)
-            
-            # Convert to PNG bytes
+            # Convert to PNG bytes (HTML CSS will handle display sizing)
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             img_bytes = buffer.getvalue()
