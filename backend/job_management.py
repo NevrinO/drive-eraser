@@ -13,7 +13,7 @@ from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
     purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy
 )
-from database import persist_job
+from database import persist_job, load_job
 from verification import (
     verification_for_method,
     write_marker_and_verify,
@@ -127,6 +127,7 @@ def create_erase_job(validated):
         "certificate": None,
         "progress_percent": 0.0,
         "current_phase": "Queued in Line",
+        "job_type": "erase",
         "request": {
             "technician": validated["technician"],
             "ticket_number": validated["ticket_number"],
@@ -709,4 +710,6 @@ def run_erase_job(job_id):
         purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
+
 # --- END OF FILE backend/job_management.py ---
+    # Validate input is a list and enforce size limit for DoS prevention

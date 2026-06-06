@@ -2,11 +2,15 @@
 import os
 import json
 import time
+from threading import Lock
 
 # Constants
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Lock for bay_map.json to prevent concurrent modifications (rule #2)
+BAY_MAP_LOCK = Lock()
 
 DEFAULT_POLICY = {
     "prewipe_spot_check": True,
@@ -118,6 +122,14 @@ def save_bay_map(bay_map_data, config_dir=None):
         config_dir = get_config_dir()
     os.makedirs(config_dir, exist_ok=True)
     bay_map_path = os.path.join(config_dir, "bay_map.json")
-    with open(bay_map_path, "w", encoding="utf-8") as f:
+    
+    # Atomic file save: write to temp file first, then rename (rule #20)
+    temp_path = bay_map_path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(bay_map_data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    
+    # Atomic rename (POSIX guarantees this is atomic)
+    os.rename(temp_path, bay_map_path)
 # --- END OF FILE backend/common.py ---

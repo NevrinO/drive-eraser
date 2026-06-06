@@ -7,8 +7,9 @@ import subprocess
 
 from common import get_config_dir, load_policy
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
-from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation
+from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
 from disk_capabilities import detect_drive_capabilities
+from device_discovery import get_controller_for_device, scan_pci_controllers
 
 # --- PROGRAMMATIC OS DRIVE DETECTION AND OVERRIDES ---
 
@@ -95,6 +96,14 @@ def get_os_by_path():
 
 # --- DISCOVERY ENGINE ---
 
+def get_all_controllers():
+    """Get all PCI storage controllers for discovery API.
+    
+    Returns:
+        List of controller dictionaries with PCI address, vendor, device, and type info
+    """
+    return scan_pci_controllers()
+
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     try:
         with open(bay_map_path, 'r', encoding='utf-8') as f:
@@ -145,6 +154,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             "model": None, 
             "status": "EMPTY",
             "interface_type": "unknown", 
+            "drive_type": "unknown",
             "capacity_str": "-", 
             "marker": {"ok": False, "status": "none", "error": None, "details": {}}, 
             "recommendation": {"status": "UNKNOWN", "comment": "-"}, 
@@ -152,7 +162,8 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, 
             "supported_methods": ["overwrite"],
             "smart": {}, 
-            "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}}
+            "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}},
+            "controller": None
         }
         
         # 1. Primary SATA/SAS path check
@@ -170,6 +181,10 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
         if dev_node:
             bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
+            
+            # Get controller information for the device
+            controller_info = get_controller_for_device(dev_node)
+            bay_info["controller"] = controller_info
 
             is_os_drive = False
             if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
@@ -202,9 +217,10 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
             health_score = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
             recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+            drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
 
             bay_info.update({
-                "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "capacity_str": smart.get("capacity_str", "-"),
+                "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
                 "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
                 "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
                 "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},

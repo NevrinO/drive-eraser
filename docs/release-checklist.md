@@ -27,7 +27,7 @@ curl -sS http://127.0.0.1:5000/api/drives
 ```bash
 curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
   -H 'Content-Type: application/json' \
-  -d '{"technician":"release","ticket_number":"REL-1","bay":"bay3","confirmation_text":"erase bay3"}'
+  -d '{"technician":"release","ticket_number":"REL-1","bay":"bay2","confirmation_text":"erase bay2"}'
 ```
 4. Job status check:
 ```bash

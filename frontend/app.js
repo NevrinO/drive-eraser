@@ -23,6 +23,12 @@ let hasUnsavedBayMapChanges = false;
 mainTabs.addEventListener("click", (event) => {
   const btn = event.target.closest(".tab-button");
   if (!btn) return;
+  
+  // Clear bulk selection when leaving audit tab (CRITIQUE.md #6)
+  if (btn.dataset.tab !== "auditPanel" && typeof clearBulkSelectionState === "function") {
+    clearBulkSelectionState();
+  }
+  
   document.querySelectorAll(".tab-button").forEach(b => b.classList.remove("active"));
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
   btn.classList.add("active");

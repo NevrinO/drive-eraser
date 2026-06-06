@@ -86,10 +86,10 @@
 - Job persistence includes verification, marker, and certificate payloads for audit continuity
 
 ## Bay Safety Model
-- Bay 1 = OS drive = locked / view only
-- Bay 2 = reserved / locked
+- Bay 0 = OS drive = locked / view only
+- Bay 1 = reserved / locked
 - Remaining work bays are wipe-capable based on platform
-- On the 4-bay test server, bays 3-4 are active wipe bays
+- On the 4-bay test server, bays 2-3 are active wipe bays
 - Protected bays must never be wipe targets even if detected and healthy
 
 ## Erase Workflow Requirements
@@ -219,10 +219,10 @@
 
 ## Interactive Bay Mapping & Memory-Safe Staging
 - Technicians must be able to scale the station dynamically (bays capped at a minimum of 1 and maximum of 128).
-- Naming of new bays must follow an auto-incremented pattern (`bay1`, `bay2`, ..., `bayX`) to prevent dictionary key conflicts.
+- Naming of new bays must follow an auto-incremented pattern (`bay0`, `bay1`, ..., `bayX`) to prevent dictionary key conflicts.
 - **Staging Rule:** To prevent active background UI refresh pollers from wiping client-side edits during long async network operations, all adding, deleting, and drop-down mapping must happen strictly in-memory in the browser first. Changes are only committed to `/config/bay_map.json` when the technician explicitly clicks "Save Mapping Configuration".
 - A bay cannot be deleted if a sanitization job is currently running or queued on it.
 
 ## Workbench Display Layout
 - To ensure optimal viewing on standard 1080p and touch-screen monitors, the Workbench Tab bay layout is constrained to exactly **4 columns per row** maximum, with excess cards spilling down to subsequent rows.
-- Workbench cards must display their physical descriptive labels next to their machine IDs (e.g. `BAY3 (Workbench Slot A)`).
+- Workbench cards must display their physical descriptive labels next to their machine IDs (e.g. `BAY2 (Workbench Slot A)`).

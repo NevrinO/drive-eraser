@@ -360,70 +360,70 @@ setup_config() {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 0",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay1": {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 1",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay2": {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 2",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay3": {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 3",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay4": {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 4",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay5": {
     "role": "wipe",
     "locked": false,
     "type": "sas_sata",
-    "label": "Work Bay 5",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay6": {
     "role": "wipe",
     "locked": false,
     "type": "u2",
-    "label": "Work Bay 6",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay7": {
     "role": "wipe",
     "locked": false,
     "type": "u2",
-    "label": "Work Bay 7",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay8": {
     "role": "wipe",
     "locked": false,
     "type": "u2",
-    "label": "Work Bay 8",
+    "label": "Work Bay",
     "by_path": null
   },
   "bay9": {
     "role": "wipe",
     "locked": false,
     "type": "u2",
-    "label": "Work Bay 9",
+    "label": "Work Bay",
     "by_path": null
   }
 }
@@ -486,6 +486,51 @@ with open(path, 'w', encoding='utf-8') as f:
         success "policy.json safely compiled."
     else
         warn "policy.json already exists. Skipping (your config is preserved)."
+    fi
+
+    # layout_templates.json - create if missing
+    # Note: Backend handles corrupted files via hash validation and fallback to DEFAULT_TEMPLATES
+    if [ ! -f "$CONFIG_DIR/layout_templates.json" ]; then
+        info "Creating default layout_templates.json..."
+        # Use Python to generate JSON and hash to match backend's json.dumps() formatting exactly
+        python3 << PYTHON_SCRIPT
+import json
+import hashlib
+
+DEFAULT_TEMPLATES = {
+    "dell_r320_4bay": {
+        "id": "dell_r320_4bay",
+        "name": "Dell R320 4-Bay (3.5\")",
+        "vendor": "Dell",
+        "rows": 1,
+        "cols": 4,
+        "bay_count": 4,
+        "traversal_preset": "top_left_down_then_across"
+    },
+    "dell_r440_10bay": {
+        "id": "dell_r440_10bay",
+        "name": "Dell R440 10-Bay (2.5\")",
+        "vendor": "Dell",
+        "rows": 2,
+        "cols": 5,
+        "bay_count": 10,
+        "traversal_preset": "top_left_down_then_across"
+    }
+}
+
+data = {"templates": DEFAULT_TEMPLATES}
+json_content = json.dumps(data, indent=2)
+content_hash = hashlib.sha256(json_content.encode('utf-8')).hexdigest()
+
+config_dir = '$CONFIG_DIR'
+with open(f"{config_dir}/layout_templates.json", 'w', encoding='utf-8') as f:
+    f.write(json_content)
+with open(f"{config_dir}/layout_templates.json.sha256", 'w', encoding='utf-8') as f:
+    f.write(content_hash)
+PYTHON_SCRIPT
+        success "Default layout_templates.json and hash file created."
+    else
+        info "layout_templates.json already exists. Preserving custom templates."
     fi
 }
 

@@ -22,6 +22,21 @@ const confirmationText = document.getElementById("confirmationText");
 
 const POLL_INTERVAL_MS = 2000;
 
+function isBayUnconfigured(drive) {
+  if (!drive) return false;
+  
+  const bayConfig = localBayMapCopy[drive.bay];
+  if (!bayConfig) return false;
+  
+  const byPath = bayConfig.by_path || "";
+  const byPathNvme = bayConfig.by_path_nvme || "";
+  
+  const isEmptyPath = !byPath || byPath === "" || byPath === "REPLACE_ME_WITH_OS_PATH" || byPath.startsWith("REPLACE_ME");
+  const isEmptyNvmePath = !byPathNvme || byPathNvme === "" || byPathNvme.startsWith("REPLACE_ME");
+  
+  return isEmptyPath && isEmptyNvmePath;
+}
+
 async function pollActiveWipes() {
   while (true) {
     await loadDrives(true); 
@@ -87,6 +102,16 @@ async function loadDrives(silent = false) {
 }
 
 function renderBays(drives) {
+  // Get skip positions from template if available
+  let skipPositions = [];
+  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
+    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
+    if (template && template.skip_positions) {
+      skipPositions = template.skip_positions;
+    }
+  }
+  const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
+
   const orderedDrives = [...drives].sort((a, b) => {
     const aPos = a.physical_position || {};
     const bPos = b.physical_position || {};
@@ -122,88 +147,155 @@ function renderBays(drives) {
   }
   baysGrid.style.gridTemplateColumns = `repeat(${gridCols}, minmax(0, 1fr))`;
 
-  baysGrid.innerHTML = orderedDrives.map((drive) => {
-    const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
-    const isEmpty = !drive.present;
-    const isCritical = String(drive.status).toUpperCase() === "FAILED";
-    const isRunning = String(drive.status).toUpperCase() === "RUNNING";
-    const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
-    
-    let stateClass = "healthy";
-    let bannerLabel = "READY / UNPROCESSED";
-
-    if (isEmpty) {
-      stateClass = "empty";
-      bannerLabel = "EMPTY BAY";
-    } else if (drive.locked || drive.role === "os") {
-      stateClass = "locked";
-      bannerLabel = "VIEW ONLY - OS DRIVE";
-    } else if (isCritical) {
-      stateClass = "failed";
-      bannerLabel = "⚠️ CRITICAL FAILURE";
-    } else if (isRunning) {
-      stateClass = "running";
-      bannerLabel = "WIPING IN PROGRESS";
-    } else if (isCompleted) {
-      stateClass = "completed";
-      bannerLabel = "SANITIZED & VERIFIED";
+  // Get template dimensions for grid generation
+  let templateRows = 1;
+  let templateCols = gridCols;
+  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
+    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
+    if (template) {
+      templateRows = template.rows || 1;
+      templateCols = template.cols || gridCols;
     }
+  }
 
-    const healthScore = calculateDriveHealthScore(drive);
-    const classes = ["bay-card", stateClass];
-    if (selectedBays.has(drive.bay)) classes.push("selected");
+  // Create a map of drives by their physical position
+  const driveByPosition = new Map();
+  orderedDrives.forEach(drive => {
+    const pos = drive.physical_position;
+    if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
+      driveByPosition.set(`${pos.row},${pos.col}`, drive);
+    }
+  });
 
-    const ifaceLabel = drive.interface_type ? drive.interface_type.toUpperCase() : "SATA";
-    const badgeClass = ifaceLabel.includes("NVME") ? "badge-nvme" : ifaceLabel.includes("SAS") ? "badge-sas" : "badge-sata";
+  // Generate grid cells
+  let gridHtml = "";
+  for (let row = 0; row < templateRows; row++) {
+    for (let col = 0; col < templateCols; col++) {
+      const posKey = `${row},${col}`;
+      const isSkipped = skipSet.has(posKey);
+      const drive = driveByPosition.get(posKey);
 
-    const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
-    const phaseLabel = drive.current_phase || "Sanitizing...";
-
-    const bayPrimaryText = (drive.display_number ? `BAY ${drive.display_number}` : drive.bay.toUpperCase());
-    const baySecondaryText = (drive.display_number ? drive.bay.toUpperCase() : "");
-    const displayLabel = drive.label && drive.label !== drive.bay ? ` (${drive.label})` : "";
-
-    return `
-      <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
-        <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
-        <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
-        <div class="bay-header-row">
-          <div class="bay-number">
-            ${escapeHtml(bayPrimaryText)}
-            <span style="font-size: 0.72rem; font-weight: normal; opacity: 0.7;">${escapeHtml(baySecondaryText ? `${baySecondaryText}${displayLabel}` : displayLabel)}</span>
-          </div>
-          ${isEmpty ? "" : `<div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>`}
-        </div>
-        ${isEmpty ? `<div class="empty-label">— Empty slot —</div>` : `
-          <div class="drive-model">${escapeHtml(drive.model || "Generic Drive")}</div>
-          <div class="drive-serial">S/N: ${escapeHtml(drive.serial || "-")}</div>
-          
-          ${isRunning ? `
-            <div class="health-label">
-              <span style="color: var(--color-primary); font-weight: bold;">${escapeHtml(phaseLabel)}</span>
-              <span style="color: var(--color-primary); font-weight: bold;">${progressPercent}%</span>
+      if (isSkipped) {
+        // Render blocked placeholder
+        gridHtml += `
+          <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
+            <div class="bay-banner" style="background: transparent; color: #444;"></div>
+            <div class="bay-header-row">
+              <div class="bay-number" style="color: #444;"></div>
             </div>
-            <div class="health-bar-track">
-              <div class="health-bar-fill fill-blue" style="width: ${progressPercent}%"></div>
+          </article>
+        `;
+      } else if (drive) {
+        // Render actual drive
+        const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
+        const isEmpty = !drive.present;
+        const isCritical = String(drive.status).toUpperCase() === "FAILED";
+        const isRunning = String(drive.status).toUpperCase() === "RUNNING";
+        const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+        const isUnconfigured = isBayUnconfigured(drive);
+
+        let stateClass = "healthy";
+        let bannerLabel = "READY / UNPROCESSED";
+
+        if (isEmpty) {
+          stateClass = "empty";
+          bannerLabel = "EMPTY BAY";
+        } else if (drive.locked || drive.role === "os") {
+          stateClass = "locked";
+          bannerLabel = "VIEW ONLY - OS DRIVE";
+        } else if (isCritical) {
+          stateClass = "failed";
+          bannerLabel = "⚠️ CRITICAL FAILURE";
+        } else if (isRunning) {
+          stateClass = "running";
+          bannerLabel = "WIPING IN PROGRESS";
+        } else if (isCompleted) {
+          stateClass = "completed";
+          bannerLabel = "SANITIZED & VERIFIED";
+        } else if (isUnconfigured) {
+          stateClass = "unconfigured";
+          bannerLabel = "⚠️ UNCONFIGURED BAY";
+        }
+
+        if (isUnconfigured) {
+          stateClass += " unconfigured";
+        }
+
+        const healthScore = calculateDriveHealthScore(drive);
+        const classes = ["bay-card", stateClass];
+        if (selectedBays.has(drive.bay)) classes.push("selected");
+
+        const ifaceLabel = drive.interface_type ? drive.interface_type.toUpperCase() : "SATA";
+        const badgeClass = ifaceLabel.includes("NVME") ? "badge-nvme" : ifaceLabel.includes("SAS") ? "badge-sas" : "badge-sata";
+        const driveTypeLabel = drive.drive_type && (drive.drive_type === "ssd" || drive.drive_type === "hdd") ? drive.drive_type.toUpperCase() : "";
+        const driveTypeClass = drive.drive_type === "ssd" ? "badge-ssd" : "badge-hdd";
+
+        const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
+        const phaseLabel = drive.current_phase || "Sanitizing...";
+
+        const bayPrimaryText = (drive.display_number ? `BAY ${drive.display_number}` : drive.bay.toUpperCase());
+        const displayLabel = drive.label ? ` - ${drive.label}` : "";
+
+        gridHtml += `
+          <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
+            <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
+            <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
+            <div class="bay-header-row">
+              <div class="bay-number">
+                ${escapeHtml(bayPrimaryText)}${escapeHtml(displayLabel)}
+              </div>
+              ${isEmpty ? "" : `
+                <div style="display: flex; gap: 4px; align-items: center;">
+                  <div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>
+                  ${driveTypeLabel ? `<div class="drive-type-badge ${driveTypeClass}" style="font-size: 0.65rem;">${escapeHtml(driveTypeLabel)}</div>` : ""}
+                  ${isUnconfigured ? `<div class="unconfigured-badge" title="This bay has no device path configured in bay_map.json">⚠️ Unconfigured</div>` : ""}
+                </div>
+              `}
             </div>
-          ` : `
-            <div class="health-label">
-              <span>Life Expectancy</span>
-              <span>${healthScore}%</span>
+            ${isEmpty ? `<div class="empty-label">${isUnconfigured ? "— UNCONFIGURED —" : "— Empty slot —"}</div>` : `
+              <div class="drive-model">${escapeHtml(drive.model || "Generic Drive")}</div>
+              <div class="drive-serial">S/N: ${escapeHtml(drive.serial || "-")}</div>
+
+              ${isRunning ? `
+                <div class="health-label">
+                  <span style="color: var(--color-primary); font-weight: bold;">${escapeHtml(phaseLabel)}</span>
+                  <span style="color: var(--color-primary); font-weight: bold;">${progressPercent}%</span>
+                </div>
+                <div class="health-bar-track">
+                  <div class="health-bar-fill fill-blue" style="width: ${progressPercent}%"></div>
+                </div>
+              ` : `
+                <div class="health-label">
+                  <span>Life Expectancy</span>
+                  <span>${healthScore}%</span>
+                </div>
+                <div class="health-bar-track">
+                  <div class="health-bar-fill ${healthScore > 75 ? 'fill-green' : healthScore > 40 ? 'fill-yellow' : 'fill-red'}" style="width: ${healthScore}%"></div>
+                </div>
+              `}
+
+              <div class="drive-meta">
+                <span>${escapeHtml(drive.capacity_str)}</span>
+                <span>${escapeHtml(drive.device || "-")}</span>
+              </div>
+            `}
+          </article>
+        `;
+      } else {
+        // Render empty placeholder for grid position with no drive
+        gridHtml += `
+          <article class="bay-card empty" data-bay="empty-${row}-${col}">
+            <div class="bay-banner">EMPTY BAY</div>
+            <div class="bay-header-row">
+              <div class="bay-number">— Empty slot —</div>
             </div>
-            <div class="health-bar-track">
-              <div class="health-bar-fill ${healthScore > 75 ? 'fill-green' : healthScore > 40 ? 'fill-yellow' : 'fill-red'}" style="width: ${healthScore}%"></div>
-            </div>
-          `}
-          
-          <div class="drive-meta">
-            <span>${escapeHtml(drive.capacity_str)}</span>
-            <span>${escapeHtml(drive.device || "-")}</span>
-          </div>
-        `}
-      </article>
-    `;
-  }).join("");
+          </article>
+        `;
+      }
+    }
+  }
+
+  baysGrid.innerHTML = gridHtml;
 }
 
 baysGrid.addEventListener("click", (event) => {

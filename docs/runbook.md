@@ -50,8 +50,8 @@ curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
   -d '{
     "technician":"test",
     "ticket_number":"INC-1001",
-    "bay":"bay3",
-    "confirmation_text":"erase bay3"
+    "bay":"bay2",
+    "confirmation_text":"erase bay2"
   }'
 ```
 
@@ -62,7 +62,7 @@ curl -sS -X POST http://127.0.0.1:5000/api/erase/start \
   -d '{
     "technician":"test",
     "ticket_number":"INC-1001",
-    "bays":["bay3","bay4","bay5"],
+    "bays":["bay2","bay3","bay4"],
     "confirmation_text":"erase 3 drives"
   }'
 ```

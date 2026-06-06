@@ -11,8 +11,8 @@ This file contains generalized architectural guardrails derived from past agent 
 - **Guardrail**: If dynamic schema modifications are required, validate parameters against an allowlist, or split parameters so that type definitions and names are strictly validated via regex and escaped. Never assume a regex that matches `[a-zA-Z]` is safe if it allows raw unquoted input trailing it.
 
 ### 2. Concurrency & Race Conditions
-- **Rule**: Do not assume "single-process usage" is safe. 
-- **Guardrail**: If the codebase uses threads, locks, or runs in a multi-worker environment (like Flask/Gunicorn), always write thread-safe operations. Use locks, transactions, or native database atomic operations (e.g., `IF NOT EXISTS`). For schema modifications like `ALTER TABLE`, wrap in try-except to handle duplicate column errors from concurrent operations.
+- **Rule**: Do not assume "single-process usage" is safe.
+- **Guardrail**: If the codebase uses threads, locks, or runs in a multi-worker environment (like Flask/Gunicorn), always write thread-safe operations. Use locks, transactions, or native database atomic operations (e.g., `IF NOT EXISTS`). For schema modifications like `ALTER TABLE`, wrap in try-except to handle duplicate column errors from concurrent operations. For file-based state management, use file locking (e.g., `fcntl.flock()` on Unix, `msvcrt.locking()` on Windows, or the `filelock` library) around the entire load-modify-save sequence. Atomic file writes (tempfile + rename) only prevent partial file corruption, not lost updates from concurrent modifications.
 
 ### 3. HTML Parsing
 - **Rule**: Do not use regular expressions to parse HTML.
@@ -22,9 +22,9 @@ This file contains generalized architectural guardrails derived from past agent 
 - **Rule**: Do not rely on naive `json.dumps()` or `str()` comparisons for arbitrary arrays or objects.
 - **Guardrail**: Account for non-serializable types (datetimes, sets), circular references, and key sorting. Use try/except fallbacks or deep-comparison helper functions to avoid runtime crashes.
 
-### 5. Input Validation for DoS Prevention
-- **Rule**: Always validate and limit the size of user-provided lists and collections.
-- **Guardrail**: For any endpoint accepting arrays (e.g., job_ids, filters), enforce a reasonable maximum size (e.g., 100 items) to prevent memory exhaustion and long-running queries that could cause denial of service.
+### 5. Size Limits for DoS Prevention
+- **Rule**: Always enforce size limits on user input, collections, and API responses.
+- **Guardrail**: For any endpoint accepting arrays (e.g., job_ids, filters), enforce a reasonable maximum size (e.g., 100 items) to prevent memory exhaustion and long-running queries. For bulk operations, enforce limits on total collection size (e.g., 100 items total). For API responses that return collections, enforce reasonable maximum sizes (e.g., 1000 items) to prevent memory exhaustion, long response times, or network bandwidth exhaustion. Return a 400 error or truncate with pagination if limits would be exceeded. Also enforce size limits before parsing JSON from untrusted sources (e.g., 64KB maximum).
 
 ### 6. Date Range Validation
 - **Rule**: When accepting date range filters, validate logical consistency.
@@ -39,74 +39,50 @@ This file contains generalized architectural guardrails derived from past agent 
 - **Guardrail**: Use a `visited` set or similar mechanism to track processed objects and prevent infinite recursion on circular references. Failing to do so will cause `RecursionError` at runtime when encountering self-referential structures (e.g., `a = []; a.append(a)` or `d = {}; d['self'] = d`).
 
 ### 9. Device Path Validation
-- **Rule**: Never accept raw device paths from user input without validation.
-- **Guardrail**: Validate device paths against a strict regex whitelist (e.g., `^/dev/[a-z]+[0-9]*$`) before using in command construction. This prevents path traversal, command injection, and accidental access to sensitive devices.
+- **Rule**: Never accept raw device paths from user input or internal APIs without validation.
+- **Guardrail**: Validate device paths against a strict regex whitelist (e.g., `^/dev/[a-z]+[0-9]*$`) before using in command construction. This prevents path traversal, command injection, and accidental access to sensitive devices. Apply validation at the ingestion point, not just at the point of use, even when data comes from trusted discovery APIs. When determining device types from device paths (e.g., NVMe vs SATA), use regex patterns that match the actual naming conventions rather than substring checks like `"nvme" in device_path.lower()`. Use strict patterns like `^/dev/nvme[0-9]+(n[0-9]+)?(p[0-9]+)?$` for NVMe device detection to ensure accuracy.
 
-### 10. JSON Parsing Size Limits
-- **Rule**: Always enforce size limits before parsing JSON from untrusted sources.
-- **Guardrail**: Check the byte length of JSON data before calling `json.loads()`. Enforce a reasonable maximum (e.g., 64KB) to prevent memory exhaustion and DoS attacks from maliciously large payloads.
+### 10. Cryptographic Parameter Standards
+- **Rule**: Use current cryptographic standards for key derivation and hashing, and ensure consistency across all code paths.
+- **Guardrail**: For PBKDF2, use at least 100,000 iterations (NIST recommendation), not 10,000. Define PBKDF2 iteration counts, salts, algorithms, and other cryptographic parameters as shared constants in a single location. Never hardcode different values in read vs. write paths. Parameter mismatches silently break security features and are extremely difficult to debug in production.
 
-### 11. Cryptographic Parameter Standards
-- **Rule**: Use current cryptographic standards for key derivation and hashing.
-- **Guardrail**: For PBKDF2, use at least 100,000 iterations (NIST recommendation), not 10,000. Keep cryptographic parameters aligned with current security best practices to prevent brute-force attacks.
+### 11. JSON Parsing with Delimiters
+- **Rule**: When parsing JSON embedded in binary data, ensure correct delimiter matching and ignore delimiters inside string literals.
+- **Guardrail**: Use proper bracket matching algorithms (e.g., counting nested braces) to find the correct opening delimiter for a given closing delimiter. Naive `rfind()` can match the wrong opening brace when multiple JSON objects exist. If implementing a custom JSON scanner, track string state (toggle on unescaped `"`) and only count `{`, `}`, `[`, `]` when outside of strings. Better yet, use a proper JSON streaming parser or extract the object using a library that handles JSON semantics correctly. Naive byte-level brace counting will fail on real-world data containing braces in string values.
 
-### 12. JSON Parsing with Delimiters
-- **Rule**: When parsing JSON embedded in binary data, ensure correct delimiter matching.
-- **Guardrail**: Use proper bracket matching algorithms (e.g., counting nested braces) to find the correct opening delimiter for a given closing delimiter. Naive `rfind()` can match the wrong opening brace when multiple JSON objects exist.
-
-### 13. Cryptographic Parameter Consistency
-- **Rule**: When using key derivation or cryptographic hashing across multiple code paths (e.g., write and verify, sign and validate), all paths must use identical parameters.
-- **Guardrail**: Define PBKDF2 iteration counts, salts, algorithms, and other cryptographic parameters as shared constants in a single location. Never hardcode different values in read vs. write paths. Parameter mismatches silently break security features and are extremely difficult to debug in production.
-
-### 14. String-Aware JSON Delimiter Parsing
-- **Rule**: When parsing JSON by scanning for structural delimiters, delimiters inside string literals must be ignored.
-- **Guardrail**: If implementing a custom JSON scanner, track string state (toggle on unescaped `"`) and only count `{`, `}`, `[`, `]` when outside of strings. Better yet, use a proper JSON streaming parser or extract the object using a library that handles JSON semantics correctly. Naive byte-level brace counting will fail on real-world data containing braces in string values.
-
-### 15. Strict Full-String Anchors in Validation Regexes
+### 12. Strict Full-String Anchors in Validation Regexes
 - **Rule**: For input-validation/whitelist regexes, never anchor with `$` when you mean strict end-of-string.
-- **Guardrail**: In Python, `$` also matches just before a trailing `\n`, so a value like `/dev/sda\n` passes a `^...$` whitelist. Use `\Z` for a strict end anchor (or `re.fullmatch`), and explicitly reject `\n`/`\r` for path-like inputs. This applies to device paths, identifiers, and any security-sensitive whitelist.
+- **Guardrail**: In Python, `$` also matches just before a trailing `\n`, so a value like `/dev/sda\n` passes a `^...$` whitelist. Use `\Z` for a strict end anchor (or `re.fullmatch`), and explicitly reject `\n`/`\r` for path-like inputs. This applies to device paths, identifiers, and any security-sensitive whitelist. Note that different regex engines support different anchors (JavaScript does not support `\z`), so verify anchors are supported by the target language.
 
-### 16. Preserve API Contracts When Centralizing / Refactoring
+### 13. Preserve API Contracts When Centralizing / Refactoring
 - **Rule**: When replacing a function body with a delegated/centralized implementation, the new behavior must honor the original signature and documented contract.
 - **Guardrail**: If a wrapper advertises parameters (e.g., `fallbacks`, `env_var`) they must still take effect, or the parameters should be removed. Preserve the original error contract: if callers expect `None` for "not found", do not regress to raising an uncaught exception (e.g., `KeyError` from an unguarded dict lookup). Guard centralized lookups against unknown keys.
 
-### 17. Caching Effectiveness Across Import Styles
+### 14. Caching Effectiveness Across Import Styles
 - **Rule**: A lazy/TTL cache is defeated when consumers bind its result once via `from module import VALUE`.
 - **Guardrail**: If a value is meant to be re-resolved over time (TTL, hot-reload), expose it through a function call (`get_x()`) and require call sites to invoke it at use time. Snapshotting via module-level `from ... import` (including values produced by module `__getattr__`) freezes the value at import and silently bypasses the cache's refresh semantics, producing inconsistent behavior across modules.
 
-### 18. Authentication Consistency on Admin Endpoints
-- **Rule**: All admin endpoints must follow the same authentication pattern.
-- **Guardrail**: When adding new admin endpoints (e.g., file upload, configuration changes), always verify they include the same authentication checks as existing admin routes. In Flask applications, this typically means checking admin session cookies or using a decorator. Missing authentication on admin endpoints is a critical security vulnerability that allows unauthorized access to administrative functions.
+### 15. Authentication Consistency on Admin Endpoints
+- **Rule**: All admin endpoints must follow the same authentication pattern and be under the `/api/admin/` path.
+- **Guardrail**: When adding new admin endpoints (e.g., file upload, configuration changes), always verify they include the same authentication checks as existing admin routes. In Flask applications, this typically means checking admin session cookies or using a decorator. Missing authentication on admin endpoints is a critical security vulnerability that allows unauthorized access to administrative functions. Place all administrative functions under `/api/admin/` rather than directly under `/api/` to ensure they automatically inherit global authentication middleware and follow the established security architecture.
 
-### 19. Import Verification for New Code
-- **Rule**: Never add code that uses modules without verifying the imports exist.
-- **Guardrail**: When adding new functionality that requires standard library or third-party modules, immediately add the corresponding import statement at the top of the file. Run a syntax check or linting tool before committing. Missing imports cause immediate runtime failures that are easily preventable.
+### 16. Import Verification
+- **Rule**: Never add code that uses modules without verifying the imports exist, and ensure imports are complete when extracting code.
+- **Guardrail**: When adding new functionality that requires standard library or third-party modules, immediately add the corresponding import statement at the top of the file. Run a syntax check or linting tool before committing. When extracting code into new files during refactoring, verify all imports are copied to the new file. Before marking a refactoring task complete, run a syntax check or import verification on all new files. Missing imports cause immediate runtime failures (NameError) that are easily preventable.
 
-### 20. TOCTOU in File Operations
+### 17. TOCTOU Race Conditions
 - **Rule**: Time-of-check to time-of-use (TOCTOU) race conditions occur when file existence checks and subsequent operations are not atomic.
-- **Guardrail**: For file upload/delete operations, use atomic patterns like:
-  - Write to a temporary file then use `os.rename()` (atomic on POSIX)
-  - Use file locking mechanisms (e.g., `fcntl.flock()` on Unix)
-  - Design APIs to be idempotent or handle concurrent operations gracefully
-  - Avoid separate "check if exists" then "act" patterns when possible
+- **Guardrail**: The correct fix for TOCTOU is to remove the pre-check entirely and handle exceptions from the actual operation. Wrapping `os.path.exists()` or `os.path.isdir()` in try-except does not eliminate the race condition—it only prevents crashes from the check itself. The atomic operation is the actual file/directory access (e.g., `os.listdir()`), not the existence check. Use the pattern: `try: operation() except OSError: handle_error()` without any pre-check. For file upload/delete operations, also use atomic patterns like writing to a temporary file then using `os.rename()` (atomic on POSIX) or file locking mechanisms.
 
-### 21. Flask Route Definition Best Practices
+### 18. Flask Route Definition Best Practices
 - **Rule**: Do not define multiple route handlers for the same endpoint path.
 - **Guardrail**: When an endpoint needs to handle multiple HTTP methods, use a single `@app.route()` decorator with all methods listed (e.g., `methods=["GET", "POST", "DELETE"]`) and dispatch within the handler function using `request.method`. Duplicate route definitions for the same path lead to code duplication, authentication logic duplication, and maintenance issues.
 
-### 22. File Integrity Validation for User-Uploaded Content
-- **Rule**: User-uploaded files that are used later (e.g., logos, templates) should be protected against tampering after upload.
-- **Guardrail**: When files are uploaded and stored for later use, consider:
-  - Storing a cryptographic hash of the file at upload time and validating it on each use
-  - Moving files to a directory with restricted write permissions after validation
-  - Implementing file permissions that prevent modification after upload
-  - Validating not just format/size but also content integrity when the file is used
+### 19. Complete Integrity Validation Chains
+- **Rule**: Integrity checks must be validated on every read, not just written on save.
+- **Guardrail**: When implementing file integrity validation (e.g., SHA256 hashes, signatures), the validation must occur in the read path as well as the write path. Writing a hash file without reading and validating it on load provides no protection against tampering. If validation fails on read, log a security-relevant warning and either reject the load or fall back to a known-good default with an error message. Never implement partial security measures that provide no actual protection—either implement the complete security measure or remove the partial implementation entirely.
 
-### 23. Admin Endpoint URL Path Convention
-- **Rule**: All administrative endpoints must be under the `/api/admin/` path to inherit global security middleware.
-- **Guardrail**: When adding new administrative functions, always place them under `/api/admin/` rather than directly under `/api/`. This ensures they automatically inherit the global authentication middleware and follows the established security architecture. Endpoints under `/api/` that are not in the explicit exclusion list (`/api/auth/verify`, `/api/status`) will be protected by the security gate, but placing admin functions under `/api/admin/` makes the intent explicit and consistent with the codebase pattern.
-
-### 24. Dependency Version Management for Reproducibility
+### 20. Dependency Version Management for Reproducibility
 - **Rule**: Do not change from pinned versions (`==`) to minimum versions (`>=`) without establishing a dependency update process.
 - **Guardrail**: If allowing dependency updates is desired, implement safeguards first:
   - Create a documented dependency update policy (when to update, how to test)
@@ -115,18 +91,208 @@ This file contains generalized architectural guardrails derived from past agent 
   - Document specific library features used and their version requirements
   - For production systems, prefer pinned versions unless there is a clear, tested process for handling updates
 
-### 25. Document Build Dependency Fixes
+### 21. Document Build Dependency Fixes
 - **Rule**: When adding system-level build dependencies (e.g., `python3-dev`) to fix installation failures, document the specific error and OS version in comments or changelog.
 - **Guardrail**: Installation script changes should include inline comments explaining:
   - The specific error that prompted the change
   - The OS version/distribution where the error occurred
   - Why the dependency resolves the issue (e.g., "Pillow 11.x requires build headers on Ubuntu 26.04")
-  - This prevents future maintainers from removing "unnecessary" dependencies and provides context for troubleshooting
 
-### 26. Complete Security Implementations
-- **Rule**: Never implement partial security measures that provide no actual protection.
-- **Guardrail**: If you implement a security feature (e.g., hash calculation for integrity validation, authentication checks, input sanitization), you must complete the full security chain. Calculating a hash without validating it on use, or checking authentication without enforcing it, creates a false sense of security while providing no actual protection. Either implement the complete security measure or remove the partial implementation entirely.
+### 22. Event Listener Management
+- **Rule**: Never attach duplicate event listeners to the same DOM element, and avoid registering specific listeners for elements already handled by global handlers.
+- **Guardrail**: When refactoring code to use initialization functions, ensure all event listener attachments are consolidated in a single location. Duplicate listeners cause handlers to execute multiple times, leading to unpredictable behavior (e.g., double submissions, concurrent animations). When adding interactive elements (e.g., modal close buttons), check if a global handler already exists for that pattern (e.g., `data-close-modal` attribute). If a global handler handles the element, do not add a specific event listener. Document the dependency on the global handler in a comment if the specific listener is intentionally omitted.
 
-### 27. Root Cause Investigation Over Surface Fixes
+### 23. Root Cause Investigation Over Surface Fixes
 - **Rule**: Always investigate the root cause of an issue before implementing fixes or adding debug logging.
 - **Guardrail**: When a user reports a problem (e.g., "logo appears wrong size"), trace the data flow from source to display to find where the transformation occurs. Adding logging or surface-level fixes without understanding the underlying issue leads to incomplete solutions and technical debt. Follow the bug fixing discipline: identify root cause before implementing, prefer minimal upstream fixes over downstream workarounds.
+
+### 24. Cross-Layer Numbering Contract Migrations
+- **Rule**: Numbering scheme changes (e.g., 1-indexed to 0-indexed IDs/display numbers) must be applied to every producer and consumer in the data flow.
+- **Guardrail**: When changing identifiers such as `bay1` to `bay0`, audit backend generation, seed config, frontend default generation, manual creation flows, save payloads, sorting/display logic, tests, and documentation before marking the task complete. Partial migrations create off-by-one regressions and inconsistent persisted state.
+
+### 25. Default Value Guardrails for Optional Schema Fields
+- **Rule**: When adding new optional fields to database schemas, ensure there's a default value guardrail in the persistence layer.
+- **Guardrail**: If a field is added to support new functionality (e.g., `job_type` for distinguishing job types), the persistence function must handle missing keys gracefully. Use `dict.get("field", default_value)` or add a DEFAULT constraint in the schema. Never rely on all code paths to set the new field—missing fields will insert NULL, breaking downstream logic that expects populated values.
+
+### 26. Validation Completeness Across Multiple Input Paths
+- **Rule**: When data can be provided via multiple mechanisms (e.g., ID lookup vs inline object, reference vs direct value), validation must cover all paths equally.
+- **Guardrail**: If a validation function only checks data when provided through one path (e.g., template_id lookup), but the data can also be provided through another path (e.g., inline template object), the validation gap creates a security and consistency vulnerability. Either validate all paths, document the limitation clearly, or reject unsupported paths at the entry point.
+
+### 27. Post-Transformation Contract Validation
+- **Rule**: When applying transformations that reduce available data (e.g., skip_positions, filters, exclusions), validate that the result still meets the original contract.
+- **Guardrail**: If a function is expected to return N items but a transformation (like skipping positions) can reduce the count, add post-transformation validation to ensure the result meets minimum requirements. For example, if bay_count=8 is requested but skip_positions eliminates 9 positions, the function should raise an error rather than silently returning fewer items.
+
+### 28. UI State Priority and Unknown Value Handling
+- **Rule**: UI state rendering must prioritize operational states over configuration/metadata states, and unknown values should not be displayed as known defaults.
+- **Guardrail**: When rendering UI elements that display drive or system states:
+  - Never display unknown/placeholder values as if they were known (e.g., defaulting "unknown" drive type to "HDD" badge). Only render badges/labels when the value is explicitly known.
+  - Establish a clear state priority hierarchy where critical operational states (RUNNING, FAILED, LOCKED) take precedence over configuration states (UNCONFIGURED). Configuration warnings should be additive (e.g., corner badges, border styles) rather than state overrides that hide active operations.
+  - When adding conditional state logic, place higher-priority checks last or use explicit priority ordering to prevent lower-priority states from masking critical information.
+
+### 29. REST API Consistency Across HTTP Methods
+- **Rule**: Maintain consistent API patterns across all HTTP methods for the same resource.
+- **Guardrail**: When designing CRUD endpoints, use consistent parameter passing mechanisms. If POST/PUT use JSON request bodies for resource identifiers and data, DELETE should also use JSON bodies (or follow a documented, consistent pattern). Avoid mixing query parameters and request bodies for the same resource type, as this creates confusing APIs and can lead to information leakage through server logs. Document any intentional deviations clearly.
+
+### 30. Cache Coherence Across Multiple Cached Calls
+- **Rule**: When calling multiple cached functions that may return related data, ensure cache consistency to avoid stale/inconsistent responses.
+- **Guardrail**: If a response combines data from multiple cached sources (e.g., controller list and device list), either use a single source of truth, pass cached data between functions, or disable caching for one of the calls to ensure temporal consistency. Never assume separate caches with independent TTLs will remain synchronized during a single request.
+
+### 31. Consistent Error Handling Patterns
+- **Rule**: Use consistent error handling patterns for similar operations across the codebase.
+- **Guardrail**: When the same operation (e.g., SMART data retrieval, file parsing) appears in multiple places, use identical error handling patterns. If one path sets a null/error field and another uses silent pass, API consumers cannot distinguish between "no data" and "error occurred". Standardize on either explicit error fields or consistent null patterns to aid debugging and API contract clarity. This includes JSON parsing errors—wrap `json.loads()` calls in try/except blocks consistently across all database load functions.
+
+### 32. Validation of Extracted Numeric Values
+- **Rule**: Always validate numeric values extracted from strings or unstructured data.
+- **Guardrail**: When extracting numbers via regex, parsing, or string manipulation (e.g., slot numbers from slot IDs), validate that the result is within reasonable bounds for the domain. Handle conversion exceptions gracefully and reject values outside expected ranges (e.g., slot numbers should be 0-9999, not arbitrary integers). Unvalidated extracted numbers can cause display issues or logic errors downstream.
+
+### 33. DOM Element Null Check Completeness
+- **Rule**: When adding new DOM element references, always include null checks for all new elements.
+- **Guardrail**: If a codebase has an existing pattern of checking DOM element existence (e.g., lines 14-16 in auditLedger.js), any new element references must follow the same pattern. Missing null checks for new elements while checking old ones creates inconsistent error handling and runtime crashes when elements are missing from the DOM. Either check all elements or check none consistently.
+
+### 34. Complete UI Control Implementation
+- **Rule**: When adding new UI controls, ensure all corresponding event handlers and state management are implemented.
+- **Guardrail**: If a new UI element is added (e.g., a button, input, or toggle), verify that all necessary event listeners are attached and state variables are declared. Missing event handlers or undeclared state variables cause runtime errors. Use a checklist: (1) element reference, (2) event listener, (3) state variable (if needed), (4) validation logic, (5) error handling.
+
+### 35. Verification Before Claiming Completion
+- **Rule**: Never claim fixes are complete in CRITIQUE.md resolution logs or document critical findings without verifying the actual code changes.
+- **Guardrail**: When writing a resolution log claiming "Added X at line Y" or "Fixed function Z", read the file to verify the change actually exists before writing the log. When acting as the Critic Agent, before writing a finding in CRITIQUE.md, read the specific lines of code referenced in the finding to verify the issue actually exists. False claims of completed fixes waste review time and erode trust. After making edits, always read the affected lines to confirm the changes were applied before updating documentation.
+
+### 36. State Management Lifecycle on Context Changes
+- **Rule**: Clear transient UI state when the user context changes (filters, navigation, data refresh).
+- **Guardrail**: Selection state, temporary flags, or user-modifiable data that depends on the current view should be cleared when the view changes (e.g., filtering a list, switching tabs, refreshing data). Persisting state across context changes creates confusing UX where selections refer to items no longer visible or relevant. Either clear state on context change or explicitly document that persistence is intentional.
+
+### 37. Client-Side Validation to Match Backend Limits
+- **Rule**: Enforce client-side limits that match backend API constraints to provide immediate user feedback.
+- **Guardrail**: If the backend enforces a maximum (e.g., 100 items for DoS prevention), the frontend should enforce the same limit before making the API call. This prevents users from selecting many items only to have their request rejected, and provides immediate, actionable feedback. The frontend limit should be slightly more conservative than the backend limit to account for any edge cases.
+
+### 38. API Contract Verification Before Implementation
+- **Rule**: Verify the expected data types and formats for API endpoints before implementing client code.
+- **Guardrail**: When implementing client code that calls an API, verify whether the endpoint expects database IDs, friendly IDs, slugs, or other identifier types. Sending the wrong ID type will cause API failures. Read the backend route handler or API documentation to confirm the expected format before writing the client-side implementation.
+
+### 39. Path Traversal Prevention in File Serving
+- **Rule**: Never serve files directly from user-controlled or database-stored paths without validation.
+- **Guardrail**: When serving files based on paths from untrusted sources (JSON data, user input, database records), validate that the resolved absolute path is within the expected directory. Use `os.path.abspath()` on both the file path and the allowed base directory, then verify with `os.path.commonprefix()` that the file path is a subdirectory of the base directory. This prevents path traversal attacks (e.g., `../../../etc/passwd`) that could expose sensitive server files.
+
+### 40. Default Resource Immutability Consistency
+- **Rule**: When a system designates certain resources as immutable (e.g., default templates, system configurations), all modification operations must enforce this protection consistently.
+- **Guardrail**: If one operation (e.g., DELETE) prevents modification of default resources, all other operations that could modify those resources (e.g., POST, PUT, import) must also include the same protection. Inconsistent enforcement creates security vulnerabilities where attackers can bypass immutability through a less-protected code path. Either reject operations that would modify defaults, skip default resources with a warning, or require explicit confirmation/override flags.
+
+### 41. Async/Await Syntax Requirement in JavaScript
+- **Rule**: Never use `await` without declaring the function as `async`.
+- **Guardrail**: When adding `await` calls to a function, ensure the function is declared with the `async` keyword. JavaScript will throw a SyntaxError at runtime if `await` is used in a non-async function. This is a fundamental syntax requirement that prevents the code from executing at all.
+
+### 42. Verify Edit Operation Output for Syntax Validity
+- **Rule**: Always verify that edit operations produce syntactically valid code, especially when modifying existing functions.
+- **Guardrail**: After using the edit tool to modify code, read the modified section to ensure the output is valid syntax. Corrupted edits (e.g., mangled string literals, broken function signatures, incomplete lines) will cause the entire file to fail loading. This is particularly important when editing within existing functions where line boundaries can be ambiguous. If an edit produces invalid syntax, revert and use a more specific old_string with more surrounding context to ensure uniqueness.
+
+### 43. Declare All State Variables at Module Level
+- **Rule**: All module-level state variables must be explicitly declared before use, not implicitly created through assignment.
+- **Guardrail**: When adding new functionality that requires persistent state (e.g., mappingMode, manualMappings, selectedDevice), declare these variables at the module level with explicit initialization (e.g., `let mappingMode = 'pattern'`). Never rely on implicit declaration through assignment in functions, as this creates implicit globals and makes the code fragile to refactoring. Follow the existing pattern in the codebase (e.g., lines 109-119 in adminPanel.js) for consistency.
+
+### 44. Validate Conditional Block Placement
+- **Rule**: Ensure initialization code is placed at the correct scope level, not nested inside unrelated conditionals.
+- **Guardrail**: When adding initialization code (e.g., resetting state variables), verify it runs in all required code paths. If initialization is placed inside a conditional block (e.g., `if (mappingPreview)`), it will not execute when that condition is false. Initialization that should always run must be outside conditionals. Review the control flow to ensure initialization occurs at the appropriate point in the lifecycle.
+
+### 45. Verify Global State Dependencies Before Use
+- **Rule**: Before using global state variables in new functions, verify they are properly initialized and populated.
+- **Guardrail**: When writing functions that depend on global state (e.g., `localBayMapCopy`), ensure the state is either: (1) passed as a parameter, (2) initialized in a well-defined lifecycle method before the function is called, or (3) documented as a required precondition. Never assume global state exists without verification. If the state has complex initialization requirements, add a comment documenting when and how it is populated.
+
+### 46. Verify Variable References and Scope When Editing Functions
+- **Rule**: When adding code blocks to existing functions, verify all referenced variables exist and are in scope.
+- **Guardrail**: Before inserting validation, error handling, or logic blocks into an existing function, check that every variable referenced in the new code is either: (1) already declared in the function scope, (2) passed as a parameter, or (3) a global variable that exists in the module. Typos in variable names (e.g., `localBayMapState` vs `localBayMapCopy`) and scope errors (referencing variables outside their lexical scope) cause runtime failures that are easily preventable by reviewing the function's existing variable declarations before editing.
+
+### 47. Authentication Contract Consistency During Refactoring
+- **Rule**: When refactoring authentication logic, ensure cookie/session names remain consistent across all endpoints.
+- **Guardrail**: Authentication mechanisms (cookie names, session keys, token headers) are part of the security contract between client and server. When extracting routes into new files, verify that authentication checks use the same cookie/key names as the original implementation. Inconsistencies (e.g., checking "session_token" in one route but "admin_session" in another) cause authentication bypass or legitimate access denial. Audit all authentication paths after refactoring to ensure consistency.
+
+### 48. Complete Code Extraction: Remove Original Code
+- **Rule**: When extracting code into new modules (blueprints, sub-packages, etc.), the original module MUST have the extracted code deleted in the same commit.
+- **Guardrail**: If you extract Flask routes into Blueprint files but leave the original `@app.route()` decorators in the monolithic module, the original routes register first and shadow the blueprints — making the new files dead code that never executes. Before marking an extraction refactor complete: (1) delete the moved handlers from the source file, (2) remove the now-unused imports from the source file, (3) verify the application starts without errors, (4) confirm at least one extracted endpoint responds via its new handler. Never ship "both old and new" route registrations simultaneously.
+
+### 49. Clean Stale Imports After Code Extraction
+- **Rule**: After extracting code into new modules, audit both source and destination files for stale imports.
+- **Guardrail**: When deleting functions from a module during extraction, some imports become orphaned (e.g., a utility only used by the moved code). These stale imports waste startup time, obscure the module's actual dependencies, and fail linting. After completing any extraction refactor, run a linting tool or manually grep each import symbol to confirm it is still used in the remaining code. This applies to both the source file and the destination files (e.g., an import copied to a new file but never called there).
+
+### 50. Avoid Unnecessary Defensive Programming Patterns
+- **Rule**: Prefer simple, declarative solutions over complex defensive patterns when simpler alternatives exist.
+- **Guardrail**: When defensive programming patterns (e.g., DOMContentLoaded checks, null checks) are added to handle edge cases, first verify if a simpler solution exists (e.g., using the `defer` attribute on script tags, existing null checks at module load time). Complex defensive patterns that duplicate code across multiple locations create maintenance burden and technical debt. Use the simplest solution that actually solves the problem, and document why the defensive pattern is necessary if no simpler alternative exists.
+
+### 51. Do Not Add Initialization Side-Effects During File Splits
+- **Rule**: When splitting a monolithic file into smaller modules, each new file must reproduce only the behavior of its extracted section — never add new auto-initialization or lifecycle hooks that weren't present in the original.
+- **Guardrail**: A common mistake is adding `DOMContentLoaded` handlers or immediate function calls in a newly extracted module "for convenience," which changes when code runs relative to authentication flows, dependency loading, or application state. Before committing a split: diff the combined new files against the original and flag any top-level statements that are net-new. Every auto-executing line must trace back to equivalent code in the original module.
+
+### 52. Explicit Dependencies Between Non-Module Script Files
+- **Rule**: When splitting browser-side scripts loaded via `<script>` tags (non-ES-module), cross-file variable references must be documented and centralized.
+- **Guardrail**: `const`/`let` declarations at global scope in non-module scripts are shared across files via the global lexical environment, but the dependency is invisible — there is no `import` statement to make it explicit. If File B uses a `const` declared in File A, (a) add a comment in File B noting the dependency, or (b) move the shared declaration into a utilities file that both depend on. This prevents silent breakage when `<script>` tag order is changed. Any shared DOM reference used by multiple split files should live in a single "shared references" file loaded first.
+
+### 53. Single Source of Truth for Authoritative Configuration
+- **Rule**: Never duplicate authoritative configuration or data lists between frontend and backend.
+- **Guardrail**: When the backend defines the authoritative source for data (e.g., default templates, system constants, allowed values), the frontend should derive this information from the API response rather than maintaining its own hardcoded list. Duplication creates maintenance burden and drift risk—if the backend list changes but the frontend list is not updated, inconsistencies occur. The API should expose the authoritative data (e.g., include an `is_default` boolean field), and the frontend should use this field for UI logic.
+
+### 54. Collision Probability in Generated Identifiers
+- **Rule**: When generating human-readable identifiers with random components, ensure sufficient entropy to prevent collisions.
+- **Guardrail**: For identifiers that include random suffixes (e.g., UUID-based friendly IDs), calculate the collision probability based on expected volume. With 4 hex characters (65,536 combinations), collisions become likely if more than ~8,000 items are generated per day (birthday paradox). Use at least 6 hex characters (16,777,216 combinations) for daily-rotated identifiers, or implement collision detection with retry logic. Document the collision probability assumptions in code comments.
+
+### 55. Complete Field Name Refactoring Across All Data Paths
+- **Rule**: When renaming fields or identifiers, update all read and write paths consistently in a single operation.
+- **Guardrail**: Partial field name refactoring creates schema mismatches where data is written with the new name but read with the old name (or vice versa). Before marking a refactoring complete, grep the entire codebase for all occurrences of the old field name, including: form submissions, API payloads, database queries, template rendering, default value assignments, and HTML form field names. If backward compatibility is needed during migration, add explicit fallback logic (e.g., `data.new_field || data.old_field`) and document the transition period. Never ship partial schema migrations.
+
+### 56. Validation Must Check Pre-Transformation Data, Not Post-Transformation
+- **Rule**: When validating input that undergoes transformation (e.g., parsing, conversion, mapping), validate the original input before transformation, not the transformed output.
+- **Guardrail**: If validation checks the transformed data instead of the original input, type mismatches can render validation ineffective. For example, validating an array of objects when the input was an array of numbers will fail to catch invalid numeric ranges. Always validate the raw input at the point of entry, then apply transformations. If validation logic must reference transformed data, use distinct variable names to avoid shadowing the original input and causing confusion about which data is being validated.
+
+### 57. Guard Against Division by Zero in Mathematical Conversion Functions
+- **Rule**: All functions performing division or modulo operations must validate that divisors are non-zero before the operation.
+- **Guardrail**: Mathematical conversion functions (e.g., coordinate transformations, index calculations) that accept divisor parameters must include guard clauses to reject zero or negative values. Even if the current caller validates inputs, the function is a reusable utility that may be called from other contexts in the future. Throw a clear error message (e.g., "Columns must be greater than 0") rather than allowing the operation to proceed with Infinity, NaN, or incorrect results.
+
+### 58. Remove Debugging Artifacts Before Committing
+- **Rule**: Never commit debugging console.log statements or temporary debug code to production.
+- **Guardrail**: Console.log statements added during debugging must be removed before committing changes. Debugging artifacts in production code can expose sensitive data to browser consoles, clutter output for end users, and create maintenance burden. If logging is needed for production troubleshooting, use a proper logging system with configurable log levels, not ad-hoc console.log statements. Review all added lines for debugging artifacts before marking a task complete.
+
+### 59. Consistent Indexing Schemes Within Single-Layer Transformations
+- **Rule**: When changing indexing schemes (e.g., 1-indexed to 0-indexed) within a single layer (frontend or backend), update all producers, consumers, and validation logic consistently.
+
+### 60. HTML Form Constraints Must Match JavaScript Validation
+- **Rule**: HTML form validation attributes (min, max, pattern) must match JavaScript validation logic to provide consistent user feedback.
+- **Guardrail**: When adding client-side validation, ensure HTML form attributes and JavaScript validation use the same rules. If JavaScript validates a number must be between 1 and 100, the HTML input should have min="1" and max="100". Mismatched validation causes confusing UX where the browser allows values that JavaScript rejects, or vice versa.
+
+### 61. Validation Consistency When Changing Numbering Domains
+- **Rule**: When changing the domain or range of a numbering scheme (e.g., reference numbers counting all positions vs. only non-skipped positions), update all validation logic to match the new domain.
+- **Guardrail**: If a numbering scheme's upper bound changes from value A to value B (e.g., from `bay_count` to `rows * cols`), every validation that checks against that bound must be updated. Validation gaps create situations where the UI displays values that validation rejects, or vice versa. Audit all validation logic when changing numbering domains, including input validation, range checks, and error messages.
+
+### 62. UI Preview Consistency with Configuration
+- **Rule**: UI previews must accurately reflect the actual configuration and behavior that will be used at runtime, or clearly indicate when using a simplified representation.
+- **Guardrail**: When implementing preview components (e.g., template previews, configuration visualizations), the preview should generally respect all relevant configuration parameters (traversal order, numbering schemes, etc.) and match the backend logic exactly. However, simplified representations are acceptable if:
+  - The distinction is clearly documented or indicated to users (e.g., "Reference numbering for configuration" vs "Actual erasure order")
+  - The operational behavior (animation, backend) respects the actual configuration
+  - The simplified representation serves a clear UX purpose (e.g., consistent reference numbering for input fields)
+  - The animation or dynamic preview shows the actual runtime behavior
+  Hardcoding preview behavior to a fixed order without clear indication creates misleading UX. When using simplified representations, add visual indicators or documentation to clarify the difference between reference displays and operational behavior.
+
+### 63. Environment Variable Visibility in Subprocess Heredocs
+- **Rule**: Bash variables are not automatically visible to subprocess heredocs unless explicitly exported.
+- **Guardrail**: When using bash heredocs to execute Python or other subprocesses that need access to bash variables (e.g., `CONFIG_DIR`, `INSTALL_DIR`), export the variables before the heredoc using `export VAR_NAME`. The subprocess will not inherit shell variables that are only set but not exported. Hardcoded defaults in subprocess code are fragile and prone to drift from the actual bash configuration. Follow the pattern: `export VAR_NAME; subprocess << EOF; ... $VAR_NAME ...; EOF; unset VAR_NAME`.
+
+### 63. Install Scripts Must Create All Required Backend Files
+- **Rule**: When install scripts create configuration files that the backend reads, they must create all required files (including auxiliary files like hashes, signatures, indexes) in the exact format expected by the backend.
+- **Guardrail**: If the backend expects a configuration file plus an integrity hash file (e.g., `config.json` and `config.json.sha256`), the install script must create both. Creating only the primary file causes the backend to reject it or fall back to defaults, making the install script's work ineffective. Before adding file creation to install scripts, read the backend's load function to identify all required files and their formats.
+
+### 64. Shell Script TOCTOU Prevention
+- **Rule**: Even in shell scripts and install utilities, avoid check-then-write patterns that create TOCTOU race conditions.
+- **Guardrail**: When writing shell scripts that modify files, do not check file validity then write based on that check. Instead, attempt the operation directly and handle errors. For file creation, use atomic patterns (write to temp file then rename) without pre-checks. For validation, attempt to parse/process the file directly rather than checking existence first. This applies even to single-user scenarios—defensive coding prevents future issues when the script is used in different contexts.
+
+### 65. Complete UI Option Distribution Across All Relevant Controls
+- **Rule**: When adding new options to dropdowns or selects, the option must be added to all UI locations where that choice is relevant.
+- **Guardrail**: If a new traversal preset, template type, or configuration option is added to one part of the UI (e.g., template creation form), it must also be added to all other UI controls that reference the same concept (e.g., bay mapping traversal select, template application dialog). Partial implementation creates confusing UX where users can create resources with certain options but cannot apply or use them elsewhere. Audit the entire codebase for all references to the option type before marking the feature complete.
+
+### 66. Apply Lessons to Code Changes in the Same Commit
+- **Rule**: When adding a new lesson to lessons-learned.md, verify that the concurrent code changes do not violate that lesson.
+- **Guardrail**: If a code change introduces a pattern that a new lesson is meant to prevent, the code must be fixed to comply with the lesson before the commit is complete. Adding a lesson that describes a bug without fixing the bug creates technical debt and confusion. When adding guardrails, audit the concurrent changes for violations and fix them in the same operation.
+
+### 67. Function Contract Preservation During Modifications
+- **Rule**: When modifying a function to support new use cases, preserve the original contract for all existing callers or update all call sites consistently.
+- **Guardrail**: If a function modification changes the semantics (e.g., deriving grid dimensions from partial inputs instead of accepting full dimensions as parameters), this breaks the contract for existing callers. Either: (1) make the change backward-compatible by adding optional parameters with sensible defaults, (2) create a new function with a different name for the new use case, or (3) update all call sites to pass the required data. Never infer critical data from partial inputs when the full data is available from the caller—this creates fragile functions that fail with edge cases. When adding optional parameters to existing functions, ensure all call sites that rely on the old behavior are updated or the default preserves the old semantics.
+
+### 68. DOM State Detection Should Use Data Attributes, Not Visual Content
+- **Rule**: When detecting DOM element state (e.g., skipped cells, selected items, disabled elements), use data attributes rather than inspecting visual content or text.
+- **Guardrail**: Checking `textContent`, `innerHTML`, or visual markers (e.g., `cell.textContent === "×"`) couples state detection to the visual representation, making code fragile to UI changes. Instead, set `data-*` attributes during rendering (e.g., `data-skipped="true"`) and check these attributes in event handlers and utility functions. This decouples state logic from presentation and allows UI changes without breaking behavior.

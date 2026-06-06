@@ -101,7 +101,7 @@ Your config files and wipe history will be preserved.
 
 ## Notes
 
-- Bay 1 is always the OS drive and is locked from wiping.
-- Bay 2 is reserved and locked.
+- Bay 0 is always the OS drive and is locked from wiping.
+- Bay 1 is reserved and locked.
 - After a fresh OS install, bay_map.json must be reconfigured
   because /dev/disk/by-path/ values may differ between servers.

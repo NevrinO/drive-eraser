@@ -140,7 +140,6 @@ body {
 
 .bays-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));  /* Enforce exactly 4 columns */
   gap: 16px;
   margin-bottom: 24px;
 }
@@ -173,6 +172,13 @@ body {
   display: none;
 }
 
+.bulk-checkbox {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
 /* 15-Foot Color States */
 .bay-card.running {
   background: #0f1c3f;
@@ -194,6 +200,25 @@ body {
   opacity: 0.5;
   background: var(--color-surface-3);
   border-style: dashed;
+}
+
+.bay-card.unconfigured {
+  background: #3c2f0f;
+  border-color: var(--color-warning);
+  border-style: dashed;
+}
+
+.bay-card.blocked {
+  background: transparent;
+  border: 1px dashed #222;
+  opacity: 0.3;
+  pointer-events: none;
+  cursor: default;
+}
+
+.bay-card.unconfigured .bay-banner {
+  background: var(--color-warning);
+  color: #000;
 }
 
 .bay-card.selected {
@@ -254,6 +279,18 @@ body {
 .badge-nvme { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
 .badge-sas { background: rgba(168, 85, 247, 0.15); color: #c084fc; }
 .badge-sata { background: rgba(16, 185, 129, 0.15); color: var(--color-success); }
+.badge-ssd { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
+.badge-hdd { background: rgba(107, 114, 128, 0.15); color: #9ca3af; }
+
+.unconfigured-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  text-transform: uppercase;
+}
 
 .drive-model {
   font-size: 0.85rem;
@@ -351,7 +388,7 @@ body {
 }
 
 .history-controls {
-  grid-template-columns: 1fr 200px auto;
+  grid-template-columns: 1fr 200px auto auto;
   gap: 16px;
 }
 
@@ -458,6 +495,10 @@ button:disabled {
   grid-template-columns: 140px 140px 1fr 1fr 140px;
   align-items: center;
   gap: 16px;
+}
+
+.audit-summary-line.bulk-mode {
+  grid-template-columns: 30px 140px 140px 1fr 1fr 140px;
 }
 
 .job-id-text {
@@ -880,6 +921,12 @@ button:disabled {
   background: #7f1d1d;
   color: #fca5a5;
   border: 1px solid #991b1b;
+}
+
+.test-result-warning {
+  background: #78350f;
+  color: #fcd34d;
+  border: 1px solid #92400e;
 }
 
 .button-stack {

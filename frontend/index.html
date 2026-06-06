@@ -66,8 +66,17 @@
           </select>
         </label>
         <button type="button" id="historyRefreshButton" class="btn-primary">Reload Ledger</button>
+        <button type="button" id="bulkSelectToggleBtn" class="btn-toggle">Bulk Select: OFF</button>
       </div>
       <div id="historyList" class="audit-vault-list"></div>
+
+      <!-- Bulk Action Footer for certificate export -->
+      <div id="bulkCertActionFooter" class="batch-action-footer hidden">
+        <div class="footer-meta-info">
+          <span id="bulkSelectedCountLabel">0 Certificates Selected</span>
+        </div>
+        <button type="button" id="bulkCertDownloadBtn" class="btn-primary">Download Bulk Certificates</button>
+      </div>
     </section>
 
     <!-- TAB C: SYSTEM ADMINISTRATION -->
@@ -132,7 +141,25 @@
           </div>
         </div>
 
-        <!-- Zone D: Certificate Logo -->
+        <!-- Zone D: Template Management -->
+        <div class="admin-card">
+          <div class="card-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div class="card-title" style="margin-bottom: 0;">Layout Template Management</div>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="exportTemplatesBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">Export</button>
+              <button type="button" id="importTemplatesBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">Import</button>
+              <button type="button" id="createTemplateBtn" class="btn-primary" style="padding: 6px 12px; font-size: 0.75rem;">+ Create Template</button>
+            </div>
+          </div>
+          <p class="admin-desc">Manage custom bay layout templates for different workstation configurations.</p>
+          <div id="templateList" class="template-list" style="margin-top: 12px; max-height: 200px; overflow-y: auto;">
+            <!-- Populated dynamically -->
+          </div>
+          <div id="templateStatus" class="test-result-label hidden"></div>
+          <input type="file" id="templateImportFile" accept=".json" style="display: none;">
+        </div>
+
+        <!-- Zone E: Certificate Logo -->
         <div class="admin-card">
           <div class="card-title">Certificate Logo</div>
           <p class="admin-desc">Upload a custom logo for certificate headers.</p>
@@ -173,6 +200,8 @@
               <select id="traversalPresetSelect">
                 <option value="top_left_down_then_across">Top-Left Down Then Across (Dell)</option>
                 <option value="bottom_left_up_then_across">Bottom-Left Up Then Across (Supermicro)</option>
+                <option value="top_left_across_then_down">Top-Left Across Then Down</option>
+                <option value="bottom_left_across_then_up">Bottom-Left Across Then Up</option>
               </select>
             </label>
           </div>
@@ -316,12 +345,247 @@
     </div>
   </div>
 
-  <script src="/utils.js"></script>
-  <script src="/auth.js"></script>
-  <script src="/driveManagement.js"></script>
-  <script src="/modals.js"></script>
-  <script src="/auditLedger.js"></script>
-  <script src="/adminPanel.js"></script>
-  <script src="/app.js"></script>
+  <!-- TEMPLATE CREATE/EDIT MODAL -->
+  <div id="templateModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="templateModalTitle">
+      <header class="modal-header">
+        <h3 id="templateModalTitle">Create Layout Template</h3>
+        <button type="button" id="templateModalClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <div id="templateModalError" class="test-result-label hidden" style="margin-bottom: 12px;"></div>
+        <form id="templateForm" novalidate>
+          <div class="form-fields-stack">
+            <label>
+              Template ID
+              <input type="text" id="templateId" name="id" placeholder="e.g., dell_r320_4bay" required>
+              <small style="color: #888; font-size: 0.7rem;">Unique identifier for this template (lowercase, hyphens allowed)</small>
+            </label>
+            <label>
+              Template Name
+              <input type="text" id="templateName" name="name" placeholder="e.g., Dell 16-Bay Server" required>
+            </label>
+            <label>
+              Vendor
+              <input type="text" id="templateVendor" name="vendor" placeholder="e.g., Dell, Supermicro">
+            </label>
+            <label>
+              Bay Count
+              <input type="number" id="templateBayCount" name="bay_count" min="1" max="128" required>
+              <small style="color: #888; font-size: 0.7rem;">Number of bays in this layout (1-128)</small>
+            </label>
+            <label>
+              Grid Rows
+              <input type="number" id="templateRows" name="rows" min="1" max="16" required>
+              <small style="color: #888; font-size: 0.7rem;">Number of rows in the grid (1-16)</small>
+            </label>
+            <label>
+              Grid Columns
+              <input type="number" id="templateCols" name="cols" min="1" max="5" required>
+              <small style="color: #888; font-size: 0.7rem;">Number of columns in the grid (1-5)</small>
+            </label>
+            <label>
+              Default Traversal
+              <select id="templateTraversal" name="traversal_preset" required>
+                <option value="top_left_down_then_across">Top-Left Down Then Across (Dell)</option>
+                <option value="bottom_left_up_then_across">Bottom-Left Up Then Across (Supermicro)</option>
+                <option value="top_left_across_then_down">Top-Left Across Then Down</option>
+                <option value="bottom_left_across_then_up">Bottom-Left Across Then Up</option>
+              </select>
+            </label>
+            <label>
+              Skip Positions (Optional)
+              <input type="text" id="templateSkipPositions" name="skip_positions" placeholder="e.g., 4,8,12">
+              <small style="color: #888; font-size: 0.7rem;">Comma-separated bay numbers to skip (e.g., for empty slots)</small>
+            </label>
+          </div>
+          <button type="submit" id="templateFormSubmit" class="btn-primary" style="width: 100%; padding: 12px; margin-top: 16px;">Save Template</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- TEMPLATE PREVIEW MODAL -->
+  <div id="templatePreviewModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="templatePreviewTitle" style="max-width: 800px;">
+      <header class="modal-header">
+        <h3 id="templatePreviewTitle">Template Preview</h3>
+        <button type="button" id="templatePreviewClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+        <div id="templatePreviewInfo" style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
+          <!-- Template info populated dynamically -->
+        </div>
+        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+          <button type="button" id="previewAnimateBtn" class="btn-primary" style="flex: 1;">Animate Traversal</button>
+          <button type="button" id="previewResetBtn" class="btn-secondary" style="flex: 1;">Reset</button>
+        </div>
+        <div id="templatePreviewGrid" class="template-preview-grid" style="display: grid; gap: 8px; padding: 16px; background: #1a1a1a; border-radius: 4px; min-height: 300px;">
+          <!-- Grid populated dynamically -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DISCOVERY MODAL -->
+  <div id="discoveryModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="discoveryTitle" style="max-width: 900px;">
+      <header class="modal-header">
+        <h3 id="discoveryTitle">Slot Discovery & Mapping</h3>
+        <button type="button" id="discoveryClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+        <div style="margin-bottom: 16px;">
+          <button type="button" id="discoverSlotsBtn" class="btn-primary">⚡ Discover Slots</button>
+          <span id="discoveryStatus" style="margin-left: 12px; color: #888;"></span>
+        </div>
+
+        <div id="discoveryResults" style="display: none;">
+          <!-- Grouping Controls -->
+          <div style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Controller Grouping</label>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="groupNoneBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">None</button>
+              <button type="button" id="groupTypeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By Type</button>
+              <button type="button" id="groupPciBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By PCI</button>
+            </div>
+          </div>
+
+          <!-- Controllers Section -->
+          <div class="modal-section-header" style="margin-top: 16px; margin-bottom: 8px;">Detected Controllers</div>
+          <div id="controllersList" style="margin-bottom: 16px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+            <!-- Controllers populated dynamically -->
+          </div>
+
+          <!-- Devices Section -->
+          <div class="modal-section-header" style="margin-bottom: 8px;">Detected Devices</div>
+          <div id="devicesList" style="margin-bottom: 16px; max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+            <!-- Devices populated dynamically -->
+          </div>
+
+          <!-- Enclosure Slots Section -->
+          <div id="enclosureSlotsSection" style="display: none;">
+            <div class="modal-section-header" style="margin-bottom: 8px;">Enclosure Slots</div>
+            <div id="enclosureSlotsList" style="margin-bottom: 16px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+              <!-- Enclosure slots populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Mapping Interface -->
+          <div class="modal-section-header" style="margin-bottom: 8px;">Device Mapping</div>
+          
+          <!-- Mapping Mode Toggle -->
+          <div style="margin-bottom: 12px; padding: 12px; background: #222; border-radius: 4px;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Mapping Mode</label>
+            <div style="display: flex; gap: 8px;">
+              <button type="button" id="patternModeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem; background: var(--color-primary);">Pattern-Based</button>
+              <button type="button" id="manualModeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">Manual</button>
+            </div>
+          </div>
+
+          <!-- Pattern-based mapping controls -->
+          <div id="patternMappingControls" style="margin-bottom: 16px; padding: 12px; background: #1a1a1a; border-radius: 4px;">
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Mapping Pattern</label>
+              <select id="mappingPattern" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <option value="sequential">Sequential (Bay 0 → First Device, Bay 1 → Second Device, ...)</option>
+                <option value="controller_sequential">Controller Sequential (Group by controller, then sequential)</option>
+                <option value="pci_sequential">PCI Sequential (Group by PCI address, then sequential)</option>
+              </select>
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Starting Bay Number</label>
+              <input id="mappingStartBay" type="number" min="0" max="127" value="0" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Device Filter (Optional)</label>
+              <select id="mappingDeviceFilter" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <option value="all">All Devices</option>
+                <option value="sas_sata">SAS/SATA Only</option>
+                <option value="nvme">NVMe Only</option>
+              </select>
+            </div>
+            <button type="button" id="previewMappingBtn" style="width: 100%; padding: 8px; background: #444; border: 1px solid #666; color: #fff; cursor: pointer;">Preview Mapping</button>
+            <div id="mappingPreview" style="margin-top: 12px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; display: none;">
+              <!-- Preview populated dynamically -->
+            </div>
+          </div>
+
+          <!-- Manual mapping controls -->
+          <div id="manualMappingControls" style="margin-bottom: 16px; padding: 12px; background: #1a1a1a; border-radius: 4px; display: none;">
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Search Devices</label>
+              <input id="deviceSearchInput" type="text" placeholder="Search by path, model, serial, or controller..." style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+            </div>
+            <div style="margin-bottom: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Device Filter</label>
+              <select id="manualDeviceFilter" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <option value="all">All Devices</option>
+                <option value="sas_sata">SAS/SATA Only</option>
+                <option value="nvme">NVMe Only</option>
+              </select>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+              <div>
+                <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Available Devices</label>
+                <div id="availableDevicesList" style="max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 150px;">
+                  <!-- Devices populated dynamically -->
+                </div>
+              </div>
+              <div>
+                <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Manual Mapping</label>
+                <div style="margin-bottom: 8px;">
+                  <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 4px;">Select Bay</label>
+                  <select id="manualBaySelect" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                    <!-- Bays populated dynamically -->
+                  </select>
+                </div>
+                <div style="margin-bottom: 8px;">
+                  <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 4px;">Selected Device</label>
+                  <div id="selectedDeviceInfo" style="padding: 8px; background: #333; border-radius: 4px; min-height: 40px; font-size: 0.75rem; color: #888;">
+                    No device selected
+                  </div>
+                </div>
+                <button type="button" id="addManualMappingBtn" style="width: 100%; padding: 8px; background: #444; border: 1px solid #666; color: #fff; cursor: pointer; margin-bottom: 8px;">Add Mapping</button>
+                <button type="button" id="clearManualMappingsBtn" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; cursor: pointer;">Clear All Mappings</button>
+              </div>
+            </div>
+            <div style="margin-top: 12px;">
+              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Manual Mappings Preview</label>
+              <div id="manualMappingPreview" style="max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 50px;">
+                <!-- Manual mappings populated dynamically -->
+              </div>
+            </div>
+          </div>
+
+          <!-- Validation Error Display (Task 4.8) -->
+          <div id="mappingValidationError" style="display: none; margin-top: 12px; padding: 8px; background: #3d1a1a; border: 1px solid var(--color-danger); border-radius: 4px; font-size: 0.8rem; color: #ffcccc;">
+            <!-- Validation errors populated dynamically -->
+          </div>
+
+          <div style="display: flex; gap: 12px; margin-top: 16px;">
+            <button type="button" id="applyMappingBtn" class="btn-primary" style="flex: 1;" disabled>Apply Mapping</button>
+            <button type="button" id="undoMappingBtn" class="btn-secondary" style="flex: 1;" disabled>Undo Last Change</button>
+            <button type="button" id="cancelMappingBtn" class="btn-secondary" style="flex: 1;" data-close-modal="true">Cancel</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/utils.js" defer></script>
+  <script src="/auth.js" defer></script>
+  <script src="/driveManagement.js" defer></script>
+  <script src="/modals.js" defer></script>
+  <script src="/auditLedger.js" defer></script>
+  <script src="/admin/adminUtilities.js" defer></script>
+  <script src="/admin/bayMapping.js" defer></script>
+  <script src="/admin/logoManagement.js" defer></script>
+  <script src="/admin/templateManagement.js" defer></script>
+  <script src="/admin/discoveryModal.js" defer></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>

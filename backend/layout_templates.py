@@ -1,10 +1,18 @@
 import json
 import os
+import tempfile
+import hashlib
+from threading import Lock
 
 SUPPORTED_TRAVERSALS = {
     "top_left_down_then_across",
-    "bottom_left_up_then_across"
+    "bottom_left_up_then_across",
+    "top_left_across_then_down",
+    "bottom_left_across_then_up"
 }
+
+# Lock for template file operations to prevent race conditions (Lesson #2)
+TEMPLATES_LOCK = Lock()
 
 DEFAULT_TEMPLATES = {
     "dell_r320_4bay": {
@@ -24,24 +32,6 @@ DEFAULT_TEMPLATES = {
         "cols": 5,
         "bay_count": 10,
         "traversal_preset": "top_left_down_then_across"
-    },
-    "dell_2u_8bay": {
-        "id": "dell_2u_8bay",
-        "name": "Dell 2U 8-Bay",
-        "vendor": "Dell",
-        "rows": 4,
-        "cols": 2,
-        "bay_count": 8,
-        "traversal_preset": "top_left_down_then_across"
-    },
-    "supermicro_2u_8bay": {
-        "id": "supermicro_2u_8bay",
-        "name": "Supermicro 2U 8-Bay",
-        "vendor": "Supermicro",
-        "rows": 4,
-        "cols": 2,
-        "bay_count": 8,
-        "traversal_preset": "bottom_left_up_then_across"
     }
 }
 
@@ -85,12 +75,42 @@ def compose_bay_map_document(bays, metadata):
 
 
 def load_layout_templates(config_dir):
+    """
+    Load templates from config directory.
+    Returns (templates_dict, is_fallback) tuple where is_fallback is True if
+    templates were loaded from DEFAULT_TEMPLATES due to missing/corrupted file.
+    """
     path = os.path.join(config_dir, "layout_templates.json")
+    hash_path = os.path.join(config_dir, "layout_templates.json.sha256")
+
     if not os.path.exists(path):
-        return DEFAULT_TEMPLATES
+        import logging
+        logger = logging.getLogger("app")
+        logger.warning(f"Template file not found: {path}. Using DEFAULT_TEMPLATES as fallback.")
+        return DEFAULT_TEMPLATES, True
+
     try:
         with open(path, "r", encoding="utf-8") as f:
-            payload = json.load(f)
+            content = f.read()
+            payload = json.loads(content)
+
+        # Validate SHA256 hash for file integrity (Lesson #22)
+        if os.path.exists(hash_path):
+            try:
+                with open(hash_path, "r", encoding="utf-8") as hf:
+                    stored_hash = hf.read().strip()
+                calculated_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
+                if stored_hash != calculated_hash:
+                    import logging
+                    logger = logging.getLogger("app")
+                    logger.warning(f"Template file hash mismatch detected. File may have been tampered with: {path}. Using DEFAULT_TEMPLATES as fallback.")
+                    return DEFAULT_TEMPLATES, True
+            except Exception as e:
+                import logging
+                logger = logging.getLogger("app")
+                logger.warning(f"Failed to validate template file hash: {str(e)}")
+                # Continue loading despite hash validation failure
+
         if isinstance(payload, dict) and isinstance(payload.get("templates"), dict):
             templates = payload["templates"]
             result = {}
@@ -99,30 +119,74 @@ def load_layout_templates(config_dir):
                     entry = template.copy()
                     entry["id"] = template_id
                     result[template_id] = entry
-            return result or DEFAULT_TEMPLATES
-    except Exception:
-        pass
-    return DEFAULT_TEMPLATES
+            if result:
+                return result, False
+            else:
+                import logging
+                logger = logging.getLogger("app")
+                logger.warning(f"Template file contains no valid templates: {path}. Using DEFAULT_TEMPLATES as fallback.")
+                return DEFAULT_TEMPLATES, True
+    except Exception as e:
+        import logging
+        logger = logging.getLogger("app")
+        logger.warning(f"Failed to load template file: {path}. Error: {str(e)}. Using DEFAULT_TEMPLATES as fallback.")
+        return DEFAULT_TEMPLATES, True
+
+    return DEFAULT_TEMPLATES, True
 
 
-def build_traversal_positions(rows, cols, traversal, bay_count):
+def build_traversal_positions(rows, cols, traversal, bay_count, skip_positions=None):
     positions = []
     rows = max(1, int(rows or 1))
     cols = max(1, int(cols or 1))
     bay_count = max(1, int(bay_count or (rows * cols)))
+    
+    # Parse skip_positions into a set of (row, col) tuples for fast lookup
+    skip_set = set()
+    if skip_positions and isinstance(skip_positions, list):
+        for skip in skip_positions:
+            if isinstance(skip, dict) and "row" in skip and "col" in skip:
+                try:
+                    skip_set.add((int(skip["row"]), int(skip["col"])))
+                except (ValueError, TypeError):
+                    # Skip invalid entries silently - validation should catch these
+                    continue
 
     if traversal == "bottom_left_up_then_across":
         for col in range(cols):
             for row in range(rows - 1, -1, -1):
-                positions.append((row, col))
+                if (row, col) not in skip_set:
+                    positions.append((row, col))
+                if len(positions) >= bay_count:
+                    return positions
+    elif traversal == "top_left_across_then_down":
+        for row in range(rows):
+            for col in range(cols):
+                if (row, col) not in skip_set:
+                    positions.append((row, col))
+                if len(positions) >= bay_count:
+                    return positions
+    elif traversal == "bottom_left_across_then_up":
+        for row in range(rows - 1, -1, -1):
+            for col in range(cols):
+                if (row, col) not in skip_set:
+                    positions.append((row, col))
                 if len(positions) >= bay_count:
                     return positions
     else:
         for col in range(cols):
             for row in range(rows):
-                positions.append((row, col))
+                if (row, col) not in skip_set:
+                    positions.append((row, col))
                 if len(positions) >= bay_count:
                     return positions
+    
+    # Validate that we have enough positions after skipping
+    if bay_count > 0 and len(positions) == 0:
+        raise ValueError(f"skip_positions eliminates all available positions (rows={rows}, cols={cols})")
+    if len(positions) < bay_count:
+        raise ValueError(f"skip_positions eliminates too many positions: requested {bay_count} bays but only {len(positions)} available after skipping")
+    
     return positions
 
 
@@ -134,11 +198,12 @@ def apply_template(existing_bays, template, traversal_preset=None, custom_overri
     if traversal not in SUPPORTED_TRAVERSALS:
         traversal = "top_left_down_then_across"
 
-    positions = build_traversal_positions(rows, cols, traversal, bay_count)
+    skip_positions = template.get("skip_positions")
+    positions = build_traversal_positions(rows, cols, traversal, bay_count, skip_positions)
     overrides = custom_overrides if isinstance(custom_overrides, dict) else {}
 
     result = {}
-    for index, (row, col) in enumerate(positions, start=1):
+    for index, (row, col) in enumerate(positions, start=0):
         bay_id = f"bay{index}"
         prior = existing_bays.get(bay_id, {}) if isinstance(existing_bays, dict) else {}
         display_number = str(index)
@@ -148,7 +213,7 @@ def apply_template(existing_bays, template, traversal_preset=None, custom_overri
         if override_value is not None and str(override_value).strip() != "":
             display_number = str(override_value).strip()
 
-        label = prior.get("label") or f"Work Bay {index}"
+        label = prior.get("label") or "Work Bay"
         
         # Handle type override from custom_overrides
         bay_type = prior.get("type", "sas_sata")
@@ -187,6 +252,46 @@ def validate_layout_metadata(layout_metadata, bays, templates):
     if overrides is not None and not isinstance(overrides, dict):
         return "custom_overrides must be an object"
 
+    # Validate skip_positions if present in template (by ID or inline)
+    template_to_validate = None
+    if template_id and template_id in templates:
+        template_to_validate = templates[template_id]
+    elif isinstance(layout_metadata.get("template"), dict):
+        template_to_validate = layout_metadata.get("template")
+    
+    if template_to_validate:
+        skip_positions = template_to_validate.get("skip_positions")
+        if skip_positions is not None:
+            if not isinstance(skip_positions, list):
+                return "skip_positions must be an array"
+            # Enforce size limit to prevent DoS (Lesson #5)
+            if len(skip_positions) > 100:
+                return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
+            
+            rows = int(template_to_validate.get("rows") or 1)
+            cols = int(template_to_validate.get("cols") or 1)
+            seen_positions = set()
+            
+            for skip in skip_positions:
+                if not isinstance(skip, dict):
+                    return "Each skip_positions entry must be an object"
+                if "row" not in skip or "col" not in skip:
+                    return "Each skip_positions entry must have 'row' and 'col' fields"
+                try:
+                    row = int(skip["row"])
+                    col = int(skip["col"])
+                    if row < 0 or row >= rows:
+                        return f"skip_positions row {row} out of bounds (0-{rows-1})"
+                    if col < 0 or col >= cols:
+                        return f"skip_positions col {col} out of bounds (0-{cols-1})"
+                    # Check for duplicates
+                    pos_key = (row, col)
+                    if pos_key in seen_positions:
+                        return f"Duplicate skip_positions entry: row {row}, col {col}"
+                    seen_positions.add(pos_key)
+                except (ValueError, TypeError):
+                    return "skip_positions row and col must be integers"
+
     seen = set()
     for bay_id, conf in (bays or {}).items():
         if not isinstance(conf, dict):
@@ -202,3 +307,122 @@ def validate_layout_metadata(layout_metadata, bays, templates):
         seen.add(key)
 
     return None
+
+
+def validate_template(template):
+    """Validate a single template object for structure and constraints."""
+    if not isinstance(template, dict):
+        return "Template must be an object"
+    
+    required_fields = ["id", "name", "vendor", "rows", "cols", "bay_count", "traversal_preset"]
+    for field in required_fields:
+        if field not in template:
+            return f"Template missing required field: {field}"
+    
+    # Validate types
+    if not isinstance(template["id"], str) or not template["id"].strip():
+        return "Template id must be a non-empty string"
+    
+    if not isinstance(template["name"], str) or not template["name"].strip():
+        return "Template name must be a non-empty string"
+    
+    if not isinstance(template["vendor"], str) or not template["vendor"].strip():
+        return "Template vendor must be a non-empty string"
+    
+    try:
+        rows = int(template["rows"])
+        cols = int(template["cols"])
+        bay_count = int(template["bay_count"])
+    except (ValueError, TypeError):
+        return "Template rows, cols, and bay_count must be integers"
+    
+    if rows < 1 or cols < 1 or bay_count < 1:
+        return "Template rows, cols, and bay_count must be positive integers"
+    
+    if cols > 5:
+        return "Template cols cannot exceed 5 (UI layout constraint)"
+    
+    if bay_count > rows * cols:
+        return f"Template bay_count ({bay_count}) cannot exceed rows * cols ({rows * cols})"
+    
+    if template["traversal_preset"] not in SUPPORTED_TRAVERSALS:
+        return f"Template traversal_preset must be one of: {', '.join(SUPPORTED_TRAVERSALS)}"
+    
+    # Validate skip_positions if present
+    skip_positions = template.get("skip_positions")
+    if skip_positions is not None:
+        if not isinstance(skip_positions, list):
+            return "skip_positions must be an array"
+        # Enforce size limit to prevent DoS (Lesson #5)
+        if len(skip_positions) > 100:
+            return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
+        
+        seen_positions = set()
+        for skip in skip_positions:
+            if not isinstance(skip, dict):
+                return "Each skip_positions entry must be an object"
+            if "row" not in skip or "col" not in skip:
+                return "Each skip_positions entry must have 'row' and 'col' fields"
+            try:
+                row = int(skip["row"])
+                col = int(skip["col"])
+                if row < 0 or row >= rows:
+                    return f"skip_positions row {row} out of bounds (0-{rows-1})"
+                if col < 0 or col >= cols:
+                    return f"skip_positions col {col} out of bounds (0-{cols-1})"
+                # Check for duplicates
+                pos_key = (row, col)
+                if pos_key in seen_positions:
+                    return f"Duplicate skip_positions entry: row {row}, col {col}"
+                seen_positions.add(pos_key)
+            except (ValueError, TypeError):
+                return "skip_positions row and col must be integers"
+    
+    return None
+
+
+def save_layout_templates(templates, config_dir):
+    """
+    Save templates to config directory with atomic file operations.
+    Uses atomic write pattern to prevent TOCTOU race conditions (Lesson #20).
+    Stores SHA256 hash for file integrity validation (Lesson #22).
+    """
+    os.makedirs(config_dir, exist_ok=True)
+    templates_path = os.path.join(config_dir, "layout_templates.json")
+    hash_path = os.path.join(config_dir, "layout_templates.json.sha256")
+    
+    # Validate all templates before saving
+    for template_id, template in templates.items():
+        error = validate_template(template)
+        if error:
+            raise ValueError(f"Invalid template '{template_id}': {error}")
+    
+    # Prepare the data structure
+    data = {"templates": templates}
+    json_content = json.dumps(data, indent=2)
+    
+    # Calculate SHA256 hash for integrity validation
+    content_hash = hashlib.sha256(json_content.encode('utf-8')).hexdigest()
+    
+    # Atomic write using temporary file (Lesson #20)
+    fd, temp_path = tempfile.mkstemp(dir=config_dir, prefix=".layout_templates_tmp_", suffix=".json")
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            f.write(json_content)
+            f.flush()
+            os.fsync(f.fileno())
+        
+        # Atomic rename on POSIX systems
+        os.replace(temp_path, templates_path)
+        
+        # Also save the hash for integrity validation
+        with open(hash_path, 'w', encoding='utf-8') as f:
+            f.write(content_hash)
+        
+    except Exception:
+        # Clean up temp file if write failed
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
+        raise

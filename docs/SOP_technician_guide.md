@@ -8,7 +8,7 @@ This guide covers the standard process for health checking and securely erasing 
 
 | Color | Dashboard Status | Action Needed |
 | :--- | :--- | :--- |
-| **BLUE** | `VIEW ONLY` (e.g., Bay 1) | **OS Drive.** Do not attempt to wipe. |
+| **BLUE** | `VIEW ONLY` (e.g., Bay 0) | **OS Drive.** Do not attempt to wipe. |
 | **WHITE** | `EMPTY` | Ready for drive insertion. |
 | **GREY** | `IDENTIFIED / READY` | Drive is safe. Review health and wipe method. |
 | **YELLOW** | `REJECTED / WARNING` | **High Risk.** Station recommends physical destruction. |

@@ -10,10 +10,10 @@ def ensure_column(conn, table_name, column_name, column_def):
         raise ValueError(f"Invalid table name: {table_name}")
     if not column_name.replace("_", "").isalnum():
         raise ValueError(f"Invalid column name: {column_name}")
-    # Validate column_def matches expected pattern: "column_name TYPE"
+    # Validate column_def matches expected pattern: "column_name TYPE [DEFAULT 'value']"
     # Allowed types: TEXT, INTEGER, REAL, BLOB
     allowed_types = {"TEXT", "INTEGER", "REAL", "BLOB"}
-    column_def_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s+(TEXT|INTEGER|REAL|BLOB)$')
+    column_def_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s+(TEXT|INTEGER|REAL|BLOB)(\s+DEFAULT\s+\'[^\']*\')?$')
     if not column_def_pattern.match(column_def):
         raise ValueError(f"Invalid column definition: {column_def}")
     # Ensure column_name in column_def matches the provided column_name parameter
@@ -51,7 +51,8 @@ def init_wipe_db():
                 result_json TEXT,
                 verification_json TEXT,
                 marker_json TEXT,
-                certificate_json TEXT
+                certificate_json TEXT,
+                job_type TEXT DEFAULT 'erase'
             )
             """
         )
@@ -60,17 +61,34 @@ def init_wipe_db():
         ensure_column(conn, "erase_jobs", "verification_json", "verification_json TEXT")
         ensure_column(conn, "erase_jobs", "marker_json", "marker_json TEXT")
         ensure_column(conn, "erase_jobs", "certificate_json", "certificate_json TEXT")
+        ensure_column(conn, "erase_jobs", "job_type", "job_type TEXT DEFAULT 'erase'")
+        
+        # Migration: Set default job_type for existing jobs
+        conn.execute(
+            "UPDATE erase_jobs SET job_type = 'erase' WHERE job_type IS NULL"
+        )
         conn.commit()
 
+# Valid job types - allowlist for validation
+# job_type distinguishes between different job types:
+# - "erase": Standard drive sanitization jobs (default)
+# - "bulk_cert": Bulk certificate generation jobs (future use)
+VALID_JOB_TYPES = {"erase", "bulk_cert"}
+
 def persist_job(job):
+    # Validate job_type if present
+    job_type = job.get("job_type") or "erase"
+    if job_type not in VALID_JOB_TYPES:
+        raise ValueError(f"Invalid job_type: {job_type}. Must be one of {VALID_JOB_TYPES}")
+    
     with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
         cursor = conn.cursor()
         cursor.execute(
             """
             INSERT INTO erase_jobs (
                 id, friendly_id, status, created_at, started_at, finished_at,
-                error, request_json, result_json, verification_json, marker_json, certificate_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                error, request_json, result_json, verification_json, marker_json, certificate_json, job_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 friendly_id=COALESCE(excluded.friendly_id, friendly_id),
                 status=excluded.status,
@@ -82,7 +100,8 @@ def persist_job(job):
                 result_json=excluded.result_json,
                 verification_json=excluded.verification_json,
                 marker_json=excluded.marker_json,
-                certificate_json=excluded.certificate_json
+                certificate_json=excluded.certificate_json,
+                job_type=excluded.job_type
             """,
             (
                 job.get("id"),
@@ -97,6 +116,7 @@ def persist_job(job):
                 json.dumps(job.get("verification") or {}),
                 json.dumps(job.get("marker") or {}),
                 json.dumps(job.get("certificate") or {}),
+                job_type,
             ),
         )
         if not job.get("friendly_id"):
@@ -108,3 +128,44 @@ def persist_job(job):
                 (friendly_id, job.get("id")),
             )
         conn.commit()
+
+def load_job(job_id):
+    """Load a job from the database by ID or friendly_id."""
+    with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
+        conn.row_factory = sqlite3.Row
+        row = conn.execute(
+            """
+            SELECT job_number, id, friendly_id, status, created_at, started_at, finished_at, error,
+                   request_json, result_json, verification_json, marker_json, certificate_json, job_type
+            FROM erase_jobs WHERE id = ? OR friendly_id = ?
+            """,
+            (job_id, job_id),
+        ).fetchone()
+
+    if not row:
+        return None
+
+    def safe_json_load(json_str, field_name):
+        """Safely load JSON with error handling."""
+        try:
+            return json.loads(json_str or "{}")
+        except (json.JSONDecodeError, TypeError, ValueError) as e:
+            logger = __import__("logging").getLogger("app")
+            logger.warning(f"Failed to parse JSON for field '{field_name}' in job {row['id']}: {str(e)}")
+            return {}
+
+    return {
+        "id": row["id"],
+        "friendly_id": row["friendly_id"],
+        "status": row["status"],
+        "created_at": row["created_at"],
+        "started_at": row["started_at"],
+        "finished_at": row["finished_at"],
+        "error": row["error"],
+        "request": safe_json_load(row["request_json"], "request_json"),
+        "result": safe_json_load(row["result_json"], "result_json"),
+        "verification": safe_json_load(row["verification_json"], "verification_json"),
+        "marker": safe_json_load(row["marker_json"], "marker_json"),
+        "certificate": safe_json_load(row["certificate_json"], "certificate_json"),
+        "job_type": row["job_type"],
+    }

@@ -1,144 +1,5 @@
-// --- START OF FILE frontend/adminPanel.js ---
-// Admin panel and bay mapping configuration
-
-// These elements are defined in the main app.js file
-const testWebhookBtn = document.getElementById("testWebhookBtn");
-const webhookTestResult = document.getElementById("webhookTestResult");
-const exportCsvBtn = document.getElementById("exportCsvBtn");
-const downloadBundleBtn = document.getElementById("downloadBundleBtn");
-const bayMappingContainer = document.getElementById("bayMappingContainer");
-const saveBayMapBtn = document.getElementById("saveBayMapBtn");
-const saveBayMapBtnTop = document.getElementById("saveBayMapBtnTop");
-const addBayBtn = document.getElementById("addBayBtn");
-const layoutTemplateSelect = document.getElementById("layoutTemplateSelect");
-const traversalPresetSelect = document.getElementById("traversalPresetSelect");
-const applyLayoutTemplateBtn = document.getElementById("applyLayoutTemplateBtn");
-const bayLayoutStatus = document.getElementById("bayLayoutStatus");
-const unsavedChangesIndicator = document.getElementById("unsavedChangesIndicator");
-const metricDiskBar = document.getElementById("metricDiskBar");
-const metricDiskText = document.getElementById("metricDiskText");
-const metricRamBar = document.getElementById("metricRamBar");
-const metricRamText = document.getElementById("metricRamText");
-const metricCpuBar = document.getElementById("metricCpuBar");
-const metricCpuText = document.getElementById("metricCpuText");
-const metricUptimeText = document.getElementById("metricUptimeText");
-
-// Logo management elements
-const uploadLogoBtn = document.getElementById("uploadLogoBtn");
-const deleteLogoBtn = document.getElementById("deleteLogoBtn");
-const logoFileInput = document.getElementById("logoFileInput");
-const logoPreview = document.getElementById("logoPreview");
-const noLogoText = document.getElementById("noLogoText");
-const logoStatus = document.getElementById("logoStatus");
-const logoConfirmModal = document.getElementById("logoConfirmModal");
-const logoConfirmYes = document.getElementById("logoConfirmYes");
-const logoConfirmNo = document.getElementById("logoConfirmNo");
-const logoConfirmClose = document.getElementById("logoConfirmClose");
-
-if (!testWebhookBtn || !webhookTestResult || !exportCsvBtn || !downloadBundleBtn ||
-    !bayMappingContainer || !saveBayMapBtn || !addBayBtn ||
-    !layoutTemplateSelect || !traversalPresetSelect || !applyLayoutTemplateBtn ||
-    !metricDiskBar || !metricDiskText || !metricRamBar || !metricRamText ||
-    !metricCpuBar || !metricCpuText || !metricUptimeText) {
-  console.error("Critical: One or more admin panel elements not found in DOM");
-}
-
-async function loadAdminMetrics() {
-  const adminTab = document.querySelector('[data-tab="adminPanel"]');
-  if (!adminTab || !adminTab.classList.contains("active")) return;
-  
-  try {
-    const response = await safeFetch("/api/admin/metrics");
-    if (!response.ok) throw new Error();
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("Failed to parse admin metrics JSON:", e);
-      throw new Error("Invalid JSON response from metrics API");
-    }
-    
-    metricDiskBar.style.width = `${data.disk_pct}%`;
-    metricDiskText.textContent = `${data.disk_pct}% (${data.disk_str})`;
-    
-    metricRamBar.style.width = `${data.ram_pct}%`;
-    metricRamText.textContent = `${data.ram_pct}%`;
-    
-    metricCpuBar.style.width = `${data.cpu_pct}%`;
-    metricCpuText.textContent = `${data.cpu_pct}%`;
-    
-    metricUptimeText.textContent = data.uptime;
-    
-    const ipLabel = document.getElementById("metricIpText");
-    if (ipLabel) {
-      ipLabel.textContent = data.ip_address || "Unknown";
-    }
-  } catch (err) {
-    // Suppress background poll failures quietly
-  }
-}
-
-testWebhookBtn.addEventListener("click", async () => {
-  testWebhookBtn.disabled = true;
-  testWebhookBtn.textContent = "Testing...";
-  webhookTestResult.classList.add("hidden");
-  
-  try {
-    const response = await safeFetch("/api/admin/test-webhook", { method: "POST" });
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("Failed to parse webhook test response JSON:", e);
-      webhookTestResult.classList.remove("hidden");
-      webhookTestResult.className = "test-result-label test-result-error";
-      webhookTestResult.textContent = "Error: Invalid server response";
-      return;
-    }
-    webhookTestResult.classList.remove("hidden");
-    if (response.ok) {
-      webhookTestResult.className = "test-result-label test-result-success";
-      webhookTestResult.textContent = data.message || "Test Notification Sent!";
-    } else {
-      webhookTestResult.className = "test-result-label test-result-error";
-      webhookTestResult.textContent = `Failure: ${data.error || "Unknown response"}`;
-    }
-  } catch (err) {
-    webhookTestResult.classList.remove("hidden");
-    webhookTestResult.className = "test-result-label test-result-error";
-    webhookTestResult.textContent = `Error: ${err.message}`;
-  } finally {
-    testWebhookBtn.disabled = false;
-    testWebhookBtn.textContent = "Test Alert Notification";
-  }
-});
-
-exportCsvBtn.addEventListener("click", () => {
-  window.location.href = "/api/admin/export-csv";
-});
-
-downloadBundleBtn.addEventListener("click", () => {
-  window.location.href = "/api/admin/support-bundle";
-});
-
-function showLayoutStatus(message, isError = false) {
-  if (!bayLayoutStatus) return;
-  bayLayoutStatus.classList.remove("hidden", "status-ok", "status-error");
-  bayLayoutStatus.classList.add(isError ? "status-error" : "status-ok");
-  bayLayoutStatus.textContent = message;
-}
-
-function showUnsavedChangesIndicator() {
-  if (!unsavedChangesIndicator) return;
-  unsavedChangesIndicator.classList.remove("hidden");
-  hasUnsavedBayMapChanges = true;
-}
-
-function hideUnsavedChangesIndicator() {
-  if (!unsavedChangesIndicator) return;
-  unsavedChangesIndicator.classList.add("hidden");
-  hasUnsavedBayMapChanges = false;
-}
+// --- START OF FILE frontend/admin/bayMapping.js ---
+// Bay mapping configuration: load, render, save, add/delete bays, layout template application
 
 async function loadLayoutTemplates() {
   const response = await safeFetch("/api/admin/layout-templates");
@@ -165,6 +26,17 @@ async function loadLayoutTemplates() {
     if (currentValue && Array.from(layoutTemplateSelect.options).some(opt => opt.value === currentValue)) {
       layoutTemplateSelect.value = currentValue;
     }
+  }
+}
+
+// Update traversal dropdown when template is selected
+function updateTraversalFromTemplate() {
+  const templateId = layoutTemplateSelect?.value;
+  if (!templateId || !traversalPresetSelect) return;
+
+  const template = availableLayoutTemplates.find(t => t.id === templateId);
+  if (template && template.traversal_preset) {
+    traversalPresetSelect.value = template.traversal_preset;
   }
 }
 
@@ -320,34 +192,8 @@ async function renderBayMappingConfig() {
   }
 }
 
-document.getElementById('btn-auto-detect').addEventListener('click', async () => {
-    if (!confirm("Are you sure you want to scan and auto-detect your physical SAS/SATA backplane bays? This will match any populated slots with your config automatically.")) {
-        return;
-    }
-    
-    try {
-        const response = await safeFetch('/api/admin/auto-detect-bays', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-
-        let data;
-        try {
-            data = await response.json();
-        } catch (e) {
-            console.error("Failed to parse auto-detect response JSON:", e);
-            alert("Error: Invalid server response");
-            return;
-        }
-        if (response.ok) {
-            alert(`Success! ${data.message}`);
-            location.reload();
-        } else {
-            alert(`Error running scan: ${data.error}`);
-        }
-    } catch (err) {
-        alert(`Failed to communicate with backplane auto-detector: ${err}`);
-    }
+document.getElementById('btn-auto-detect').addEventListener('click', () => {
+    openDiscoveryModal();
 });
 
 function populatePathDropdown(selectElement, unmappedDrives, currentValue, filterType) {
@@ -402,7 +248,7 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
         </div>
 
         <div class="form-group" style="margin-bottom: 8px; display: grid; grid-template-columns: 180px 1fr 1fr; gap: 8px; align-items: end;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Display Number</label>
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Number</label>
             <input id="display-number-${bayId}" class="display-number-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
             <label style="font-size: 0.75rem; color: #aaa; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 6px;">
               <input id="override-number-${bayId}" class="override-number-toggle" data-bay="${bayId}" type="checkbox" ${hasOverride ? "checked" : ""} />
@@ -609,8 +455,7 @@ async function saveBayMappingConfiguration() {
             customOverrides[bayId] = { display_number: displayNumber };
         }
 
-        const labelNum = bayId.startsWith("bay") ? bayId.slice(3) : bayId;
-        const defaultLabel = 'Work Bay ' + (labelNum || bayId);
+        const defaultLabel = 'Work Bay';
 
         updatedBayMap[bayId] = {
             "role": localBayMapCopy[bayId]?.role || "wipe",
@@ -711,14 +556,14 @@ addBayBtn.addEventListener("click", () => {
   const label = prompt("Enter a descriptive label for the new physical bay:");
   if (label === null) return;
 
-  const cleanLabel = label.trim() || "Work Bay Extension";
+  const cleanLabel = label.trim() || "Work Bay";
   const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'u2' for hybrid NVMe):", "sas_sata");
   if (typeSelection === null) return;
 
   const cleanType = typeSelection.trim().toLowerCase() === "u2" ? "u2" : "sas_sata";
 
   const bayKeys = Object.keys(localBayMapCopy);
-  let highestNum = 0;
+  let highestNum = -1;
   bayKeys.forEach(k => {
     const num = parseInt(k.replace(/\D/g, ""), 10);
     if (!isNaN(num) && num > highestNum) {
@@ -727,6 +572,7 @@ addBayBtn.addEventListener("click", () => {
   });
 
   const nextBayId = `bay${highestNum + 1}`;
+  const nextDisplayNumber = (highestNum + 1).toString();
 
   localBayMapCopy[nextBayId] = {
     role: "wipe",
@@ -734,7 +580,9 @@ addBayBtn.addEventListener("click", () => {
     label: cleanLabel,
     type: cleanType,
     by_path: "",
-    by_path_nvme: ""
+    by_path_nvme: "",
+    display_number: nextDisplayNumber,
+    physical_position: null
   };
 
   currentDrives.push({
@@ -746,9 +594,10 @@ addBayBtn.addEventListener("click", () => {
     status: "EMPTY",
     interface_type: cleanType === "u2" ? "nvme" : "sata",
     capacity_str: "-",
-    marker: { status: "none" }
+    marker: { status: "none" },
+    display_number: nextDisplayNumber,
+    physical_position: null
   });
-
   renderBays(currentDrives);
   renderBayMappingConfig();
   showUnsavedChangesIndicator();
@@ -786,6 +635,7 @@ if (saveBayMapBtnTop) {
 
 if (layoutTemplateSelect) {
   layoutTemplateSelect.addEventListener("change", () => {
+    updateTraversalFromTemplate();
     showUnsavedChangesIndicator();
   });
 }
@@ -805,177 +655,4 @@ if (applyLayoutTemplateBtn) {
     }
   });
 }
-
-// Logo management functions
-let pendingLogoFile = null;
-
-async function loadLogoStatus() {
-  try {
-    const response = await safeFetch("/api/admin/logo");
-    if (!response.ok) throw new Error();
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("Failed to parse logo status JSON:", e);
-      return;
-    }
-
-    if (data.has_logo && data.base64) {
-      logoPreview.src = `data:image/png;base64,${data.base64}`;
-      logoPreview.style.display = "block";
-      noLogoText.style.display = "none";
-    } else {
-      logoPreview.style.display = "none";
-      noLogoText.style.display = "block";
-    }
-  } catch (err) {
-    console.error("Failed to load logo status:", err);
-  }
-}
-
-function showLogoStatus(message, isError = false) {
-  if (!logoStatus) return;
-  logoStatus.classList.remove("hidden");
-  logoStatus.className = `test-result-label ${isError ? "test-result-error" : "test-result-success"}`;
-  logoStatus.textContent = message;
-  setTimeout(() => {
-    logoStatus.classList.add("hidden");
-  }, 5000);
-}
-
-uploadLogoBtn.addEventListener("click", () => {
-  logoFileInput.click();
-});
-
-logoFileInput.addEventListener("change", (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-
-  // Validate file size (max 1MB)
-  if (file.size > 1024 * 1024) {
-    showLogoStatus("File exceeds 1MB limit", true);
-    logoFileInput.value = "";
-    return;
-  }
-
-  // Validate file type
-  const validTypes = ["image/png", "image/jpeg", "image/jpg"];
-  if (!validTypes.includes(file.type)) {
-    showLogoStatus("Invalid file type. Only PNG, JPG, JPEG allowed.", true);
-    logoFileInput.value = "";
-    return;
-  }
-
-  pendingLogoFile = file;
-
-  // Check if logo already exists and show confirmation
-  safeFetch("/api/admin/logo")
-    .then(res => res.json())
-    .then(data => {
-      if (data.has_logo) {
-        logoConfirmModal.classList.add("open");
-        logoConfirmModal.setAttribute("aria-hidden", "false");
-      } else {
-        uploadLogoFile();
-      }
-    })
-    .catch(err => {
-      console.error("Failed to check logo status:", err);
-      uploadLogoFile();
-    });
-});
-
-logoConfirmYes.addEventListener("click", () => {
-  logoConfirmModal.classList.remove("open");
-  logoConfirmModal.setAttribute("aria-hidden", "true");
-  uploadLogoFile();
-});
-
-logoConfirmNo.addEventListener("click", () => {
-  logoConfirmModal.classList.remove("open");
-  logoConfirmModal.setAttribute("aria-hidden", "true");
-  pendingLogoFile = null;
-  logoFileInput.value = "";
-});
-
-logoConfirmClose.addEventListener("click", () => {
-  logoConfirmModal.classList.remove("open");
-  logoConfirmModal.setAttribute("aria-hidden", "true");
-  pendingLogoFile = null;
-  logoFileInput.value = "";
-});
-
-async function uploadLogoFile() {
-  if (!pendingLogoFile) return;
-
-  const formData = new FormData();
-  formData.append("logo", pendingLogoFile);
-
-  try {
-    const response = await safeFetch("/api/admin/logo?confirm=true", {
-      method: "POST",
-      body: formData
-    });
-
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("Failed to parse logo upload response JSON:", e);
-      showLogoStatus("Error: Invalid server response", true);
-      return;
-    }
-
-    if (response.ok) {
-      showLogoStatus("Logo uploaded successfully");
-      await loadLogoStatus();
-    } else {
-      showLogoStatus(data.error || "Upload failed", true);
-    }
-  } catch (err) {
-    showLogoStatus(`Error: ${err.message}`, true);
-  } finally {
-    pendingLogoFile = null;
-    logoFileInput.value = "";
-  }
-}
-
-deleteLogoBtn.addEventListener("click", async () => {
-  if (!confirm("Are you sure you want to remove the custom logo?")) return;
-
-  try {
-    const response = await safeFetch("/api/admin/logo", { method: "DELETE" });
-    let data;
-    try {
-      data = await response.json();
-    } catch (e) {
-      console.error("Failed to parse logo delete response JSON:", e);
-      showLogoStatus("Error: Invalid server response", true);
-      return;
-    }
-
-    if (response.ok) {
-      showLogoStatus("Logo removed successfully");
-      await loadLogoStatus();
-    } else {
-      showLogoStatus(data.error || "Delete failed", true);
-    }
-  } catch (err) {
-    showLogoStatus(`Error: ${err.message}`, true);
-  }
-});
-
-// Load logo status when admin tab is activated
-const adminTab = document.querySelector('[data-tab="adminPanel"]');
-if (adminTab) {
-  adminTab.addEventListener("click", loadLogoStatus);
-}
-
-// Initial load after DOM is ready
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", loadLogoStatus);
-} else {
-  loadLogoStatus();
-}
-// --- END OF FILE frontend/adminPanel.js ---
+// --- END OF FILE frontend/admin/bayMapping.js ---

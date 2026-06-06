@@ -73,6 +73,9 @@ CORS(app)
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()
 
+BULK_CERT_JOBS = {}
+BULK_CERT_JOBS_LOCK = Lock()
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 

@@ -68,7 +68,7 @@ Starts validated asynchronous erase job.
       "created_at": "ISO-8601",
       "technician": "...",
       "ticket_number": "...",
-      "bay": "bay3",
+      "bay": "bay2",
       "device": "/dev/sdX",
       "method": "overwrite",
       "recommended_method": "overwrite",

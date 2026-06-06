@@ -11,10 +11,10 @@ This workspace uses a dual-agent workflow consisting of a **Coding Agent** (this
   1. Prioritize fixing the critical flaws detailed in `CRITIQUE.md` *before* or *alongside* the user's requested changes.
   2. Refuse to write "good enough" or surface-level fixes. Address the root architectural, security, or concurrency issues mentioned.
   3. Once resolved, append a `## Resolution Log` to `CRITIQUE.md` explaining how you solved the flaws.
-  4. **NEVER delete CRITIQUE.md** - the file must remain for audit trail and review purposes.
-- **Continuous Memory**: Always check `.windsurf/rules/lessons-learned.md` to ensure you are not repeating past architectural or security mistakes.
-- **Strict Read-Only Guardrail (CRITICAL)**: 
-  - The files `.windsurf/rules/lessons-learned.md` and `.windsurf/rules/critic-actor-protocol.md` are **strictly read-only system files** for you.
+  4. **Delete CRITIQUE.md** after the user confirms all issues are fixed - do not commit it to git.
+- **Continuous Memory**: Always check `.devin/rules/lessons-learned.md` to ensure you are not repeating past architectural or security mistakes.
+- **Strict Read-Only Guardrail (CRITICAL)**:
+  - The files `.devin/rules/lessons-learned.md` and `.devin/rules/critic-actor-protocol.md` are **strictly read-only system files** for you.
   - Even if these files appear in `@working changes` (due to the Critic Agent modifying them), you must **never** edit them, suggest changes to them, or attempt to "fix" them. Treat them purely as passive background rules.
 
 ## 2. Critic Agent Protocol (Active when asked to "critique", "audit", or "review")
@@ -35,5 +35,5 @@ This workspace uses a dual-agent workflow consisting of a **Coding Agent** (this
      - ## Critical Flaws in Execution (Specify the "Root Problem" for each)
      - ## What They Got Right
      - ## Actionable Next Steps for the Coding Agent
-  3. **Update Long-Term Memory**: Extract the *root causes* of the mistakes and append them as generalized, project-wide rules inside `.windsurf/rules/lessons-learned.md`. Do not overwrite the whole file; append new lessons to the end.
-  4. **Only Agent with Write Permissions**: You are the only agent authorized to write to `.windsurf/rules/lessons-learned.md`.
+  3. **Update Long-Term Memory**: Extract the *root causes* of the mistakes and append them as generalized, project-wide rules inside `.devin/rules/lessons-learned.md`. Do not overwrite the whole file; append new lessons to the end.
+  4. **Only Agent with Write Permissions**: You are the only agent authorized to write to `.devin/rules/lessons-learned.md`.
