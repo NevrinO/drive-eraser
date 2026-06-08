@@ -133,7 +133,6 @@ The system has evaluated the drive for health, accessibility, and supported eras
   - which erase methods are supported
   - which erase method is recommended
 - inspect for a previously written station marker
-- optionally perform pre-wipe spot check if enabled
 
 #### Outputs
 This state should produce structured inspection data including:
@@ -208,7 +207,6 @@ The drive is approved for wiping and waiting for technician confirmation.
 - allow override to another supported method
 - show warnings if:
   - drive is degraded
-  - pre-wipe spot check showed issues
   - marker state is stale or invalid
 
 #### Technician Inputs
@@ -520,8 +518,8 @@ COMPLETE
 The lifecycle behavior can be configured via `config/policy.json`:
 
 - `strict_audit_mode`: Requires non-empty wipe_passphrase and enforces verification
-- `pre_wipe_spot_check_enabled`: Enables pre-wipe spot check for data remnants
-- `marker_write_enabled`: Enables post-erase marker writing
+- `prewipe_spot_check`: **Not currently implemented** - Configuration option exists in policy.json but the pre-wipe spot check feature is not yet executed in the wipe workflow
+- `post_erase_marker`: Enables post-erase marker writing
 - `certificate_retention_days`: How long to keep certificates in database
 - `log_retention_days`: How long to keep operational logs
 

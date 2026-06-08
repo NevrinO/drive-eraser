@@ -34,7 +34,6 @@ This guide covers the standard process for health checking and securely erasing 
 - **Batch Wiping:** Enable "Sanitize Mode" toggle to select multiple bays simultaneously, then click "Configure Sanitization".
 - The station will **auto-select** the best wipe method (e.g., Crypto Erase for NVMe).
 - **Method Override:** Use the dropdown to choose a different method only if the primary one is unavailable or required by a specific project.
-- **Pre-Wipe Check:** The station will perform a quick read check to confirm data is present before starting (Default: ON).
 
 ### 4. Confirmation
 - Enter your **Technician Name**.
