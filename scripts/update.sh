@@ -171,6 +171,8 @@ sync_app_files() {
         --exclude='config/bay_map.json' \
         --exclude='config/policy.json' \
         --exclude='config/command_paths.json' \
+        --exclude='config/layout_templates.json' \
+        --exclude='config/layout_templates.json.sha256' \
         "$REPO_DIR/" "$INSTALL_DIR/"
 
     success "Application files synced."

@@ -4,10 +4,31 @@ import re
 import subprocess
 import time
 import uuid
+import threading
 from datetime import datetime, timezone
 
 # Constants
 ESTIMATED_ERASE_TIMEOUT_SECONDS = 600  # Default estimated timeout for erase operations (10 minutes)
+
+# High #14: Global flag for job interruption
+_job_interrupted = False
+_job_interrupt_lock = threading.Lock()
+
+def _handle_job_signal(signum, frame):
+    """Signal handler for SIGTERM/SIGINT during job operations."""
+    global _job_interrupted
+    with _job_interrupt_lock:
+        _job_interrupted = True
+    # Advisory #1: Add logger import for signal handler
+    import logging
+    signal_logger = logging.getLogger("app")
+    signal_logger.warning(f"Job operation interrupted by signal {signum}")
+
+def _check_job_interrupted():
+    """Check if job was interrupted by signal."""
+    global _job_interrupted
+    with _job_interrupt_lock:
+        return _job_interrupted
 
 from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
@@ -72,7 +93,11 @@ def validate_single_bay(technician, ticket_number, bay, method_override, drives,
         return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
 
     # Absolute dynamic hard-stop backend safety locks
-    os_dev_node, os_by_path = get_os_by_path()
+    os_path_result = get_os_by_path()
+    if os_path_result is None:
+        os_dev_node, os_by_path = None, None
+    else:
+        os_dev_node, os_by_path = os_path_result
     configured_path = selected_drive.get("configured_by_path")
     resolved_path = selected_drive.get("resolved_by_path")
     configured_path_nvme = selected_drive.get("configured_by_path_nvme")
@@ -160,9 +185,9 @@ def get_device_sectors_written(device):
 
 def poll_nvme_sanitize_progress(device):
     try:
-        nvme_path = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
+        nvme_path = resolve_verify_command_path("nvme")
         if nvme_path:
-            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True)
+            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "sprog" in line.lower():
@@ -175,9 +200,9 @@ def poll_nvme_sanitize_progress(device):
 
 def poll_sas_sanitize_progress(device):
     try:
-        sg_req_path = resolve_verify_command_path("sg_requests", "DRIVE_ERASER_SG_REQUESTS_PATH", "sg_requests", ["/usr/bin/sg_requests", "/usr/sbin/sg_requests"])
+        sg_req_path = resolve_verify_command_path("sg_requests")
         if sg_req_path:
-            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True)
+            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower():
@@ -190,9 +215,9 @@ def poll_sas_sanitize_progress(device):
 
 def poll_sata_sanitize_progress(device):
     try:
-        hdparm_path = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm"])
+        hdparm_path = resolve_verify_command_path("hdparm")
         if hdparm_path:
-            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True)
+            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower() or "percent" in line.lower():
@@ -207,14 +232,19 @@ def prepare_erase_command(device, interface_type, method):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
 
+    # Validate interface type is one of the supported types
+    supported_interfaces = {"sata", "sas", "nvme", "scsi"}
+    if iface and iface not in supported_interfaces:
+        return {"ok": False, "error": f"unsupported_interface:{iface}"}
+
     if selected_method == "overwrite":
-        dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
+        dd_cmd = resolve_verify_command_path("dd")
         if not dd_cmd:
             return {"ok": False, "error": "dd_not_available"}
         return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "oflag=direct"]}
 
     if selected_method in {"secure_erase", "enhanced_secure_erase"}:
-        hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
+        hdparm_cmd = resolve_verify_command_path("hdparm")
         if not hdparm_cmd:
             return {"ok": False, "error": "hdparm_not_available"}
         user_password = "wipestation"
@@ -224,21 +254,21 @@ def prepare_erase_command(device, interface_type, method):
 
     if selected_method in {"block", "crypto"}:
         if iface == "nvme":
-            nvme_cmd = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
+            nvme_cmd = resolve_verify_command_path("nvme")
             if not nvme_cmd:
                 return {"ok": False, "error": "nvme_not_available"}
             action = "crypto" if selected_method == "crypto" else "block"
             return {"ok": True, "command": [nvme_cmd, "sanitize", device, "-a", action]}
             
         if iface == "sata":
-            hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
+            hdparm_cmd = resolve_verify_command_path("hdparm")
             if not hdparm_cmd:
                 return {"ok": False, "error": "hdparm_not_available"}
             action = "--sanitize-crypto-scramble" if selected_method == "crypto" else "--sanitize-block-erase"
             return {"ok": True, "command": [hdparm_cmd, "--yes-i-know-what-i-am-doing", action, device]}
 
         if iface == "sas":
-            sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize", "DRIVE_ERASER_SG_SANITIZE_PATH", "sg_sanitize", ["/usr/bin/sg_sanitize", "/usr/sbin/sg_sanitize", "/bin/sg_sanitize"])
+            sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize")
             if not sg_sanitize_cmd:
                 return {"ok": False, "error": "sg_sanitize_not_available"}
             return {"ok": True, "command": [sg_sanitize_cmd, "--block", device]}
@@ -303,29 +333,25 @@ def run_erase_job(job_id):
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}'")
 
-    # Capture before-state for crypto methods for hash comparison verification
+    # Capture before-state for all methods for hash comparison verification
     before_state = None
-    if method == "crypto":
-        logger.info(f"Job {job_id} (Bay {job['request']['bay']}) capturing before-state for crypto verification")
-        before_state = capture_before_state(device)
-        if before_state and before_state.get("ok"):
-            with ERASE_JOBS_LOCK:
-                # NOTE: Potential race condition - job could theoretically be deleted between
-                # initial access and this lock. In practice this is extremely unlikely since
-                # jobs are only deleted by explicit admin action, not during normal operation.
-                # REVIEW_IGNORE: Race condition is acknowledged but acceptable given the
-                # extremely low probability and the fact that jobs are only deleted by
-                # explicit admin action, not during normal operation.
-                job = ERASE_JOBS.get(job_id)
-                if job:
-                    job["verification_state"] = {"before": before_state}
-                    persist_job(job)
+    logger.info(f"Job {job_id} (Bay {job['request']['bay']}) capturing before-state for hash comparison verification")
+    before_state = capture_before_state(device)
+    if before_state and before_state.get("ok"):
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["verification_state"] = {"before": before_state}
+                persist_job(job)
+            else:
+                # Medium #36: Job was deleted between lock sections, log and continue
+                logger.warning(f"Job {job_id} was deleted before verification state could be saved")
 
     # Initialize erase time estimate for SATA secure erase
     erase_time_estimate_seconds = None
 
     if method in {"secure_erase", "enhanced_secure_erase"} and interface_type == "sata":
-        hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
+        hdparm_cmd = resolve_verify_command_path("hdparm")
         if not hdparm_cmd:
             finalize_failed_job(job_id, "hdparm_not_available")
             return
@@ -333,7 +359,7 @@ def run_erase_job(job_id):
         user_password = "wipestation"
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         try:
-            set_pass_proc = subprocess.run(set_pass_cmd, capture_output=True, text=True)
+            set_pass_proc = subprocess.run(set_pass_cmd, capture_output=True, text=True, shell=False)
             if set_pass_proc.returncode != 0:
                 err_msg = set_pass_proc.stderr.strip() or "set_password_failed"
                 if "frozen" in set_pass_proc.stdout.lower() or "frozen" in set_pass_proc.stderr.lower():
@@ -346,7 +372,7 @@ def run_erase_job(job_id):
 
         # Capture erase time estimate from hdparm -I before starting erase
         try:
-            identify_result = subprocess.run(["sudo", hdparm_cmd, "-I", device], capture_output=True, text=True)
+            identify_result = subprocess.run(["sudo", hdparm_cmd, "-I", device], capture_output=True, text=True, shell=False)
             if identify_result.returncode == 0:
                 erase_time_estimate_seconds = parse_sata_erase_time_estimate(identify_result.stdout)
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) captured erase time estimate: {erase_time_estimate_seconds} seconds")
@@ -397,6 +423,27 @@ def run_erase_job(job_id):
 
         # Thread sleep telemetry updates loop (contained within individual job context)
         while process.poll() is None:
+            # High #14: Check for job interruption
+            if _check_job_interrupted():
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) interrupted during erase subprocess execution")
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                with ERASE_JOBS_LOCK:
+                    job = ERASE_JOBS.get(job_id)
+                    if job:
+                        job["status"] = "interrupted"
+                        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                        job["error"] = "Job interrupted by signal during erase execution"
+                        job["current_phase"] = "Interrupted"
+                        persist_job(job)
+                if 'log_file' in locals() and not log_file.closed:
+                    log_file.close()
+                return
+
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
             progress = 0.0
             phase = "Sanitizing Drive..."
@@ -490,8 +537,21 @@ def run_erase_job(job_id):
         
         consecutive_errors = 0
         max_consecutive_errors = 15
-        
+
         while not firmware_complete:
+            # High #14: Check for job interruption during firmware polling
+            if _check_job_interrupted():
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) interrupted during firmware polling")
+                with ERASE_JOBS_LOCK:
+                    job = ERASE_JOBS.get(job_id)
+                    if job:
+                        job["status"] = "interrupted"
+                        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                        job["error"] = "Job interrupted by signal during firmware polling"
+                        job["current_phase"] = "Interrupted"
+                        persist_job(job)
+                return
+
             elapsed_poll = (datetime.now(timezone.utc) - poll_start_time).total_seconds()
             if elapsed_poll > max_poll_seconds:
                 break
@@ -594,6 +654,8 @@ def run_erase_job(job_id):
         device = job["request"]["device"]
         interface_type = job["request"]["interface_type"]
         method = job["request"]["method"]
+        full_verification = job["request"].get("full_verification", False)
+        sample_ratio = 1.0 if full_verification else 0.10
 
     verification = verification_for_method(
         device,
@@ -601,6 +663,7 @@ def run_erase_job(job_id):
         method,
         execution,
         before_state,
+        sample_ratio=sample_ratio
     )
 
     with ERASE_JOBS_LOCK:
@@ -624,11 +687,12 @@ def run_erase_job(job_id):
                 warnings_list.append(f"Initiation process returned non-zero code ({execution.get('exit_code')}), but hardware-level sanitization status verified successfully.")
                 job["result"]["warnings"] = warnings_list
 
-            # Check if post-erase marker is enabled in policy
+            # Check if post-erase marker is enabled in policy or disabled per request
             policy = load_policy(get_config_dir())
             post_erase_marker = policy.get("post_erase_marker", True)
+            disable_marker_request = job["request"].get("disable_marker", False)
 
-            if post_erase_marker:
+            if post_erase_marker and not disable_marker_request:
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
                 marker_result = write_marker_and_verify(job)
                 job["marker"] = marker_result
@@ -639,6 +703,9 @@ def run_erase_job(job_id):
                     warnings_list.append(f"Supplemental station marker failed ({marker_result.get('error') or marker_result.get('status')}); sanitization certification is based on wipe verification evidence.")
                     job["result"]["warnings"] = warnings_list
                     logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) supplemental marker failed: {marker_result.get('error') or marker_result.get('status')}")
+            elif disable_marker_request:
+                logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Post-erase marker disabled per request, skipping marker write.")
+                job["marker"] = {"ok": True, "status": "disabled_per_request", "error": None, "details": {}}
             else:
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Post-erase marker disabled by policy, skipping marker write.")
                 job["marker"] = {"ok": True, "status": "disabled_by_policy", "error": None, "details": {}}

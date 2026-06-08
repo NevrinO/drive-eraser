@@ -45,23 +45,30 @@ mainTabs.addEventListener("click", (event) => {
 // Help modal
 if (helpButton && helpModal) {
   helpButton.addEventListener("click", () => {
-    helpModal.classList.add("open");
-    helpModal.setAttribute("aria-hidden", "false");
+    openModal(helpModal);
   });
 }
 
 if (helpClose && helpModal) {
   helpClose.addEventListener("click", () => {
-    helpModal.classList.remove("open");
-    helpModal.setAttribute("aria-hidden", "true");
+    closeModal(helpModal);
   });
 }
 
 // Application initialization
 (async () => {
+  setupKeyboardNavigation();
   await loadSecurityStatus();
   await loadLayoutTemplates();
   await loadBayMappingConfig();
   await loadDrives(false);
   pollActiveWipes();
 })();
+
+// Cleanup on page unload to prevent memory leaks
+window.addEventListener("beforeunload", () => {
+  cleanupAllEventListeners();
+  if (typeof stopPolling === "function") {
+    stopPolling();
+  }
+});

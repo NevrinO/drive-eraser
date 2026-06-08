@@ -201,6 +201,306 @@ Exposes and safely updates system rules (Station ID, Webhook URLs, Pre-wipe chec
 
 **Note on GET requests:** The backend automatically redacts `"lan_passphrase"` values from the payload to prevent browser-side credential leaking.
 
+## GET /api/status
+Returns system status information including active jobs and system health.
+
+### Success 200
+```json
+{
+  "status": "running",
+  "active_jobs": 0,
+  "uptime": "5h 5m"
+}
+```
+
+## POST /api/erase/jobs/<job_id>/cancel
+Cancels a running or queued erase job.
+
+### Success 200
+```json
+{
+  "status": "cancelled",
+  "message": "Job cancelled successfully"
+}
+```
+
+### Error responses
+- `404` job not found
+- `409` job cannot be cancelled (already completed or failed)
+
+## POST /api/certificates/bulk-html
+Generates a bulk HTML file containing multiple certificates for printing.
+
+### Request body
+- `job_ids` string[] required - List of job IDs to include in bulk certificate
+
+### Success 200
+```json
+{
+  "status": "success",
+  "bulk_html_path": "/path/to/bulk-cert.html",
+  "total_certificates": 10
+}
+```
+
+## POST /api/admin/bulk-cert/create
+Creates a bulk certificate generation job for multiple completed erase jobs.
+
+### Request body
+- `job_ids` string[] required - List of job IDs to generate certificates for
+
+### Success 200
+```json
+{
+  "id": "uuid",
+  "friendly_id": "BULK-20250107-ABC123",
+  "status": "queued",
+  "total_jobs": 10
+}
+```
+
+### Error responses
+- `400` invalid job_ids list or exceeds maximum batch size
+- `404` one or more jobs not found
+
+## GET /api/admin/discover-slots
+Discovers available drive slots and their current device mappings.
+
+### Success 200
+```json
+[
+  {
+    "bay": "bay1",
+    "device": "/dev/sda",
+    "present": true
+  }
+]
+```
+
+## POST /api/admin/apply-slot-mapping
+Applies a slot mapping configuration to the system.
+
+### Request body
+- Mapping object representing slot to device assignments
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Slot mapping applied successfully"
+}
+```
+
+## GET /api/admin/bay-map
+Returns the current bay mapping configuration.
+
+### Success 200
+```json
+{
+  "bay1": {
+    "label": "Bay 1",
+    "by_path": "/dev/disk/by-path/pci-0000:01:00.0-scsi-0:0:0:0"
+  }
+}
+```
+
+## POST /api/admin/auto-detect-bays
+Automatically detects and maps bays based on connected devices.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "detected_bays": 8,
+  "mapped_bays": 8
+}
+```
+
+## GET /api/admin/export-csv
+Exports job history as a CSV file.
+
+### Success 200
+Returns CSV file with job history data.
+
+## GET /api/admin/support-bundle
+Generates a support bundle containing logs and diagnostics.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "bundle_path": "/path/to/support-bundle.tar.gz"
+}
+```
+
+## GET /api/admin/triage-config
+Returns the current triage configuration thresholds.
+
+### Success 200
+```json
+{
+  "ssd_new_poh_threshold": 500,
+  "hdd_new_poh_threshold": 500,
+  "health_score_destroy_threshold": 20
+}
+```
+
+## POST /api/admin/triage-config
+Updates the triage configuration thresholds.
+
+### Request body
+- Triage threshold configuration object
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Triage configuration updated"
+}
+```
+
+## GET /api/admin/logo
+Returns the current custom logo (if configured).
+
+### Success 200
+Returns logo image file or 404 if not configured.
+
+## POST /api/admin/logo
+Uploads a custom logo for certificates.
+
+### Request body
+- Multipart form data with logo file
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Logo uploaded successfully"
+}
+```
+
+### Error responses
+- `400` invalid file format or size exceeds limit
+
+## DELETE /api/admin/logo
+Removes the custom logo, reverting to default.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Logo removed successfully"
+}
+```
+
+## GET /api/admin/layout-templates
+Returns available certificate layout templates.
+
+### Success 200
+```json
+[
+  {
+    "id": "template1",
+    "name": "Standard Layout",
+    "description": "Default certificate layout"
+  }
+]
+```
+
+## POST /api/admin/layout-templates
+Creates a new certificate layout template.
+
+### Request body
+- Template configuration object
+
+### Success 200
+```json
+{
+  "status": "success",
+  "template_id": "new-template-id"
+}
+```
+
+## PUT /api/admin/layout-templates/<template_id>
+Updates an existing certificate layout template.
+
+### Request body
+- Updated template configuration object
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Template updated"
+}
+```
+
+## DELETE /api/admin/layout-templates/<template_id>
+Deletes a certificate layout template.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Template deleted"
+}
+```
+
+## GET /api/admin/layout-templates/export
+Exports a certificate layout template.
+
+### Success 200
+Returns template file.
+
+## POST /api/admin/layout-templates/import
+Imports a certificate layout template.
+
+### Request body
+- Template file
+
+### Success 200
+```json
+{
+  "status": "success",
+  "template_id": "imported-template-id"
+}
+```
+
+## POST /api/admin/apply-template
+Applies a certificate layout template to a job.
+
+### Request body
+- `template_id` string required
+- `job_id` string required
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Template applied successfully"
+}
+```
+
+## GET /docs/<path:path>
+Serves documentation files from the docs directory.
+
+### Frontend Help Modal
+The frontend includes a Help modal (accessed via the Help button in the header) that provides:
+- Quick start guide for common tasks
+- Links to documentation files served via `/docs/`:
+  - `/docs/SOP_technician_guide.md` - Technician SOP
+  - `/docs/troubleshooting.md` - Troubleshooting guide
+  - `/docs/runbook.md` - Operational runbook
+- Common system administration commands
+
+The Help modal is a purely frontend UI element and does not require a separate API endpoint.
+
+## GET /
+Serves the frontend application (index.html).
+
+## GET /<path:path>
+Serves static frontend assets (CSS, JS, images).
+
 ---
 
 ## Job Status Values

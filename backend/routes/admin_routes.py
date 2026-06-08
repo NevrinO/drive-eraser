@@ -14,15 +14,59 @@ import urllib.request
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
-from app_config import logger
+from app_config import logger, calculate_session_token, limiter
 from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
+import ipaddress
 
 admin_bp = Blueprint('admin_routes', __name__)
 
+def is_local_request(request):
+    """Check if the request is from localhost or local network."""
+    remote_addr = request.remote_addr
+    if not remote_addr:
+        return False
+    
+    # Check for localhost IPv4 and IPv6
+    if remote_addr in ('127.0.0.1', '::1'):
+        return True
+    
+    # Check for private/local network ranges
+    try:
+        ip = ipaddress.ip_address(remote_addr)
+        return ip.is_private
+    except ValueError:
+        return False
+
+def require_admin_auth(f):
+    """Decorator for conditional authentication on admin routes.
+    
+    Allows access from localhost without authentication.
+    Requires authentication from remote addresses.
+    """
+    from functools import wraps
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if is_local_request(request):
+            return f(*args, **kwargs)
+        
+        # Remote request: require authentication
+        config_dir = get_config_dir()
+        policy = load_policy(config_dir)
+        lan_passphrase = policy.get("lan_passphrase", "eraser123")
+        session_token = request.cookies.get("admin_session")
+        
+        if not session_token or session_token != calculate_session_token(lan_passphrase):
+            return jsonify({"error": "Authentication required"}), 401
+        
+        return f(*args, **kwargs)
+    return decorated_function
+
 @admin_bp.route("/api/admin/metrics")
+@require_admin_auth
+@limiter.limit("30 per minute")
 def get_admin_metrics():
     try:
         total, used, free = shutil.disk_usage(get_data_dir())
@@ -42,6 +86,8 @@ def get_admin_metrics():
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/test-webhook", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def test_webhook():
     try:
         config_dir = get_config_dir()
@@ -74,6 +120,7 @@ def test_webhook():
         return jsonify({"error": f"Failed to send webhook: {str(e)}"}), 500
 
 @admin_bp.route("/api/admin/export-csv")
+@require_admin_auth
 def export_csv_ledger():
     try:
         with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
@@ -135,6 +182,7 @@ def cleanup_support_bundle(response):
     return response
 
 @admin_bp.route("/api/admin/support-bundle")
+@require_admin_auth
 def download_support_bundle():
     try:
         hostname = socket.gethostname()
@@ -144,12 +192,12 @@ def download_support_bundle():
         os.makedirs(workspace_dir, exist_ok=True)
         
         try:
-            lsblk_proc = subprocess.run(["sudo", "lsblk", "-J"], capture_output=True, text=True, timeout=10)
+            lsblk_proc = subprocess.run(["sudo", "lsblk", "-J"], capture_output=True, text=True, timeout=10, shell=False)
             with open(os.path.join(workspace_dir, "hardware_environment.txt"), "w") as f:
                 f.write("=== LSBLK -J OUTPUT ===\n")
                 f.write(lsblk_proc.stdout or "")
                 f.write("\n\n=== LSHW STORAGE DETAILS ===\n")
-                lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15)
+                lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15, shell=False)
                 f.write(lshw_proc.stdout or "")
         except Exception as e:
             with open(os.path.join(workspace_dir, "hardware_environment_error.txt"), "w") as f:
@@ -214,6 +262,8 @@ def download_support_bundle():
         return jsonify({"error": str(e)}), 500
 
 @admin_bp.route("/api/admin/policy", methods=["GET", "POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def admin_policy():
     config_dir = get_config_dir()
     if request.method == "GET":
@@ -248,7 +298,69 @@ def admin_policy():
             logger.error(f"Error updating policy: {e}")
             return jsonify({"error": str(e)}), 500
 
+@admin_bp.route("/api/admin/triage-config", methods=["GET", "POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def admin_triage_config():
+    config_dir = get_config_dir()
+    if request.method == "GET":
+        try:
+            policy = load_policy(config_dir)
+            triage_thresholds = policy.get("triage_thresholds", {})
+            return jsonify(triage_thresholds), 200
+        except Exception as e:
+            logger.error(f"Error getting triage config: {e}")
+            return jsonify({"error": str(e)}), 500
+    else:
+        try:
+            payload = request.get_json(silent=True) or {}
+            current_policy = load_policy(config_dir)
+            
+            # Validate all threshold values are numeric and within reasonable ranges
+            valid_thresholds = {
+                "ssd_new_poh_threshold": (int, 0, 100000),
+                "ssd_high_poh_threshold": (int, 0, 200000),
+                "hdd_new_poh_threshold": (int, 0, 100000),
+                "hdd_high_poh_threshold": (int, 0, 200000),
+                "health_score_destroy_threshold": (int, 0, 100),
+                "health_score_scratch_threshold": (int, 0, 100),
+                "ssd_remaining_life_destroy_threshold": (int, 0, 100),
+                "ssd_remaining_life_scratch_threshold": (int, 0, 100),
+                "ssd_remaining_life_good_threshold": (int, 0, 100),
+                "ssd_new_fdw_threshold": (float, 0.0, 100.0),
+                "hdd_new_fdw_threshold": (float, 0.0, 100.0),
+                "hdd_heavy_fdw_threshold": (float, 0.0, 1000.0),
+                "realloc_raw_new_threshold": (int, 0, 1000),
+                "pending_sectors_destroy_threshold": (int, 0, 1000),
+                "pending_sectors_scratch_threshold": (int, 0, 1000)
+            }
+            
+            # Load existing thresholds and merge new values into them
+            existing_thresholds = current_policy.get("triage_thresholds", {})
+            new_thresholds = existing_thresholds.copy()
+            
+            for key, (val_type, min_val, max_val) in valid_thresholds.items():
+                if key in payload:
+                    try:
+                        value = val_type(payload[key])
+                        if not (min_val <= value <= max_val):
+                            return jsonify({"error": f"Invalid value for {key}: must be between {min_val} and {max_val}"}), 400
+                        new_thresholds[key] = value
+                    except (ValueError, TypeError):
+                        return jsonify({"error": f"Invalid type for {key}: must be {val_type.__name__}"}), 400
+            
+            current_policy["triage_thresholds"] = new_thresholds
+            save_policy(current_policy, config_dir)
+            
+            logger.info("Triage thresholds updated successfully by administrator.")
+            return jsonify({"status": "success", "message": "Triage thresholds updated successfully."}), 200
+        except Exception as e:
+            logger.error(f"Error updating triage config: {e}")
+            return jsonify({"error": str(e)}), 500
+
 @admin_bp.route("/api/admin/logo", methods=["GET", "POST", "DELETE"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def manage_logo():
     logo_path = os.path.join(get_data_dir(), "logo.png")
     

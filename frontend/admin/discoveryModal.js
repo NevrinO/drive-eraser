@@ -59,10 +59,49 @@ let discoveryState = {
   controllers: [],
   devicesByType: {},
   enclosureSlots: [],
+  scsiSlotProjections: [], // SCSI host slot projections for empty bay mapping
   totalDevices: 0,
   lastDiscovered: null,
-  groupingMode: 'none' // 'none', 'type', 'pci'
+  groupingMode: 'none', // 'none', 'type', 'pci'
+  selectedControllers: new Set() // Set of selected PCI addresses for mapping
 };
+
+// Resets pattern mapping preview and undo state - called on modal open and close
+function resetDiscoveryPreview() {
+  if (mappingPreview) {
+    mappingPreview.style.display = 'none';
+    mappingPreview.innerHTML = '';
+  }
+  currentMappingPreview = null;
+  previousBayMapState = null;
+  undoMappingBtn.disabled = true;
+  hideMappingValidationError();
+}
+
+// Generic regex validation helper with strict newline rejection
+function validateRegex(input, pattern, options = {}) {
+  const { allowNewlines = false, type = 'string' } = options;
+  
+  if (typeof input !== type) {
+    return false;
+  }
+  
+  if (type === 'string') {
+    // Explicitly reject newlines for strict end-of-string matching in JavaScript
+    if (!allowNewlines && (input.includes('\n') || input.includes('\r'))) {
+      return false;
+    }
+  }
+  
+  return pattern.test(input);
+}
+
+// PCI address validation (matches backend validate_pci_address format)
+// Format: domain:bus:device.function (e.g., 0000:00:1f.2)
+function validatePciAddress(pciAddress) {
+  const pciRegex = /^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$/;
+  return validateRegex(pciAddress, pciRegex);
+}
 
 // Pattern mapping state (Task 4.4)
 let currentMappingPreview = null;
@@ -100,6 +139,9 @@ function openDiscoveryModal() {
   // Initialize grouping button styles to reflect default mode (CRITIQUE.md #4)
   setGroupingMode(discoveryState.groupingMode);
 
+  // Reset controller selection (default none selected)
+  discoveryState.selectedControllers.clear();
+
   // Initialize manual mapping state (Task 4.5)
   setMappingMode('pattern');
   manualMappings = {};
@@ -108,69 +150,114 @@ function openDiscoveryModal() {
   renderAvailableDevices();
   renderManualMappingPreview();
 
-  // Reset mapping preview state (Task 4.4)
-  if (mappingPreview) {
-    mappingPreview.style.display = 'none';
-    mappingPreview.innerHTML = '';
-  }
-  currentMappingPreview = null;
+  // Reset mapping preview and undo state (Task 4.4, 4.8)
+  resetDiscoveryPreview();
 
-  // Reset undo state (Task 4.8)
-  previousBayMapState = null;
-  undoMappingBtn.disabled = true;
-  hideMappingValidationError();
-
-  discoveryModal.classList.remove("hidden");
+  discoveryModal.classList.add("open");
   discoveryModal.setAttribute("aria-hidden", "false");
 }
 
 function closeDiscoveryModal() {
-  discoveryModal.classList.add("hidden");
+  discoveryModal.classList.remove("open");
   discoveryModal.setAttribute("aria-hidden", "true");
   // Reset grouping mode to default (CRITIQUE.md #2, #3)
   setGroupingMode('none');
-  // Reset mapping preview state (Task 4.4)
-  currentMappingPreview = null;
-  if (mappingPreview) {
-    mappingPreview.style.display = 'none';
-    mappingPreview.innerHTML = '';
-  }
+  // Reset mapping preview and undo state (Task 4.4, 4.8)
+  resetDiscoveryPreview();
   // Reset manual mapping state (Task 4.5)
   manualMappings = {};
   selectedDevice = null;
   deviceSearchInput.value = '';
-  // Reset undo state (Task 4.8)
-  previousBayMapState = null;
-  undoMappingBtn.disabled = true;
-  hideMappingValidationError();
+}
+
+// Generic groupBy helper - groups array items by a key function
+function groupBy(items, keyFn) {
+  const grouped = {};
+  items.forEach(item => {
+    const key = keyFn(item);
+    if (!grouped[key]) grouped[key] = [];
+    grouped[key].push(item);
+  });
+  return grouped;
 }
 
 function groupControllersByType(controllers) {
   // Rule #4: Use proper object comparison with Set for deduplication
-  const grouped = {};
-  controllers.forEach(controller => {
-    const type = controller.controller_type || "unknown";
-    if (!grouped[type]) {
-      grouped[type] = [];
-    }
-    grouped[type].push(controller);
-  });
-  return grouped;
+  return groupBy(controllers, c => c.controller_type || "unknown");
 }
 
 function groupControllersByPCI(controllers) {
   // Group by PCI address prefix (bus:device.function)
-  const grouped = {};
-  controllers.forEach(controller => {
-    const pciAddr = controller.pci_address || "unknown";
-    const prefix = pciAddr.substring(0, pciAddr.lastIndexOf('.')) || pciAddr;
-    if (!grouped[prefix]) {
-      grouped[prefix] = [];
-    }
-    grouped[prefix].push(controller);
+  return groupBy(controllers, c => {
+    const pci = c.pci_address || "unknown";
+    return pci.substring(0, pci.lastIndexOf('.')) || pci;
   });
-  return grouped;
 }
+
+// HTML template helpers for render functions
+const CONTROLLER_CARD_TEMPLATE = (controller, isSelected) => {
+  const pciAddr = controller.pci_address || "Unknown";
+  const type = controller.controller_type || "unknown";
+  const desc = controller.description || "Unknown Controller";
+  const vendorId = controller.vendor_id || "Unknown";
+  const deviceId = controller.device_id || "Unknown";
+
+  return `
+    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px; border-left: 3px solid ${isSelected ? 'var(--color-primary)' : '#555'};">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <input type="checkbox" class="controller-checkbox" data-pci-address="${escapeHtml(pciAddr)}" ${isSelected ? 'checked' : ''} style="cursor: pointer;">
+        <div style="flex: 1;">
+          <div style="font-weight: bold; color: var(--color-primary);">${escapeHtml(desc)}</div>
+          <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+            <div>Type: ${escapeHtml(type.toUpperCase())}</div>
+            <div>PCI: ${escapeHtml(pciAddr)}</div>
+            <div>Vendor ID: ${escapeHtml(vendorId)} | Device ID: ${escapeHtml(deviceId)}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+};
+
+const DEVICE_CARD_TEMPLATE = (device) => {
+  const path = device.device_path || "Unknown";
+  const name = device.device_name || "Unknown";
+  const controllerPci = device.controller_pci || "Unknown";
+  const smart = device.smart || {};
+
+  return `
+    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
+      <div style="font-weight: bold;">${escapeHtml(name)}</div>
+      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+        <div>Path: ${escapeHtml(path)}</div>
+        <div>Controller: ${escapeHtml(controllerPci)}</div>
+        ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
+        ${smart.serial ? `<div>Serial: ${escapeHtml(smart.serial)}</div>` : ""}
+        ${smart.capacity_str ? `<div>Capacity: ${escapeHtml(smart.capacity_str)}</div>` : ""}
+      </div>
+    </div>
+  `;
+};
+
+const SLOT_CARD_TEMPLATE = (slot) => {
+  const encId = slot.enclosure_id || "Unknown";
+  const slotId = slot.slot_id || "Unknown";
+  const slotNum = slot.slot_number !== null ? slot.slot_number : "N/A";
+  const device = slot.device || "Empty";
+  const smart = slot.smart || {};
+
+  return `
+    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
+      <div style="font-weight: bold;">Enclosure ${escapeHtml(encId)} - Slot ${escapeHtml(slotId)} (#${slotNum})</div>
+      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+        <div>Device: ${escapeHtml(device)}</div>
+        ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
+        ${smart.serial ? `<div>Serial: ${escapeHtml(smart.serial)}</div>` : ""}
+        ${smart.capacity_str ? `<div>Capacity: ${escapeHtml(smart.capacity_str)}</div>` : ""}
+      </div>
+    </div>
+  `;
+};
 
 function renderControllers(controllers) {
   // Type validation (CRITIQUE.md #3)
@@ -185,6 +272,14 @@ function renderControllers(controllers) {
     return;
   }
 
+  // Add Select All / Deselect All buttons
+  let html = `
+    <div style="margin-bottom: 12px; display: flex; gap: 8px;">
+      <button type="button" id="selectAllControllersBtn" style="padding: 4px 12px; font-size: 0.75rem; background: var(--color-primary); border: none; color: #fff; border-radius: 2px; cursor: pointer;">Select All</button>
+      <button type="button" id="deselectAllControllersBtn" style="padding: 4px 12px; font-size: 0.75rem; background: #444; border: none; color: #fff; border-radius: 2px; cursor: pointer;">Deselect All</button>
+    </div>
+  `;
+
   // Apply grouping based on mode (Task 4.3)
   let controllerGroups = {};
   if (discoveryState.groupingMode === 'type') {
@@ -196,7 +291,6 @@ function renderControllers(controllers) {
     controllerGroups = { 'all': controllers };
   }
 
-  let html = "";
   for (const [groupName, groupControllers] of Object.entries(controllerGroups)) {
     // Rule #5: DoS prevention - limit group size
     if (groupControllers.length > 100) {
@@ -210,21 +304,8 @@ function renderControllers(controllers) {
 
     html += groupControllers.map(controller => {
       const pciAddr = controller.pci_address || "Unknown";
-      const type = controller.controller_type || "unknown";
-      const desc = controller.description || "Unknown Controller";
-      const vendorId = controller.vendor_id || "Unknown";
-      const deviceId = controller.device_id || "Unknown";
-
-      return `
-        <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px; border-left: 3px solid var(--color-primary);">
-          <div style="font-weight: bold; color: var(--color-primary);">${escapeHtml(desc)}</div>
-          <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
-            <div>Type: ${escapeHtml(type.toUpperCase())}</div>
-            <div>PCI: ${escapeHtml(pciAddr)}</div>
-            <div>Vendor ID: ${escapeHtml(vendorId)} | Device ID: ${escapeHtml(deviceId)}</div>
-          </div>
-        </div>
-      `;
+      const isSelected = discoveryState.selectedControllers.has(pciAddr);
+      return CONTROLLER_CARD_TEMPLATE(controller, isSelected);
     }).join("");
   }
 
@@ -251,23 +332,7 @@ function renderDevices(devicesByType) {
     html += `<div style="margin-bottom: 12px;"><strong style="color: var(--color-primary);">${escapeHtml(type.toUpperCase())} (${devices.length})</strong></div>`;
 
     devices.forEach(device => {
-      const path = device.device_path || "Unknown";
-      const name = device.device_name || "Unknown";
-      const controllerPci = device.controller_pci || "Unknown";
-      const smart = device.smart || {};
-
-      html += `
-        <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
-          <div style="font-weight: bold;">${escapeHtml(name)}</div>
-          <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
-            <div>Path: ${escapeHtml(path)}</div>
-            <div>Controller: ${escapeHtml(controllerPci)}</div>
-            ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
-            ${smart.serial ? `<div>Serial: ${escapeHtml(smart.serial)}</div>` : ""}
-            ${smart.capacity_str ? `<div>Capacity: ${escapeHtml(smart.capacity_str)}</div>` : ""}
-          </div>
-        </div>
-      `;
+      html += DEVICE_CARD_TEMPLATE(device);
     });
   }
 
@@ -289,25 +354,7 @@ function renderEnclosureSlots(slots) {
 
   enclosureSlotsSection.style.display = "block";
 
-  enclosureSlotsList.innerHTML = slots.map(slot => {
-    const encId = slot.enclosure_id || "Unknown";
-    const slotId = slot.slot_id || "Unknown";
-    const slotNum = slot.slot_number !== null ? slot.slot_number : "N/A";
-    const device = slot.device || "Empty";
-    const smart = slot.smart || {};
-
-    return `
-      <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
-        <div style="font-weight: bold;">Enclosure ${escapeHtml(encId)} - Slot ${escapeHtml(slotId)} (#${slotNum})</div>
-        <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
-          <div>Device: ${escapeHtml(device)}</div>
-          ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
-          ${smart.serial ? `<div>Serial: ${escapeHtml(smart.serial)}</div>` : ""}
-          ${smart.capacity_str ? `<div>Capacity: ${escapeHtml(smart.capacity_str)}</div>` : ""}
-        </div>
-      </div>
-    `;
-  }).join("");
+  enclosureSlotsList.innerHTML = slots.map(slot => SLOT_CARD_TEMPLATE(slot)).join("");
 }
 
 async function discoverSlots() {
@@ -343,11 +390,15 @@ async function discoverSlots() {
     if (!data.enclosure_slots || !Array.isArray(data.enclosure_slots)) {
       throw new Error("Invalid response: missing or invalid enclosure_slots array");
     }
+    if (!data.scsi_slot_projections || !Array.isArray(data.scsi_slot_projections)) {
+      throw new Error("Invalid response: missing or invalid scsi_slot_projections array");
+    }
 
     // Store discovery data in state (Task 4.3)
     discoveryState.controllers = data.controllers;
     discoveryState.devicesByType = data.devices_by_type;
     discoveryState.enclosureSlots = data.enclosure_slots;
+    discoveryState.scsiSlotProjections = data.scsi_slot_projections;
     discoveryState.totalDevices = data.total_devices || 0;
     discoveryState.lastDiscovered = new Date().toISOString();
 
@@ -376,6 +427,14 @@ if (discoverSlotsBtn) {
   discoverSlotsBtn.addEventListener("click", discoverSlots);
 }
 
+// Auto-Detect button event listener
+const autoDetectBtn = document.getElementById('btn-auto-detect');
+if (autoDetectBtn) {
+  autoDetectBtn.addEventListener('click', () => {
+    openDiscoveryModal();
+  });
+}
+
 // Grouping mode buttons (Task 4.3)
 function setGroupingMode(mode) {
   discoveryState.groupingMode = mode;
@@ -392,6 +451,44 @@ function setGroupingMode(mode) {
 groupNoneBtn.addEventListener("click", () => setGroupingMode('none'));
 groupTypeBtn.addEventListener("click", () => setGroupingMode('type'));
 groupPciBtn.addEventListener("click", () => setGroupingMode('pci'));
+
+// Controller selection event listeners
+document.addEventListener('click', (e) => {
+  // Handle controller checkbox clicks
+  if (e.target.classList.contains('controller-checkbox')) {
+    const pciAddr = e.target.getAttribute('data-pci-address');
+    // Browser has already toggled the checkbox, read the NEW state
+    if (e.target.checked) {
+      // Validate PCI address before adding to selection
+      if (validatePciAddress(pciAddr)) {
+        discoveryState.selectedControllers.add(pciAddr);
+      }
+    } else {
+      discoveryState.selectedControllers.delete(pciAddr);
+    }
+    // Only update the border color of the specific controller card
+    const controllerCard = e.target.closest('div[style*="border-left"]');
+    if (controllerCard) {
+      controllerCard.style.borderLeftColor = e.target.checked ? 'var(--color-primary)' : '#555';
+    }
+  }
+
+  // Handle Select All button
+  if (e.target.id === 'selectAllControllersBtn') {
+    discoveryState.controllers.forEach(controller => {
+      if (controller.pci_address && validatePciAddress(controller.pci_address)) {
+        discoveryState.selectedControllers.add(controller.pci_address);
+      }
+    });
+    renderControllers(discoveryState.controllers);
+  }
+
+  // Handle Deselect All button
+  if (e.target.id === 'deselectAllControllersBtn') {
+    discoveryState.selectedControllers.clear();
+    renderControllers(discoveryState.controllers);
+  }
+});
 
 // Pattern mapping event listeners (Task 4.4)
 if (previewMappingBtn) {
@@ -412,11 +509,8 @@ if (applyMappingBtn) {
 
 // Use strict full-string anchors for validation regexes
 function validateMappingPattern(pattern) {
-  if (typeof pattern !== 'string') return false;
-  // Explicitly reject newlines for strict end-of-string matching in JavaScript
-  if (pattern.includes('\n') || pattern.includes('\r')) return false;
   const patternRegex = /^(sequential|controller_sequential|pci_sequential)$/;
-  return patternRegex.test(pattern);
+  return validateRegex(pattern, patternRegex);
 }
 
 // Use strict full-string anchors for validation regexes
@@ -430,22 +524,25 @@ function validateStartBay(startBay) {
 
 // Use strict full-string anchors for validation regexes
 function validateDeviceFilter(filter) {
-  if (typeof filter !== 'string') return false;
-  // Explicitly reject newlines for strict end-of-string matching in JavaScript
-  if (filter.includes('\n') || filter.includes('\r')) return false;
   const filterRegex = /^(all|sas_sata|nvme)$/;
-  return filterRegex.test(filter);
+  return validateRegex(filter, filterRegex);
 }
 
 // Rule #9: Device Path Validation - strict regex whitelist
 function validateDevicePath(devicePath) {
-  if (typeof devicePath !== 'string') return false;
-  // Explicitly reject newlines for strict end-of-string matching in JavaScript
-  if (devicePath.includes('\n') || devicePath.includes('\r')) return false;
   // Whitelist for Linux device paths with limited depth for DoS prevention:
   // /dev/sd[a-z]+[0-9]*, /dev/nvme[0-9]+n[0-9]+, /dev/bus/usb/* (max 6 segments), /dev/sg[0-9]+, /dev/hd[a-z]+[0-9]*
   const devicePathRegex = /^\/dev\/(sd[a-z]+[0-9]*|nvme[0-9]+n[0-9]+|bus\/usb[0-9]+(?:\/[0-9]+){0,5}|sg[0-9]+|hd[a-z]+[0-9]*)$/;
-  return devicePathRegex.test(devicePath);
+  return validateRegex(devicePath, devicePathRegex);
+}
+
+// Validate projected by-path format (SCSI host slot projection)
+// Format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+// Example: pci-0000:01:00.0-scsi-0:0:0:0
+function validateProjectedByPath(projectedByPath) {
+  // Strict regex for udev by-path format from SCSI host projection
+  const projectedPathRegex = /^pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0$/;
+  return validateRegex(projectedByPath, projectedPathRegex);
 }
 
 // Comprehensive mapping validation (Task 4.8)
@@ -474,14 +571,28 @@ function validateMapping(mapping) {
     const device = mapping[bayId];
     if (device && device.device_path) {
       // Validate device path format (Rule #9, #15)
-      if (!validateDevicePath(device.device_path)) {
-        errors.push(`Invalid device path for ${bayId}: ${device.device_path}`);
+      // Use validateProjectedByPath for SCSI projection paths, validateDevicePath for actual device paths
+      const isProjectedPath = device.device_path.startsWith('pci-') && device.device_path.includes('-scsi-');
+      if (isProjectedPath) {
+        if (!validateProjectedByPath(device.device_path)) {
+          errors.push(`Invalid projected device path for ${bayId}: ${device.device_path}`);
+        }
+      } else {
+        if (!validateDevicePath(device.device_path)) {
+          errors.push(`Invalid device path for ${bayId}: ${device.device_path}`);
+        }
       }
       // Check for duplicates
       if (devicePathSet.has(device.device_path)) {
         duplicatePaths.push(device.device_path);
       }
       devicePathSet.add(device.device_path);
+    }
+    // Validate projected_by_path for empty slots
+    if (device && device.is_empty && device.projected_by_path) {
+      if (!validateProjectedByPath(device.projected_by_path)) {
+        errors.push(`Invalid projected_by_path for ${bayId}: ${device.projected_by_path}`);
+      }
     }
   });
 
@@ -516,6 +627,12 @@ function validateMapping(mapping) {
   };
 }
 
+// Sets the mapping preview panel to an error or warning message and shows it
+function setPreviewMessage(message, isWarning = false) {
+  mappingPreview.innerHTML = `<div style="color: ${isWarning ? 'var(--color-warning)' : 'var(--color-danger)'}">${message}</div>`;
+  mappingPreview.style.display = 'block';
+}
+
 // Display validation errors in modal (Task 4.8)
 function showMappingValidationError(message) {
   if (!mappingValidationError) return;
@@ -530,18 +647,18 @@ function hideMappingValidationError() {
 }
 
 // Undo functionality (Task 4.8)
-function savePreviousBayMapState() {
-  // Rule #4: Deep copy to prevent reference sharing
-  if (!localBayMapCopy || typeof localBayMapCopy !== 'object') {
-    previousBayMapState = null;
-    return;
+
+// Helper function to deep copy bay map configuration
+function deepCopyBayMap(bayMap) {
+  if (!bayMap || typeof bayMap !== 'object') {
+    return null;
   }
   
-  previousBayMapState = {};
-  Object.keys(localBayMapCopy).forEach(bayId => {
-    const conf = localBayMapCopy[bayId];
+  const copy = {};
+  Object.keys(bayMap).forEach(bayId => {
+    const conf = bayMap[bayId];
     if (conf) {
-      previousBayMapState[bayId] = {
+      copy[bayId] = {
         role: conf.role,
         locked: conf.locked,
         label: conf.label,
@@ -553,6 +670,12 @@ function savePreviousBayMapState() {
       };
     }
   });
+  return copy;
+}
+
+function savePreviousBayMapState() {
+  // Rule #4: Deep copy to prevent reference sharing
+  previousBayMapState = deepCopyBayMap(localBayMapCopy);
 }
 
 function restorePreviousBayMapState() {
@@ -562,22 +685,7 @@ function restorePreviousBayMapState() {
   }
 
   // Restore the previous state
-  localBayMapCopy = {};
-  Object.keys(previousBayMapState).forEach(bayId => {
-    const conf = previousBayMapState[bayId];
-    if (conf) {
-      localBayMapCopy[bayId] = {
-        role: conf.role,
-        locked: conf.locked,
-        label: conf.label,
-        type: conf.type,
-        by_path: conf.by_path,
-        by_path_nvme: conf.by_path_nvme,
-        display_number: conf.display_number,
-        physical_position: conf.physical_position
-      };
-    }
-  });
+  localBayMapCopy = deepCopyBayMap(previousBayMapState);
 
   // Clear undo state after restore (Rule #26: complete security - don't leave stale state)
   previousBayMapState = null;
@@ -606,8 +714,16 @@ function flattenDevices(devicesByType, filter = 'all') {
           console.warn(`Skipping invalid device path: ${device.device_path}`);
           return;
         }
+
+        // Skip partitions (e.g., sda1, sda2, nvme0n1p1) - only map whole drives
+        const deviceName = device.device_name || '';
+        if (/^(sd[a-z]+[0-9]+|nvme[0-9]+n[0-9]+p[0-9]+)$/.test(deviceName)) {
+          return;
+        }
+
         flattened.push({
           device_path: device.device_path,
+          by_path: device.by_path || device.device_path, // Use by_path if available, fallback to device_path
           device_name: device.device_name || 'Unknown',
           controller_pci: device.controller_pci || 'Unknown',
           type: type
@@ -619,94 +735,261 @@ function flattenDevices(devicesByType, filter = 'all') {
   return flattened;
 }
 
-function applySequentialPattern(devices, startBay) {
+// Helper function for enclosure-based mapping to eliminate code duplication
+function applyEnclosureBasedMapping(devices, enclosureSlots) {
   const mapping = {};
-  let bayNum = startBay;
-  
-  devices.forEach(device => {
-    const bayId = `bay${bayNum}`;
-    mapping[bayId] = {
-      device_path: device.device_path,
-      device_name: device.device_name,
-      controller_pci: device.controller_pci
-    };
-    bayNum++;
+  let skippedCount = 0;
+  let mismatchCount = 0;
+
+  // Create a map of slot_number -> device_path from enclosure data
+  const slotToDevice = {};
+  enclosureSlots.forEach(slot => {
+    if (slot.slot_number !== null && slot.device) {
+      slotToDevice[slot.slot_number] = slot.device;
+    }
   });
-  
-  return mapping;
+
+  // Create a map of device_path -> by_path for lookup
+  const devicePathToByPath = {};
+  devices.forEach(device => {
+    if (device.device_path && device.by_path) {
+      devicePathToByPath[device.device_path] = device.by_path;
+    }
+  });
+
+  // If no slots have device data, return empty mapping to trigger fallback
+  if (Object.keys(slotToDevice).length === 0) {
+    return { mapping: {}, skippedCount: 0, mismatchCount: 0, hasDeviceData: false };
+  }
+
+  // Map bays based on physical slot numbers with explicit sorting for deterministic ordering
+  Object.keys(slotToDevice).sort((a, b) => parseInt(a, 10) - parseInt(b, 10)).forEach(slotNum => {
+    const bayId = `bay${slotNum}`;
+    const devicePath = slotToDevice[slotNum];
+
+    // Only map to bays that exist in the configuration
+    if (localBayMapCopy && bayId in localBayMapCopy) {
+      // Find device info for this path
+      const deviceInfo = devices.find(d => d.device_path === devicePath);
+      if (deviceInfo) {
+        // Use by_path if available, otherwise use device_path
+        const byPathToUse = deviceInfo.by_path || devicePath;
+        mapping[bayId] = {
+          device_path: byPathToUse, // Store by_path in device_path field for backend compatibility
+          device_name: deviceInfo.device_name,
+          controller_pci: deviceInfo.controller_pci
+        };
+      } else {
+        mismatchCount++;
+      }
+    } else {
+      skippedCount++;
+    }
+  });
+
+  return { mapping, skippedCount, mismatchCount, hasDeviceData: true };
 }
 
-function applyControllerSequentialPattern(devices, startBay) {
-  // Group devices by controller PCI address
-  const controllerGroups = {};
-  devices.forEach(device => {
+// Helper function for SCSI host slot projection mapping
+function applyScsiProjectionMapping(devices, scsiProjections, startBay) {
+  // Type validation (CRITIQUE.md #3)
+  if (!Array.isArray(scsiProjections)) {
+    console.error("applyScsiProjectionMapping: expected array for scsiProjections, got", typeof scsiProjections);
+    return { mapping: {}, skippedCount: 0, emptySlotCount: 0 };
+  }
+
+  // Filter projections by selected controllers
+  let filteredProjections = scsiProjections;
+  if (discoveryState.selectedControllers.size > 0) {
+    filteredProjections = scsiProjections.filter(proj =>
+      discoveryState.selectedControllers.has(proj.pci_address)
+    );
+  }
+
+  const mapping = {};
+  let skippedCount = 0;
+  let emptySlotCount = 0;
+
+  // Group projections by (pci_address, host_number) for ordered traversal
+  const projectionGroups = {};
+  filteredProjections.forEach(proj => {
+    const key = `${proj.pci_address}:${proj.host_number}`;
+    if (!projectionGroups[key]) {
+      projectionGroups[key] = [];
+    }
+    projectionGroups[key].push(proj);
+  });
+
+  // Sort groups by PCI address then host number for deterministic ordering
+  const sortedGroupKeys = Object.keys(projectionGroups).sort();
+
+  let bayNum = startBay;
+  sortedGroupKeys.forEach(groupKey => {
+    const groupProjections = projectionGroups[groupKey];
+    // Sort projections within group by slot number
+    groupProjections.sort((a, b) => a.slot_number - b.slot_number);
+
+    groupProjections.forEach(proj => {
+      const bayId = `bay${bayNum}`;
+
+      // Only map to bays that exist in the configuration
+      if (localBayMapCopy && bayId in localBayMapCopy) {
+        if (proj.device_path) {
+          // Slot is occupied - find device info
+          const deviceInfo = devices.find(d => d.device_path === proj.device_path);
+          if (deviceInfo) {
+            // Use by_path if available, otherwise use device_path
+            const byPathToUse = deviceInfo.by_path || proj.device_path;
+            mapping[bayId] = {
+              device_path: byPathToUse, // Store by_path in device_path field for backend compatibility
+              device_name: deviceInfo.device_name || proj.device_name,
+              controller_pci: proj.pci_address,
+              projected_by_path: proj.projected_by_path
+            };
+          } else {
+            // Device path found in projection but not in device list
+            mapping[bayId] = {
+              device_path: proj.device_path,
+              device_name: proj.device_name || 'Unknown',
+              controller_pci: proj.pci_address,
+              projected_by_path: proj.projected_by_path
+            };
+          }
+        } else {
+          // Slot is empty - use projected by-path for future mapping
+          emptySlotCount++;
+          mapping[bayId] = {
+            device_path: proj.projected_by_path, // Use projected_by_path for empty slots
+            device_name: 'Empty Slot',
+            controller_pci: proj.pci_address,
+            projected_by_path: proj.projected_by_path,
+            is_empty: true
+          };
+        }
+      } else {
+        skippedCount++;
+      }
+      bayNum++;
+    });
+  });
+
+  return { mapping, skippedCount, emptySlotCount };
+}
+
+// Unified pattern mapping function with grouping strategy parameter
+// groupingStrategy: 'none' (sequential), 'controller' (by full PCI), 'pci' (by PCI prefix)
+function applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections, groupingStrategy = 'none') {
+  // Validate startBay parameter
+  if (typeof startBay !== 'number' || startBay < 0 || !Number.isInteger(startBay)) {
+    console.error("Invalid startBay parameter in applyPatternMapping:", startBay);
+    startBay = 0; // Default to 0
+  }
+
+  // Filter devices by selected controllers
+  let filteredDevices = devices;
+  if (discoveryState.selectedControllers.size > 0) {
+    filteredDevices = devices.filter(device =>
+      device.controller_pci && discoveryState.selectedControllers.has(device.controller_pci)
+    );
+  }
+
+  // If enclosure slots are available with device data, use physical slot numbers for mapping
+  // Note: startBay parameter is ignored when enclosure data is present, as physical
+  // slot numbers from SCSI Enclosure Services determine the bay mapping
+  if (enclosureSlots && enclosureSlots.length > 0) {
+    const result = applyEnclosureBasedMapping(filteredDevices, enclosureSlots);
+    // If enclosure slots exist but have no device data, fall back to SCSI projection mapping
+    if (!result.hasDeviceData) {
+      if (scsiProjections && scsiProjections.length > 0) {
+        return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay);
+      }
+      // Final fallback to sequential mapping with grouping strategy
+      return applySequentialMappingWithGrouping(filteredDevices, startBay, groupingStrategy);
+    }
+    return result;
+  }
+
+  // If SCSI projections are available, use them for physical bay mapping
+  if (scsiProjections && scsiProjections.length > 0) {
+    return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay);
+  }
+
+  // Fallback to sequential mapping with grouping strategy if no enclosure or SCSI data
+  return applySequentialMappingWithGrouping(filteredDevices, startBay, groupingStrategy);
+}
+
+// Helper function for sequential mapping with different grouping strategies
+function applySequentialMappingWithGrouping(devices, startBay, groupingStrategy) {
+  const mapping = {};
+  let skippedCount = 0;
+
+  // If no grouping, just map sequentially
+  if (groupingStrategy === 'none') {
+    let bayNum = startBay;
+    devices.forEach(device => {
+      const bayId = `bay${bayNum}`;
+      if (localBayMapCopy && bayId in localBayMapCopy) {
+        const byPathToUse = device.by_path || device.device_path;
+        mapping[bayId] = {
+          device_path: byPathToUse,
+          device_name: device.device_name,
+          controller_pci: device.controller_pci
+        };
+      } else {
+        skippedCount++;
+      }
+      bayNum++;
+    });
+    return { mapping, skippedCount, mismatchCount: 0 };
+  }
+
+  // Group devices based on strategy
+  const groups = groupBy(devices, device => {
     const pci = device.controller_pci || 'unknown';
-    if (!controllerGroups[pci]) {
-      controllerGroups[pci] = [];
-    }
-    controllerGroups[pci].push(device);
+    if (groupingStrategy === 'controller') return pci;
+    if (groupingStrategy === 'pci') return pci.substring(0, pci.lastIndexOf('.')) || pci;
+    return 'default';
   });
-  
-  // Sort groups by PCI address for deterministic ordering (Rule #4: consistent ordering)
-  const sortedPciKeys = Object.keys(controllerGroups).sort();
-  
-  const mapping = {};
+
+  // Sort groups by key for deterministic ordering (Rule #4: consistent ordering)
+  const sortedGroupKeys = Object.keys(groups).sort();
+
   let bayNum = startBay;
-  
-  sortedPciKeys.forEach(pci => {
-    const groupDevices = controllerGroups[pci];
+  sortedGroupKeys.forEach(groupKey => {
+    const groupDevices = groups[groupKey];
     // Sort devices within each group by device_path for deterministic ordering
     groupDevices.sort((a, b) => (a.device_path || '').localeCompare(b.device_path || ''));
-    
+
     groupDevices.forEach(device => {
       const bayId = `bay${bayNum}`;
-      mapping[bayId] = {
-        device_path: device.device_path,
-        device_name: device.device_name,
-        controller_pci: device.controller_pci
-      };
+      if (localBayMapCopy && bayId in localBayMapCopy) {
+        const byPathToUse = device.by_path || device.device_path;
+        mapping[bayId] = {
+          device_path: byPathToUse,
+          device_name: device.device_name,
+          controller_pci: device.controller_pci
+        };
+      } else {
+        skippedCount++;
+      }
       bayNum++;
     });
   });
-  
-  return mapping;
+
+  return { mapping, skippedCount, mismatchCount: 0 };
 }
 
-function applyPciSequentialPattern(devices, startBay) {
-  // Group by PCI address prefix (bus:device.function prefix)
-  const pciGroups = {};
-  devices.forEach(device => {
-    const pciAddr = device.controller_pci || 'unknown';
-    const prefix = pciAddr.substring(0, pciAddr.lastIndexOf('.')) || pciAddr;
-    if (!pciGroups[prefix]) {
-      pciGroups[prefix] = [];
-    }
-    pciGroups[prefix].push(device);
-  });
-  
-  // Sort groups by PCI prefix for deterministic ordering (Rule #4: consistent ordering)
-  const sortedPciPrefixes = Object.keys(pciGroups).sort();
-  
-  const mapping = {};
-  let bayNum = startBay;
-  
-  sortedPciPrefixes.forEach(prefix => {
-    const groupDevices = pciGroups[prefix];
-    // Sort devices within each group by device_path for deterministic ordering
-    groupDevices.sort((a, b) => (a.device_path || '').localeCompare(b.device_path || ''));
-    
-    groupDevices.forEach(device => {
-      const bayId = `bay${bayNum}`;
-      mapping[bayId] = {
-        device_path: device.device_path,
-        device_name: device.device_name,
-        controller_pci: device.controller_pci
-      };
-      bayNum++;
-    });
-  });
-  
-  return mapping;
+// Backward compatibility wrappers
+function applySequentialPattern(devices, startBay, enclosureSlots, scsiProjections) {
+  return applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections, 'none');
+}
+
+function applyControllerSequentialPattern(devices, startBay, enclosureSlots, scsiProjections) {
+  return applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections, 'controller');
+}
+
+function applyPciSequentialPattern(devices, startBay, enclosureSlots, scsiProjections) {
+  return applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections, 'pci');
 }
 
 function generateMappingPreview() {
@@ -714,8 +997,7 @@ function generateMappingPreview() {
   hideMappingValidationError();
   
   if (!discoveryState.devicesByType || Object.keys(discoveryState.devicesByType).length === 0) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">No devices discovered. Click "Discover Slots" first.</div>';
-    mappingPreview.style.display = 'block';
+    setPreviewMessage('No devices discovered. Click "Discover Slots" first.');
     return null;
   }
   
@@ -724,69 +1006,67 @@ function generateMappingPreview() {
   const filter = mappingDeviceFilter.value;
   
   // Validate inputs
-  if (!validateMappingPattern(pattern)) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Invalid mapping pattern selected.</div>';
-    mappingPreview.style.display = 'block';
-    return null;
-  }
-  
-  if (!validateStartBay(startBay)) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Starting bay must be between 0 and 127.</div>';
-    mappingPreview.style.display = 'block';
-    return null;
-  }
-  
-  if (!validateDeviceFilter(filter)) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Invalid device filter selected.</div>';
-    mappingPreview.style.display = 'block';
-    return null;
-  }
+  if (!validateMappingPattern(pattern)) { setPreviewMessage('Invalid mapping pattern selected.'); return null; }
+  if (!validateStartBay(startBay)) { setPreviewMessage('Starting bay must be between 0 and 127.'); return null; }
+  if (!validateDeviceFilter(filter)) { setPreviewMessage('Invalid device filter selected.'); return null; }
   
   // Flatten devices with filter
   const devices = flattenDevices(discoveryState.devicesByType, filter);
   
   if (devices.length === 0) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-warning);">No devices match the selected filter.</div>';
-    mappingPreview.style.display = 'block';
+    setPreviewMessage('No devices match the selected filter.', true);
     return null;
   }
   
   // Apply pattern
-  let mapping;
+  let patternResult;
   switch (pattern) {
     case 'sequential':
-      mapping = applySequentialPattern(devices, startBay);
+      patternResult = applySequentialPattern(devices, startBay, discoveryState.enclosureSlots, discoveryState.scsiSlotProjections);
       break;
     case 'controller_sequential':
-      mapping = applyControllerSequentialPattern(devices, startBay);
+      patternResult = applyControllerSequentialPattern(devices, startBay, discoveryState.enclosureSlots, discoveryState.scsiSlotProjections);
       break;
     case 'pci_sequential':
-      mapping = applyPciSequentialPattern(devices, startBay);
+      patternResult = applyPciSequentialPattern(devices, startBay, discoveryState.enclosureSlots, discoveryState.scsiSlotProjections);
       break;
     default:
-      mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Unknown pattern type.</div>';
-      mappingPreview.style.display = 'block';
+      setPreviewMessage('Unknown pattern type.');
       return null;
   }
-  
+
+  const mapping = patternResult.mapping;
+  const skippedCount = patternResult.skippedCount || 0;
+  const mismatchCount = patternResult.mismatchCount || 0;
+
+  // Show warning if devices were skipped
+  if (skippedCount > 0) {
+    showMappingValidationError(`Warning: ${skippedCount} device(s) skipped due to missing bays in configuration. Add more bays or adjust the starting bay number.`);
+  }
+
+  // Show warning if device paths mismatched between enclosure and device data
+  if (mismatchCount > 0) {
+    const existingWarning = mappingValidationError.textContent || '';
+    const mismatchMsg = `Warning: ${mismatchCount} device(s) in enclosure slots not found in device list. Discovery data may be stale.`;
+    showMappingValidationError(existingWarning ? `${existingWarning} ${mismatchMsg}` : mismatchMsg);
+  }
+
   // Comprehensive validation (Task 4.8)
   const validation = validateMapping(mapping);
   if (!validation.valid) {
     showMappingValidationError(validation.errors.join('; '));
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Mapping validation failed. See error message above.</div>';
-    mappingPreview.style.display = 'block';
+    setPreviewMessage('Mapping validation failed. See error message above.');
     applyMappingBtn.disabled = true;
     return null;
   }
-  
+
   // Render preview (Rule #5: DoS prevention - limit preview size)
   const mappingKeys = Object.keys(mapping);
   if (mappingKeys.length > 128) {
-    mappingPreview.innerHTML = '<div style="color: var(--color-danger);">Mapping exceeds maximum of 128 bays.</div>';
-    mappingPreview.style.display = 'block';
+    setPreviewMessage('Mapping exceeds maximum of 128 bays.');
     return null;
   }
-  
+
   let html = `<div style="font-size: 0.75rem; color: #888; margin-bottom: 8px;">${mappingKeys.length} device(s) will be mapped:</div>`;
   html += mappingKeys.slice(0, 100).map(bayId => {
     const device = mapping[bayId];
@@ -811,6 +1091,15 @@ function generateMappingPreview() {
 }
 
 async function applyMappingToBayConfig() {
+  // Handle manual mapping mode - set currentMappingPreview from manualMappings
+  if (mappingMode === 'manual') {
+    if (Object.keys(manualMappings).length === 0) {
+      alert('No manual mappings to apply.');
+      return;
+    }
+    currentMappingPreview = manualMappings;
+  }
+
   // Clear previous validation errors
   hideMappingValidationError();
   
@@ -863,21 +1152,6 @@ async function applyMappingToBayConfig() {
     restorePreviousBayMapState();
   }
 }
-
-// Modify applyMappingToBayConfig to handle manual mappings
-const originalApplyMappingToBayConfig = applyMappingToBayConfig;
-applyMappingToBayConfig = async function() {
-  if (mappingMode === 'manual') {
-    if (Object.keys(manualMappings).length === 0) {
-      alert('No manual mappings to apply.');
-      return;
-    }
-    currentMappingPreview = manualMappings;
-  }
-
-  // Call original function
-  await originalApplyMappingToBayConfig();
-};
 
 // Manual mapping functions (Task 4.5)
 
@@ -937,15 +1211,9 @@ function filterDevices(devices, searchTerm, filterType) {
     
     // Apply search term filter (Rule #5: DoS prevention - limit search complexity)
     if (term === '') return true;
-    
-    const path = (device.device_path || '').toLowerCase();
-    const name = (device.device_name || '').toLowerCase();
-    const controller = (device.controller_pci || '').toLowerCase();
-    const model = (device.smart?.model || '').toLowerCase();
-    const serial = (device.smart?.serial || '').toLowerCase();
-    
-    return path.includes(term) || name.includes(term) || controller.includes(term) ||
-           model.includes(term) || serial.includes(term);
+    return [device.device_path, device.device_name, device.controller_pci, device.smart?.model, device.smart?.serial]
+      .map(v => (v || '').toLowerCase())
+      .some(v => v.includes(term));
   });
 }
 
@@ -1060,7 +1328,7 @@ function addManualMapping() {
 
   // Add mapping
   manualMappings[bayId] = {
-    device_path: selectedDevice.device_path,
+    device_path: selectedDevice.by_path || selectedDevice.device_path, // Use by_path if available
     device_name: selectedDevice.device_name,
     controller_pci: selectedDevice.controller_pci,
     type: selectedDevice.type

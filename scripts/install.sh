@@ -351,6 +351,19 @@ setup_config() {
 
     mkdir -p "$CONFIG_DIR"
 
+    # Critical #2: Detect server IP for CORS origins
+    local detected_ip=""
+    if command -v ip &>/dev/null; then
+        detected_ip=$(ip route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' | head -n1)
+    fi
+    if [ -z "$detected_ip" ] && command -v hostname &>/dev/null; then
+        detected_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+    fi
+    if [ -z "$detected_ip" ]; then
+        detected_ip="127.0.0.1"
+    fi
+    local cors_origin="http://${detected_ip}:${WIPE_PORT}"
+
      # bay_map.json - only create if missing
     if [ ! -f "$CONFIG_DIR/bay_map.json" ]; then
         info "Creating default clean-slate bay_map.json..."
@@ -451,10 +464,12 @@ EOF
         export CRYPTO_VERIFICATION_MODE
         export LAN_PASSPHRASE
         export SLACK_WEBHOOK
+        export CORS_ORIGIN
         
         "$PYTHON_BIN" -c "
 import json, os
 path = '$CONFIG_DIR/policy.json'
+cors_origin = os.environ.get('CORS_ORIGIN', 'http://127.0.0.1:5000')
 data = {
   'prewipe_spot_check': True,
   'post_erase_marker': True,
@@ -462,7 +477,7 @@ data = {
   'method_priority': {
     'nvme': ['crypto', 'block', 'overwrite'],
     'sas':  ['crypto', 'block', 'overwrite'],
-    'sata': ['enhanced_secure_erase', 'secure_erase', 'overwrite']
+    'sata': ['crypto', 'block', 'overwrite']
   },
   'crypto_fail_retry_block': True,
   'strict_audit_mode': os.environ.get('STRICT_AUDIT_MODE', 'true').lower() == 'true',
@@ -473,7 +488,25 @@ data = {
   'station_id': os.environ.get('STATION_ID', 'wipe-station-01'),
   'wipe_passphrase': os.environ.get('WIPE_PASSPHRASE', ''),
   'slack_webhook_url': os.environ.get('SLACK_WEBHOOK', ''),
-  'lan_passphrase': os.environ.get('LAN_PASSPHRASE', 'eraser123')
+  'lan_passphrase': os.environ.get('LAN_PASSPHRASE', 'eraser123'),
+  'allowed_cors_origins': ['http://localhost:5000', 'http://127.0.0.1:5000', cors_origin],
+  'triage_thresholds': {
+    'ssd_new_poh_threshold': 500,
+    'ssd_high_poh_threshold': 40000,
+    'hdd_new_poh_threshold': 500,
+    'hdd_high_poh_threshold': 40000,
+    'health_score_destroy_threshold': 20,
+    'health_score_scratch_threshold': 60,
+    'ssd_remaining_life_destroy_threshold': 10,
+    'ssd_remaining_life_scratch_threshold': 60,
+    'ssd_remaining_life_good_threshold': 80,
+    'ssd_new_fdw_threshold': 0.06,
+    'hdd_new_fdw_threshold': 1.0,
+    'hdd_heavy_fdw_threshold': 150,
+    'realloc_raw_new_threshold': 0,
+    'pending_sectors_destroy_threshold': 10,
+    'pending_sectors_scratch_threshold': 10
+  }
 }
 with open(path, 'w', encoding='utf-8') as f:
     json.dump(data, f, indent=2)
@@ -651,17 +684,112 @@ set_permissions() {
 # STEP 10 - Install systemd service
 # -----------------------------------------------------------------------------
 
+detect_system_resources() {
+    info "Detecting system resources for resource limits..."
+
+    # High #10: Detect memory (in GB)
+    local total_mem_kb
+    total_mem_kb=$(grep MemTotal /proc/meminfo | awk '{print $2}')
+    local total_mem_gb=$((total_mem_kb / 1024 / 1024))
+
+    # Calculate memory limits: MemoryLimit=50%, MemoryMax=75% (floor: 2G/4G)
+    local memory_limit=$((total_mem_gb / 2))
+    if [ $memory_limit -lt 2 ]; then
+        memory_limit=2
+    fi
+    local memory_max=$((total_mem_gb * 3 / 4))
+    if [ $memory_max -lt 4 ]; then
+        memory_max=4
+    fi
+
+    # High #10: Detect CPU cores
+    local cpu_cores
+    cpu_cores=$(nproc)
+    # Calculate CPU quota: (cores-1)×100% (minimum 100%)
+    local cpu_quota=$(( (cpu_cores - 1) * 100 ))
+    if [ $cpu_quota -lt 100 ]; then
+        cpu_quota=100
+    fi
+
+    # High #10: File descriptor limit (fixed)
+    local limit_nofile=65536
+
+    info "System resources detected: ${total_mem_gb}GB RAM, ${cpu_cores} CPU cores"
+    info "Resource limits: MemoryLimit=${memory_limit}G, MemoryMax=${memory_max}G, CPUQuota=${cpu_quota}%, LimitNOFILE=${limit_nofile}"
+
+    # Export for use in service file generation
+    export MEMORY_LIMIT="${memory_limit}G"
+    export MEMORY_MAX="${memory_max}G"
+    export CPU_QUOTA="${cpu_quota}%"
+    export LIMIT_NOFILE="$limit_nofile"
+}
+
 install_service() {
     info "Installing systemd service..."
 
-    cp "$INSTALL_DIR/systemd/drive-eraser.service" \
-       "/etc/systemd/system/$SERVICE_NAME.service"
+    detect_system_resources
+
+    # Generate service file with dynamic resource limits
+    cat > "/etc/systemd/system/$SERVICE_NAME.service" << EOF
+[Unit]
+Description=Drive Wipe Station
+Documentation=https://github.com/NevrinO/drive-eraser
+After=network.target
+Wants=network.target
+
+[Service]
+# Run as dedicated system user
+User=$APP_USER
+Group=$APP_USER
+
+# Application location
+WorkingDirectory=$INSTALL_DIR
+
+# Start command
+ExecStart=$VENV_DIR/bin/python backend/app.py
+
+# Restart behavior
+Restart=on-failure
+RestartSec=5s
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=drive-eraser
+
+# Security hardening
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+
+# High #10: Dynamic resource limits based on system detection
+# Memory limits: 50% soft limit (floor 2G), 75% hard limit (floor 4G)
+MemoryLimit=$MEMORY_LIMIT
+MemoryMax=$MEMORY_MAX
+# CPU quota: (cores-1)×100% (minimum 100%)
+CPUQuota=$CPU_QUOTA
+# File descriptor limit
+LimitNOFILE=$LIMIT_NOFILE
+
+# Prefixing with '-' prevents systemd from crashing if folders are temporarily missing
+ReadWritePaths=-$INSTALL_DIR/data
+ReadWritePaths=-$INSTALL_DIR/logs
+
+# Environment
+Environment=FLASK_ENV=production
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+EOF
 
     systemctl daemon-reload
     systemctl enable "$SERVICE_NAME"
     systemctl restart "$SERVICE_NAME"
 
-    success "Service installed and started."
+    success "Service installed and started with dynamic resource limits."
 }
 
 # -----------------------------------------------------------------------------

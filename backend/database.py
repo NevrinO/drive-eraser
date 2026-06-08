@@ -2,6 +2,10 @@ import sqlite3
 import json
 import os
 import re
+import secrets
+import time
+from contextlib import closing
+from datetime import datetime, timezone
 from common import get_db_path, get_cert_dir
 
 def ensure_column(conn, table_name, column_name, column_def):
@@ -10,16 +14,57 @@ def ensure_column(conn, table_name, column_name, column_def):
         raise ValueError(f"Invalid table name: {table_name}")
     if not column_name.replace("_", "").isalnum():
         raise ValueError(f"Invalid column name: {column_name}")
-    # Validate column_def matches expected pattern: "column_name TYPE [DEFAULT 'value']"
+    
+    # Critical #5: Parse and validate column definition components separately
     # Allowed types: TEXT, INTEGER, REAL, BLOB
     allowed_types = {"TEXT", "INTEGER", "REAL", "BLOB"}
-    column_def_pattern = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*\s+(TEXT|INTEGER|REAL|BLOB)(\s+DEFAULT\s+\'[^\']*\')?$')
-    if not column_def_pattern.match(column_def):
+    
+    # Split column_def into components: name, type, and optional DEFAULT clause
+    # Use regex to correctly handle quoted string defaults containing spaces
+    token_pattern = re.compile(r"'[^']*'|\S+")
+    parts = token_pattern.findall(column_def)
+    if len(parts) < 2:
         raise ValueError(f"Invalid column definition: {column_def}")
-    # Ensure column_name in column_def matches the provided column_name parameter
-    def_column_name = column_def.split()[0]
+    
+    def_column_name = parts[0]
+    column_type = parts[1].upper()
+    
+    # Validate column name matches parameter
     if def_column_name != column_name:
         raise ValueError(f"Column name mismatch: definition has '{def_column_name}' but parameter is '{column_name}'")
+    
+    # Validate column type is in allowlist
+    if column_type not in allowed_types:
+        raise ValueError(f"Invalid column type: {column_type}. Must be one of {allowed_types}")
+    
+    # Validate DEFAULT clause if present
+    # Critical #3: Use regex with word boundary to ensure DEFAULT is a separate token
+    # This prevents injection attacks like "column_name TEXT DEFAULT'evil'); DROP TABLE..."
+    if len(parts) >= 4 and re.match(r'\bDEFAULT\b', parts[2], re.IGNORECASE):
+        if len(parts) > 4:
+            raise ValueError(f"Unexpected trailing tokens in column definition: {column_def}")
+        default_value = parts[3]
+        # Critical #5: Validate DEFAULT value against strict allowlist
+        # Allow only: NULL, numeric literals (integer/float), or string literals in single quotes
+        if default_value.upper() == "NULL":
+            # NULL is safe
+            pass
+        elif default_value.startswith("'") and default_value.endswith("'"):
+            # String literal - validate it's a simple string (no nested quotes or escapes)
+            # Allow only alphanumeric, spaces, and basic punctuation
+            inner_value = default_value[1:-1]
+            if not re.match(r'^[a-zA-Z0-9 _\-.,:]+$', inner_value):
+                raise ValueError(f"Unsafe DEFAULT value: {default_value}. Only alphanumeric, spaces, and basic punctuation allowed in string literals")
+        elif re.match(r'^-?\d+$', default_value):
+            # Integer literal is safe
+            pass
+        elif re.match(r'^-?\d+\.\d+$', default_value):
+            # Float literal is safe
+            pass
+        else:
+            raise ValueError(f"Unsafe DEFAULT value: {default_value}. Only NULL, numeric literals, or simple string literals allowed")
+    elif len(parts) > 2:
+        raise ValueError(f"Unexpected trailing tokens in column definition: {column_def}")
     
     columns = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
     names = {col[1] for col in columns}
@@ -33,7 +78,7 @@ def ensure_column(conn, table_name, column_name, column_def):
 def init_wipe_db():
     os.makedirs(os.path.dirname(get_db_path()), exist_ok=True)
     os.makedirs(get_cert_dir(), exist_ok=True)
-    with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
+    with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
         # Enable Write-Ahead Logging to keep UI reads non-blocking against background writers
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute(
@@ -63,11 +108,28 @@ def init_wipe_db():
         ensure_column(conn, "erase_jobs", "certificate_json", "certificate_json TEXT")
         ensure_column(conn, "erase_jobs", "job_type", "job_type TEXT DEFAULT 'erase'")
         
-        # Migration: Set default job_type for existing jobs
-        conn.execute(
-            "UPDATE erase_jobs SET job_type = 'erase' WHERE job_type IS NULL"
-        )
-        conn.commit()
+        # Medium #43: Migration with retry logic and exponential backoff
+        # Retry up to 3 times with 1s, 2s, 4s backoff for concurrent migration attempts
+        max_retries = 3
+        backoff_delays = [1, 2, 4]  # seconds
+        
+        for attempt in range(max_retries):
+            try:
+                conn.execute("BEGIN TRANSACTION")
+                conn.execute(
+                    "UPDATE erase_jobs SET job_type = 'erase' WHERE job_type IS NULL"
+                )
+                conn.commit()
+                break  # Success, exit retry loop
+            except Exception as e:
+                conn.rollback()
+                if attempt < max_retries - 1:
+                    # Retry with exponential backoff
+                    delay = backoff_delays[attempt]
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed, re-raise the exception
+                    raise
 
 # Valid job types - allowlist for validation
 # job_type distinguishes between different job types:
@@ -81,7 +143,14 @@ def persist_job(job):
     if job_type not in VALID_JOB_TYPES:
         raise ValueError(f"Invalid job_type: {job_type}. Must be one of {VALID_JOB_TYPES}")
     
-    with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
+    # Generate friendly_id before INSERT to avoid race condition (lesson-learned #2)
+    if not job.get("friendly_id"):
+        date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
+        random_hex = secrets.token_hex(3).upper()  # 6 hex chars for better entropy
+        friendly_id = f"CERT-{date_str}-{random_hex}"
+        job["friendly_id"] = friendly_id
+    
+    with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -119,19 +188,11 @@ def persist_job(job):
                 job_type,
             ),
         )
-        if not job.get("friendly_id"):
-            job_number = cursor.lastrowid
-            friendly_id = f"SANI-{job_number:06d}"
-            job["friendly_id"] = friendly_id
-            cursor.execute(
-                "UPDATE erase_jobs SET friendly_id = ? WHERE id = ?",
-                (friendly_id, job.get("id")),
-            )
         conn.commit()
 
 def load_job(job_id):
     """Load a job from the database by ID or friendly_id."""
-    with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
+    with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
         conn.row_factory = sqlite3.Row
         row = conn.execute(
             """

@@ -79,21 +79,21 @@ testWebhookBtn.addEventListener("click", async () => {
     } catch (e) {
       console.error("Failed to parse webhook test response JSON:", e);
       webhookTestResult.classList.remove("hidden");
-      webhookTestResult.className = "test-result-label test-result-error";
+      webhookTestResult.className = "test-result-label test-result-label--error";
       webhookTestResult.textContent = "Error: Invalid server response";
       return;
     }
     webhookTestResult.classList.remove("hidden");
     if (response.ok) {
-      webhookTestResult.className = "test-result-label test-result-success";
+      webhookTestResult.className = "test-result-label test-result-label--success";
       webhookTestResult.textContent = data.message || "Test Notification Sent!";
     } else {
-      webhookTestResult.className = "test-result-label test-result-error";
+      webhookTestResult.className = "test-result-label test-result-label--error";
       webhookTestResult.textContent = `Failure: ${data.error || "Unknown response"}`;
     }
   } catch (err) {
     webhookTestResult.classList.remove("hidden");
-    webhookTestResult.className = "test-result-label test-result-error";
+    webhookTestResult.className = "test-result-label test-result-label--error";
     webhookTestResult.textContent = `Error: ${err.message}`;
   } finally {
     testWebhookBtn.disabled = false;
@@ -111,8 +111,8 @@ downloadBundleBtn.addEventListener("click", () => {
 
 function showLayoutStatus(message, isError = false) {
   if (!bayLayoutStatus) return;
-  bayLayoutStatus.classList.remove("hidden", "status-ok", "status-error");
-  bayLayoutStatus.classList.add(isError ? "status-error" : "status-ok");
+  bayLayoutStatus.classList.remove("hidden", "status-badge--complete", "status-badge--failed");
+  bayLayoutStatus.classList.add(isError ? "status-badge--failed" : "status-badge--complete");
   bayLayoutStatus.textContent = message;
 }
 

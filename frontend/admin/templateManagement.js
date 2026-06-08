@@ -206,20 +206,24 @@ function showTemplateStatus(message, isError = false, isWarning = false) {
   if (!templateStatus) return;
   templateStatus.classList.remove("hidden");
   if (isWarning) {
-    templateStatus.className = "test-result-label test-result-warning";
+    templateStatus.className = "test-result-label test-result-label--warning";
   } else {
-    templateStatus.className = `test-result-label ${isError ? "test-result-error" : "test-result-success"}`;
+    templateStatus.className = `test-result-label ${isError ? "test-result-label--error" : "test-result-label--success"}`;
   }
   templateStatus.textContent = message;
-  setTimeout(() => {
-    templateStatus.classList.add("hidden");
-  }, 5000);
+  // Only auto-hide success/error messages (transient events)
+  // Warnings persist until condition is resolved (system state)
+  if (!isWarning) {
+    setTimeout(() => {
+      templateStatus.classList.add("hidden");
+    }, 5000);
+  }
 }
 
 function showTemplateModalError(message) {
   if (!templateModalError) return;
   templateModalError.classList.remove("hidden");
-  templateModalError.className = "test-result-label test-result-error";
+  templateModalError.className = "test-result-label test-result-label--error";
   templateModalError.textContent = message;
 }
 
@@ -327,16 +331,15 @@ async function loadTemplateList() {
     templates.forEach(template => {
       const item = document.createElement("div");
       item.className = "template-item";
-      item.style.cssText = "display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #333; background: #222;";
       item.innerHTML = `
-        <div>
+        <div style="display: flex; align-items: baseline; gap: 12px;">
           <div style="font-weight: bold; color: var(--color-primary);">${escapeHtml(template.name)}</div>
           <div style="font-size: 0.7rem; color: #888;">ID: ${escapeHtml(template.id)} | Bays: ${template.bay_count || 0} | Vendor: ${escapeHtml(template.vendor || "Generic")}</div>
         </div>
         <div style="display: flex; gap: 8px;">
           <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="preview" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem;">Preview</button>
           <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="edit" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem;">Edit</button>
-          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="delete" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger);">Delete</button>
+          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="delete" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); border-radius: 4px;">Delete</button>
         </div>
       `;
       templateList.appendChild(item);
@@ -682,8 +685,8 @@ function renderTemplatePreviewGrid(template) {
       } else {
         // Show both numbers with labels
         cell.innerHTML = `
-          <div style="font-size: 0.6rem; color: #666; line-height: 1.1;">Ref: ${refBayNum || "-"}</div>
-          <div style="font-size: 0.8rem; color: var(--color-primary); font-weight: bold; line-height: 1.1;">Tr: ${travBayNum || "-"}</div>
+          <div style="font-size: 0.6rem; color: #ccc; line-height: 1.1;">Ref: ${refBayNum || "-"}</div>
+          <div style="font-size: 0.8rem; color: #fff; font-weight: bold; line-height: 1.1;">Tr: ${travBayNum || "-"}</div>
         `;
       }
       templatePreviewGrid.appendChild(cell);
@@ -699,15 +702,6 @@ function renderTemplatePreviewGrid(template) {
 
   const legend = document.createElement("div");
   legend.className = "preview-legend";
-  legend.style.cssText = `
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    gap: 32px;
-    margin-top: 12px;
-    font-size: 0.75rem;
-    color: #888;
-  `;
   legend.innerHTML = `
     <div><span style="color: #666;">Ref</span> = Reference number (for skip position input)</div>
     <div><span style="color: var(--color-primary); font-weight: bold;">Tr</span> = Traversal order (actual erasure)</div>
@@ -808,4 +802,12 @@ function closeTemplatePreview() {
   templatePreviewModal.setAttribute("aria-hidden", "true");
   resetPreviewGrid();
 }
+
+// Cleanup preview animation interval on page unload
+window.addEventListener("beforeunload", () => {
+  if (previewAnimationInterval) {
+    clearInterval(previewAnimationInterval);
+    previewAnimationInterval = null;
+  }
+});
 // --- END OF FILE frontend/admin/templateManagement.js ---

@@ -192,10 +192,6 @@ async function renderBayMappingConfig() {
   }
 }
 
-document.getElementById('btn-auto-detect').addEventListener('click', () => {
-    openDiscoveryModal();
-});
-
 function populatePathDropdown(selectElement, unmappedDrives, currentValue, filterType) {
     selectElement.innerHTML = '<option value="">-- Select Drive Path (Empty Slot) --</option>';
     

@@ -1,5 +1,15 @@
 # Architecture Decisions
 
+**Purpose**: This document records high-level architectural decisions, design rationale, and policy choices for the Drive Eraser project. It answers "why" the system is built this way.
+
+**Relation to other docs**:
+- `docs/CODE_MAP.md` - Navigation guide and codebase structure (answers "where" things are)
+- `README.md` - Quickstart and installation instructions
+- `docs/api-contract.md` - API endpoint specifications
+- `docs/SOP_technician_guide.md` - Operational procedures for technicians
+
+---
+
 ## Product Direction
 - Build a local web-based drive sanitization station for Linux
 - Access pattern: local browser / KVM on the wipe server

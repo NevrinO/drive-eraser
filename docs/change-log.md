@@ -1,5 +1,48 @@
 # Change Log
 
+## v0.26 - Comprehensive Security Remediation & Hardening
+- **Critical Security Fixes**:
+  - Added configuration validation for strict audit mode requiring non-empty wipe passphrase
+  - Implemented configurable CORS origins with local network support
+  - Added Content Security Policy (CSP) headers and meta tags
+  - Implemented SameSite cookie attribute for CSRF protection
+  - Added SQL column validation with allowlist for DEFAULT values to prevent injection
+  - Added placeholder device path detection with warning in bay map loading
+  - Implemented JSON schema validation for policy.json configuration
+- **Web Security**:
+  - Implemented Flask-Limiter with per-endpoint rate limiting
+  - Added dynamic resource limits in systemd service based on system hardware
+- **Concurrency & Signal Handling**:
+  - Added signal handlers (SIGTERM/SIGINT) for long-running operations
+  - Implemented device-level locking for verification operations
+  - Added graceful shutdown with subprocess termination
+  - Fixed race condition in job status updates
+- **Subprocess Security**:
+  - Added explicit `shell=False` to all subprocess.run() calls
+- **Frontend Improvements**:
+  - Fixed memory leaks by adding event listener cleanup
+  - Replaced infinite polling loops with setInterval and beforeunload cleanup
+  - Replaced document.write() with DOM manipulation
+  - Implemented centralized error handling utility
+  - Added keyboard navigation support and ARIA live regions
+  - Added focus trapping in modals and skip-to-content link
+- **Certificate & Configuration**:
+  - Added bad sector detection and logging in certificate generation
+  - Implemented certificate retention policy with cleanup function
+  - Made logo size limit configurable
+  - Added bulk certificate batch size configuration
+  - Moved KDF iteration count to shared constants
+- **Documentation**:
+  - Updated API contract with all 29 endpoints
+  - Corrected docs/CODE_MAP.md to reflect actual modular admin structure
+  - Completed lifecycle.md documentation with all states and diagrams
+  - Added comprehensive documentation links to README.md
+  - Documented systemd NoNewPrivileges hardening as future enhancement
+- **Testing Infrastructure**:
+  - Created test suite structure with pytest
+  - Added unit tests for database SQL injection prevention
+  - Added integration tests for API endpoints
+
 ## v0.25 - Hybrid Logging, Diagnostics Support Bundles, Remote UI Gates, & Interactive Bay Mapping
 - **Hybrid Logging Subsystem**: Segregated logging boundaries. Technical runtime alerts go to `app.log` (rotating at 10MB). Active subprocess `stdout`/`stderr` pipes write progressively to ephemeral `data/logs/active/job-{id}.log` streams. Failed wipes are closed and relocated to `data/logs/failed/` with complete raw `smartctl -a` attributes appended for post-mortem forensics. Successful runs are cleanly expunged to preserve disk space.
 - **Auto-Purge Garbage Collection**: Integrated a deterministic retention cleaner executing synchronously on the completion of any wipe. Deletes any active or failed logs whose modification age exceeds 30 days.
@@ -69,7 +112,7 @@
   - `frontend/styles.css`
 - Documentation sync updates applied to:
   - `docs/handoff_prompt.md`
-  - `docs/decision.md`
+  - `docs/ARCHITECTURE.md`
   - `docs/current_state.md`
 
 ## v0.19 - Phase 3 Completion Actions in Jobs View
@@ -85,7 +128,7 @@
 - Wired job-tracking flow to surface/hide completion actions based on terminal job state.
 - Documentation sync updates applied to:
   - `docs/handoff_prompt.md`
-  - `docs/decision.md`
+  - `docs/ARCHITECTURE.md`
   - `docs/current_state.md`
 
 - Synced project documentation to the approved UI implementation baseline before coding.
@@ -100,7 +143,7 @@
   - erase-method policy and recommendation precedence remain unchanged
 - Updated docs:
   - `docs/handoff_prompt.md`
-  - `docs/decision.md`
+  - `docs/ARCHITECTURE.md`
   - `docs/current_state.md`
 
 ## v0.17 - Frontend Safety/Recommendation UX Pass

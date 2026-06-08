@@ -1,6 +1,8 @@
 # --- START OF FILE backend/app_config.py ---
 from flask import Flask
 from flask_cors import CORS
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 import sys
 import os
 import re
@@ -68,7 +70,28 @@ setup_application_logging()
 logger = logging.getLogger("app")
 
 app = Flask(__name__)
-CORS(app)
+
+# High #11: Initialize Flask-Limiter for rate limiting
+# NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.
+# For multi-worker deployments (e.g., gunicorn with multiple workers), configure Redis or Memcached:
+#   storage_uri="redis://localhost:6379" or storage_uri="memcached://localhost:11211"
+# This is a known limitation documented for the current single-worker architecture.
+limiter = Limiter(
+    app=app,
+    key_func=get_remote_address,
+    default_limits=["200 per day", "50 per hour"],
+    storage_uri="memory://",
+    strategy="fixed-window"
+)
+
+# Critical #2: Load CORS origins from policy configuration
+policy = load_policy()
+allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
+CORS(app, origins=allowed_origins)
+
+# Critical #4: Configure SameSite cookie attribute for CSRF protection
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()
@@ -99,24 +122,7 @@ def calculate_session_token(passphrase):
 def is_localhost(ip):
     return ip in ("127.0.0.1", "::1", "localhost")
 
-@app.before_request
-def security_gate():
-    from flask import request, jsonify
-    if not request.path.startswith("/api/"):
-        return None
-    if request.path in ("/api/auth/verify", "/api/status"):
-        return None
-    if is_localhost(request.remote_addr):
-        return None
-        
-    policy = load_policy()
-    lan_passphrase = policy.get("lan_passphrase", "eraser123")
-    
-    expected_token = calculate_session_token(lan_passphrase)
-    cookie_token = request.cookies.get("admin_session")
-    
-    if cookie_token == expected_token:
-        return None
-        
-    return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+# Blueprint registration and security middleware are deferred to app.py to break circular imports.
+# Route modules import from app_config.py (logger, limiter, etc.),
+# while app_config.py is imported by certificates.py during test collection.
 # --- END OF FILE backend/app_config.py ---

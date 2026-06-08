@@ -44,3 +44,38 @@ For detailed operational guidance, see:
 - **[Technician SOP](docs/SOP_technician_guide.md)** - Step-by-step workflow for health checking and erasing drives
 - **[Troubleshooting](docs/troubleshooting.md)** - Common issues and solutions
 - **[Runbook](docs/runbook.md)** - Operational commands and procedures
+- **[API Contract](docs/api-contract.md)** - Complete API endpoint documentation
+- **[Lifecycle Documentation](docs/lifecycle.md)** - Job state transitions and workflow
+- **[Change Log](docs/change-log.md)** - Version history and changes
+- **[Test Plan](docs/test-plan.md)** - Manual testing procedures
+- **[Release Checklist](docs/release-checklist.md)** - Pre-release validation steps
+
+## Testing
+
+### Running Automated Tests
+
+The project includes automated unit tests for critical safety functions:
+
+1. **Install test dependencies:**
+   ```bash
+   bash scripts/install-tests.sh
+   ```
+
+   Note: If you encounter permission errors, you may need to make the scripts executable first:
+   ```bash
+   chmod +x scripts/install-tests.sh scripts/run-tests.sh
+   ```
+
+2. **Run the test suite:**
+   ```bash
+   bash scripts/run-tests.sh
+   ```
+
+The test suite includes:
+- `tests/test_database.py` - SQL injection prevention tests
+- `tests/test_disk_utils.py` - Device path validation security tests
+- `tests/test_disk_ops.py` - OS drive detection tests
+- `tests/test_job_management.py` - Erase command preparation safety tests
+- `tests/test_api_routes.py` - API endpoint integration tests (structure documented)
+
+Test coverage reports are generated in the `htmlcov/` directory after running the test suite.

@@ -12,10 +12,17 @@ from datetime import datetime, timezone
 from bs4 import BeautifulSoup
 from PIL import Image
 import io
-from common import load_policy, get_cert_dir, get_data_dir
+from common import load_policy, get_cert_dir, get_data_dir, SIGNATURE_KDF_ITERATIONS
 from app_config import logger
+from smart_parsing import is_drive_ssd
+from verification import get_software_versions
 
-SIGNATURE_KDF_ITERATIONS = 200000
+# Medium #38: Certificate chain validation is not required for standalone certificates.
+# These certificates are self-contained attestations of data erasure, not part of a PKI hierarchy.
+# Each certificate is independently signed with HMAC-SHA256 using a shared passphrase (if configured).
+# There is no certificate authority, no intermediate certificates, and no chain of trust to validate.
+# The signature integrity is verified by recomputing the HMAC with the known passphrase and comparing
+# it to the stored signature value. This is a simple integrity check, not a PKI chain validation.
 
 # Base64 encoded SVG logo placeholder (simple shield icon with company name)
 LOGO_BASE64 = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiB2aWV3Qm94PSIwIDAgMTIwIDQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNDAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSIxMCIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxZTNhOGEiPkRyaXZlIFdhc2hlciBTdGF0aW9uPC90ZXh0Pgo8L3N2Zz4="
@@ -45,15 +52,24 @@ def get_custom_logo_base64():
     """Load and convert custom logo to base64 data URI if it exists."""
     logo_path = os.path.join(get_data_dir(), "logo.png")
     hash_path = logo_path + ".sha256"
-    
+
     if not os.path.exists(logo_path):
         return ""
-    
+
     try:
-        # Check file size (max 1MB)
+        # Medium #60: Load configurable logo size limit from policy
+        max_size_mb = 1  # Default fallback
+        try:
+            policy = load_policy()
+            max_size_mb = policy.get("max_logo_size_mb", 1)
+        except Exception:
+            pass  # Use default if policy loading fails
+
+        # Check file size against configurable limit
         file_size = os.path.getsize(logo_path)
-        if file_size > 1024 * 1024:  # 1MB
-            logger.warning(f"Logo file exceeds 1MB limit: {file_size} bytes")
+        max_size_bytes = max_size_mb * 1024 * 1024
+        if file_size > max_size_bytes:
+            logger.warning(f"Logo file exceeds {max_size_mb}MB limit: {file_size} bytes")
             return ""
         
         # Validate file integrity by checking hash
@@ -219,7 +235,7 @@ def build_certificate_html(certificate):
     ok = verification.get("ok")
     
     # Dynamic header title and color accents based on physical wipe status
-    title = "Certificate of Data Destruction" if ok else "Certificate of Sanitization Failure"
+    title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
     header_color = "#1e3a8a" if ok else "#dc2626"
     status_class = "status-ok" if ok else "status-fail"
     status_text = esc(verification.get("status"))
@@ -232,6 +248,10 @@ def build_certificate_html(certificate):
         f"<tr><th>Evidence: {esc(k)}</th><td><pre>{json_cell(v)}</pre></td></tr>"
         for k, v in sorted((certificate.get("verification_evidence") or {}).items(), key=lambda item: str(item[0]))
     )
+    
+    # Build software versions row
+    software_versions = certificate.get("software_versions") or {}
+    software_versions_text = "; ".join(f"{k}: {v}" for k, v in sorted(software_versions.items())) if software_versions else "Not available"
 
     template = """<!doctype html>
 <html lang="en">
@@ -248,16 +268,14 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
 <div class="header">
   <div class="header-left">
     <h1>{{TITLE}}</h1>
-    <div class="meta">Certificate Ref: {{CERTIFICATE_ID}}</div>
   </div>
   <div class="header-right">
-    <img src="{{LOGO}}" alt="Logo" style="max-height: 75px; max-width: 500px;">
+    {{LOGO_IMG}}
   </div>
 </div>
 <div class="section">
 <table>
-<tr><th>Job Number</th><td>{{FRIENDLY_ID}}</td></tr>
-<tr><th>Issued At</th><td>{{ISSUED_AT}}</td></tr>
+<tr><th>Certificate ID</th><td>{{FRIENDLY_ID}}</td></tr>
 <tr><th>Started At</th><td>{{STARTED_AT}}</td></tr>
 <tr><th>Finished At</th><td>{{FINISHED_AT}}</td></tr>
 <tr><th>Ticket Number</th><td>{{TICKET_NUMBER}}</td></tr>
@@ -267,13 +285,14 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
 <tr><th>Serial Number</th><td>{{SERIAL}}</td></tr>
 <tr><th>Model String</th><td>{{MODEL}}</td></tr>
 <tr><th>Capacity Bytes</th><td>{{CAPACITY_BYTES}}</td></tr>
-<tr><th>Interface protocol</th><td>{{INTERFACE_TYPE}}</td></tr>
+<tr><th>Interface Type / Drive Type</th><td>{{INTERFACE_TYPE}} / {{DRIVE_TYPE}}</td></tr>
 <tr><th>Method Used</th><td>{{METHOD}}</td></tr>
+<tr><th>Software Versions</th><td>{{SOFTWARE_VERSIONS}}</td></tr>
 <tr><th>Verification Integrity</th><td class="{{STATUS_CLASS}}">{{STATUS_TEXT}}</td></tr>
+<tr><th>Verification Details</th><td><pre>{{VERIFICATION_DETAILS}}</pre></td></tr>
+{{STANDARD_ROWS}}
 <tr><th>Certificate Integrity</th><td>{{SIGNATURE_STATUS}}</td></tr>
 <tr><th>Audit Signature (HMAC)</th><td><small>{{SIGNATURE}}</small></td></tr>
-{{STANDARD_ROWS}}
-{{EVIDENCE_ROWS}}
 </table>
 </div>
 </div>
@@ -286,12 +305,14 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     content = content.replace("{{TITLE}}", esc(title))
     content = content.replace("{{HEADER_COLOR}}", esc(header_color))
     content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
-    # Use custom logo if available, otherwise use default
+    # Use custom logo if available, otherwise no logo
     custom_logo = get_custom_logo_base64()
-    content = content.replace("{{LOGO}}", custom_logo if custom_logo else LOGO_BASE64)
-    content = content.replace("{{CERTIFICATE_ID}}", esc(certificate.get("id")))
+    if custom_logo:
+        logo_img = f'<img src="{custom_logo}" alt="Logo" style="max-height: 75px; max-width: 500px;">'
+    else:
+        logo_img = ""
+    content = content.replace("{{LOGO_IMG}}", logo_img)
     content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
-    content = content.replace("{{ISSUED_AT}}", esc(certificate.get("issued_at")))
     content = content.replace("{{STARTED_AT}}", esc(certificate.get("started_at")))
     content = content.replace("{{FINISHED_AT}}", esc(certificate.get("finished_at")))
     content = content.replace("{{TICKET_NUMBER}}", esc(certificate.get("ticket_number")))
@@ -302,13 +323,20 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     content = content.replace("{{MODEL}}", esc(certificate.get("model")))
     content = content.replace("{{CAPACITY_BYTES}}", esc(certificate.get("capacity_bytes")))
     content = content.replace("{{INTERFACE_TYPE}}", esc(certificate.get("interface_type")))
+    content = content.replace("{{DRIVE_TYPE}}", esc(certificate.get("drive_type")))
     content = content.replace("{{METHOD}}", esc(certificate.get("method")))
+    content = content.replace("{{SOFTWARE_VERSIONS}}", esc(software_versions_text))
     content = content.replace("{{STATUS_CLASS}}", esc(status_class))
     content = content.replace("{{STATUS_TEXT}}", esc(status_text))
+    # Include error in verification details for display
+    verification_details = verification.get("details") or {}
+    if verification.get("error"):
+        verification_details = dict(verification_details)
+        verification_details["error"] = verification.get("error")
+    content = content.replace("{{VERIFICATION_DETAILS}}", json_cell(verification_details))
     content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
     content = content.replace("{{SIGNATURE}}", esc(certificate.get("signature")))
     content = content.replace("{{STANDARD_ROWS}}", standard_rows)
-    content = content.replace("{{EVIDENCE_ROWS}}", evidence_rows)
 
     return content
 
@@ -317,22 +345,16 @@ def build_bulk_certificate_html(certificates):
     if not certificates:
         return "<!doctype html><html><body><p>No certificates found.</p></body></html>"
     
-    # Generate HTML for each certificate
+    # Load logo once to avoid repeated file I/O for bulk operations
+    custom_logo = get_custom_logo_base64()
+    
+    # Generate HTML for each certificate using simplified bulk template
     cert_htmls = []
     failed_count = 0
     for cert in certificates:
         try:
-            cert_html = build_certificate_html(cert)
-            # Extract the body content using BeautifulSoup (not regex)
-            soup = BeautifulSoup(cert_html, 'html.parser')
-            if soup.body:
-                body_content = str(soup.body)
-                cert_htmls.append(f'<div class="certificate-container">{body_content}</div>')
-            else:
-                # Skip certificate if body extraction fails - indicates malformed HTML
-                logger.warning(f"Skipping certificate with id {cert.get('id', 'unknown')}: could not extract body content from generated HTML")
-                failed_count += 1
-                continue
+            cert_html = build_bulk_single_certificate_html(cert, custom_logo)
+            cert_htmls.append(cert_html)
         except Exception as e:
             # Skip certificates that fail to generate HTML
             logger.warning(f"Skipping certificate with id {cert.get('id', 'unknown')}: failed to generate HTML: {str(e)}")
@@ -364,12 +386,119 @@ h1 { margin: 0; }
     content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
     return content
 
+def build_bulk_single_certificate_html(certificate, custom_logo=None):
+    """Generate HTML for a single certificate using simplified bulk template.
+    
+    Args:
+        certificate: Certificate data dictionary
+        custom_logo: Pre-loaded base64 logo data (optional, to avoid repeated file I/O)
+    """
+    def esc(value):
+        return html.escape(str(value if value is not None else ""))
+
+    verification = certificate.get("verification") or {}
+    ok = verification.get("ok")
+    
+    # Dynamic header title and color accents based on physical wipe status
+    title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
+    header_color = "#1e3a8a" if ok else "#dc2626"
+    status_class = "status-ok" if ok else "status-fail"
+    status_text = esc(verification.get("status"))
+
+    standard_rows = "".join(
+        f"<tr><th>Standard Claim: {esc(k)}</th><td>{json_cell(v)}</td></tr>"
+        for k, v in sorted((certificate.get("standard_claims") or {}).items(), key=lambda item: str(item[0]))
+    )
+    
+    # Build software versions row
+    software_versions = certificate.get("software_versions") or {}
+    software_versions_text = "; ".join(f"{k}: {v}" for k, v in sorted(software_versions.items())) if software_versions else "Not available"
+    
+    # Get verification level from evidence
+    verification_evidence = certificate.get("verification_evidence") or {}
+    verification_level = verification_evidence.get("verification_level") or "Not specified"
+
+    template = """<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{TITLE}}</title>
+<style>
+h1 { margin: 0; color: {{HEADER_COLOR}}; }
+{{CERTIFICATE_CSS}}
+</style>
+</head>
+<body>
+<div class="certificate-container">
+<div class="header">
+  <div class="header-left">
+    <h1>{{TITLE}}</h1>
+  </div>
+  <div class="header-right">
+    {{LOGO_IMG}}
+  </div>
+</div>
+<div class="section">
+<table>
+<tr><th>Certificate ID</th><td>{{FRIENDLY_ID}}</td></tr>
+<tr><th>Started At</th><td>{{STARTED_AT}}</td></tr>
+<tr><th>Finished At</th><td>{{FINISHED_AT}}</td></tr>
+<tr><th>Ticket Number</th><td>{{TICKET_NUMBER}}</td></tr>
+<tr><th>Serial Number</th><td>{{SERIAL}}</td></tr>
+<tr><th>Model String</th><td>{{MODEL}}</td></tr>
+<tr><th>Interface Type / Drive Type</th><td>{{INTERFACE_TYPE}} / {{DRIVE_TYPE}}</td></tr>
+<tr><th>Method Used</th><td>{{METHOD}}</td></tr>
+<tr><th>Software Versions</th><td>{{SOFTWARE_VERSIONS}}</td></tr>
+<tr><th>Verification Integrity</th><td class="{{STATUS_CLASS}}">{{STATUS_TEXT}}</td></tr>
+<tr><th>Verification Level</th><td>{{VERIFICATION_LEVEL}}</td></tr>
+{{STANDARD_ROWS}}
+<tr><th>Certificate Integrity</th><td>{{SIGNATURE_STATUS}}</td></tr>
+<tr><th>Audit Signature (HMAC)</th><td><small>{{SIGNATURE}}</small></td></tr>
+</table>
+</div>
+</div>
+</body>
+</html>
+"""
+
+    # Run clean, robust text replacements
+    content = template
+    content = content.replace("{{TITLE}}", esc(title))
+    content = content.replace("{{HEADER_COLOR}}", esc(header_color))
+    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
+    # Use provided custom_logo or load it if not provided (for backward compatibility)
+    if custom_logo is None:
+        custom_logo = get_custom_logo_base64()
+    if custom_logo:
+        logo_img = f'<img src="{custom_logo}" alt="Logo" style="max-height: 75px; max-width: 500px;">'
+    else:
+        logo_img = ""
+    content = content.replace("{{LOGO_IMG}}", logo_img)
+    content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
+    content = content.replace("{{STARTED_AT}}", esc(certificate.get("started_at")))
+    content = content.replace("{{FINISHED_AT}}", esc(certificate.get("finished_at")))
+    content = content.replace("{{TICKET_NUMBER}}", esc(certificate.get("ticket_number")))
+    content = content.replace("{{SERIAL}}", esc(certificate.get("serial")))
+    content = content.replace("{{MODEL}}", esc(certificate.get("model")))
+    content = content.replace("{{INTERFACE_TYPE}}", esc(certificate.get("interface_type")))
+    content = content.replace("{{DRIVE_TYPE}}", esc(certificate.get("drive_type")))
+    content = content.replace("{{METHOD}}", esc(certificate.get("method")))
+    content = content.replace("{{SOFTWARE_VERSIONS}}", esc(software_versions_text))
+    content = content.replace("{{STANDARD_ROWS}}", standard_rows)
+    content = content.replace("{{VERIFICATION_LEVEL}}", esc(verification_level))
+    content = content.replace("{{STATUS_CLASS}}", esc(status_class))
+    content = content.replace("{{STATUS_TEXT}}", esc(status_text))
+    content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
+    content = content.replace("{{SIGNATURE}}", esc(certificate.get("signature")))
+
+    return content
+
 def build_certificate(job):
     request_data = job.get("request") or {}
     verification = job.get("verification") or {}
     finished_at = job.get("finished_at") or datetime.now(timezone.utc).isoformat()
     issued_at = datetime.now(timezone.utc).isoformat()
-    friendly_id = job.get("friendly_id") or "SANI-******"
+    friendly_id = job.get("friendly_id") or "CERT-**********"
     certificate_id = f"cert-{friendly_id}"
 
     passphrase = None
@@ -390,6 +519,40 @@ def build_certificate(job):
     method = request_data.get("method")
     recommended_method = request_data.get("recommended_method")
     signature_salt = base64.b64encode(secrets.token_bytes(16)).decode("ascii") if passphrase else None
+    
+    # Determine drive type (HDD/SSD)
+    interface_type = request_data.get("interface_type")
+    smart_data = request_data.get("smart_data") or {}
+    drive_type = "SSD" if is_drive_ssd(interface_type, smart_data) else "HDD"
+    
+    # Capture software versions
+    software_versions = get_software_versions()
+    
+    # Medium #39: Detect and log bad sectors from SMART data
+    bad_sectors_info = {
+        "detected": False,
+        "reallocated_sectors": None,
+        "pending_sectors": None,
+        "reallocated_normalized": None,
+        "reallocated_threshold": None,
+    }
+    if smart_data:
+        realloc = smart_data.get("reallocated_sectors")
+        pending = smart_data.get("pending_sectors")
+        realloc_norm = smart_data.get("reallocated_normalized")
+        realloc_thresh = smart_data.get("reallocated_threshold")
+        
+        # Bad sectors are detected if there are any reallocated or pending sectors
+        has_bad_sectors = (realloc is not None and realloc > 0) or (pending is not None and pending > 0)
+        
+        bad_sectors_info = {
+            "detected": has_bad_sectors,
+            "reallocated_sectors": realloc,
+            "pending_sectors": pending,
+            "reallocated_normalized": realloc_norm,
+            "reallocated_threshold": realloc_thresh,
+        }
+    
     certificate = {
         "id": certificate_id,
         "job_id": job.get("id"),
@@ -404,7 +567,8 @@ def build_certificate(job):
         "serial": request_data.get("serial"),
         "model": request_data.get("model"),
         "capacity_bytes": request_data.get("capacity_bytes"),
-        "interface_type": request_data.get("interface_type"),
+        "interface_type": interface_type,
+        "drive_type": drive_type,
         "method": method,
         "recommended_method": recommended_method,
         "method_override_used": bool(recommended_method and method and method != recommended_method),
@@ -416,6 +580,8 @@ def build_certificate(job):
         },
         "standard_claims": build_standard_claims(method, request_data.get("interface_type"), verification),
         "verification_evidence": build_verification_evidence(verification, marker),
+        "software_versions": software_versions,
+        "bad_sectors": bad_sectors_info,
     }
 
     certificate["signature_meta"] = {

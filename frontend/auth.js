@@ -72,11 +72,11 @@ async function loadSecurityStatus() {
       badge.className = "reliability-badge secure";
     } else {
       badge.textContent = "UNSECURED MODE";
-      badge.className = "reliability-badge unsecured";
+      badge.className = "reliability-badge status-badge--warning";
     }
   } catch (error) {
     badge.textContent = "UNSECURED MODE";
-    badge.className = "reliability-badge unsecured";
+    badge.className = "reliability-badge status-badge--warning";
   }
 }
 // --- END OF FILE frontend/auth.js ---

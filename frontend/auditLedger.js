@@ -91,7 +91,7 @@ function renderAuditLedger(jobs) {
       <article class="audit-row" data-audit-job-id="${escapeHtml(job.id)}">
         <div class="audit-summary-line ${bulkSelectMode ? 'bulk-mode' : ''}">
           ${checkboxHtml}
-          <div class="job-id-text">${escapeHtml(job.friendly_id || "SANI-******")}</div>
+          <div class="job-id-text">${escapeHtml(job.friendly_id || "CERT-************")}</div>
           <div class="ticket-text">${escapeHtml(job.request?.ticket_number || "-")}</div>
           <div style="font-weight: 700;">${escapeHtml(job.request?.model || "Generic")}</div>
           <div style="font-size: 0.8rem; font-family: monospace;">S/N: ${escapeHtml(job.request?.serial || "-")}</div>
@@ -133,7 +133,7 @@ function renderExpandedAuditRow(job) {
 
   // Bulk cert jobs have different metadata and actions
   if (isBulkCert) {
-    const targetCount = job.result?.target_job_count || job.request?.job_ids?.length || 0;
+    const targetCount = job.result?.total_jobs || job.request?.total_jobs || job.request?.target_job_ids?.length || 0;
     return `
       <div class="expanded-audit-details">
         <div class="audit-meta-col">
@@ -372,8 +372,7 @@ async function openPrintWindow(friendlyId) {
     return;
   }
 
-  printWindow.document.open();
-  printWindow.document.write(`
+  printWindow.document.documentElement.innerHTML = `
     <!doctype html>
     <html lang="en">
     <head><title>Loading Certificate...</title></head>
@@ -382,22 +381,18 @@ async function openPrintWindow(friendlyId) {
       <p>Fetching the HTML certificate layout from the station.</p>
     </body>
     </html>
-  `);
-  printWindow.document.close();
+  `;
 
   try {
     const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    printWindow.document.open();
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+    printWindow.document.documentElement.innerHTML = htmlContent;
     printWindow.focus();
     printWindow.print();
   } catch (err) {
-    printWindow.document.open();
-    printWindow.document.write(`
+    printWindow.document.documentElement.innerHTML = `
       <!doctype html>
       <html lang="en">
       <head><title>Error Retreiving Certificate</title></head>
@@ -406,8 +401,7 @@ async function openPrintWindow(friendlyId) {
         <p style="color: #555;">Error details: ${err.message}</p>
       </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
   }
 }
 
@@ -418,8 +412,7 @@ async function openBulkPrintWindow(friendlyId) {
     return;
   }
 
-  printWindow.document.open();
-  printWindow.document.write(`
+  printWindow.document.documentElement.innerHTML = `
     <!doctype html>
     <html lang="en">
     <head><title>Loading Bulk Certificate...</title></head>
@@ -428,22 +421,18 @@ async function openBulkPrintWindow(friendlyId) {
       <p>Fetching the bulk HTML certificate layout from the station.</p>
     </body>
     </html>
-  `);
-  printWindow.document.close();
+  `;
 
   try {
     const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html&bulk=true`);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    printWindow.document.open();
-    printWindow.document.write(htmlContent);
-    printWindow.document.close();
+    printWindow.document.documentElement.innerHTML = htmlContent;
     printWindow.focus();
     printWindow.print();
   } catch (err) {
-    printWindow.document.open();
-    printWindow.document.write(`
+    printWindow.document.documentElement.innerHTML = `
       <!doctype html>
       <html lang="en">
       <head><title>Error Retrieving Bulk Certificate</title></head>
@@ -452,8 +441,7 @@ async function openBulkPrintWindow(friendlyId) {
         <p style="color: #555;">Error details: ${err.message}</p>
       </body>
       </html>
-    `);
-    printWindow.document.close();
+    `;
   }
 }
 

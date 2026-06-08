@@ -6,10 +6,11 @@ import io
 from datetime import datetime
 from threading import Thread
 from flask import Blueprint, jsonify, request, send_file
-from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, calculate_session_token
+from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, calculate_session_token, limiter
 from common import get_config_dir, load_policy, get_db_path, get_cert_dir
-from certificates import build_bulk_certificate_html
 from bulk_cert import create_bulk_cert_job, run_bulk_cert_job
+from certificates import build_bulk_certificate_html
+from routes.admin_routes import require_admin_auth
 
 certificate_bp = Blueprint('certificate_routes', __name__)
 
@@ -44,6 +45,8 @@ def _serve_certificate_file(file_path, filename, error_context):
         return jsonify({"error": f"Failed to serve file: {str(e)}"}), 500
 
 @certificate_bp.route("/api/certificates/<job_id>", methods=["GET"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def get_certificate(job_id):
     certificate = None
     with ERASE_JOBS_LOCK:
@@ -110,6 +113,8 @@ def get_certificate(job_id):
     return jsonify({"error": "format must be one of: json, html"}), 400
 
 @certificate_bp.route("/api/certificates/bulk-html", methods=["POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def get_bulk_certificates_html():
     try:
         payload = request.get_json(silent=True) or {}
@@ -226,6 +231,8 @@ def get_bulk_certificates_html():
         return jsonify({"error": f"Failed to generate bulk certificates: {str(e)}"}), 500
 
 @certificate_bp.route("/api/admin/bulk-cert/create", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def create_bulk_cert():
     try:
         payload = request.get_json(silent=True) or {}

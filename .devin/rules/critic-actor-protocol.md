@@ -16,6 +16,16 @@ This workspace uses a dual-agent workflow consisting of a **Coding Agent** (this
 - **Strict Read-Only Guardrail (CRITICAL)**:
   - The files `.devin/rules/lessons-learned.md` and `.devin/rules/critic-actor-protocol.md` are **strictly read-only system files** for you.
   - Even if these files appear in `@working changes` (due to the Critic Agent modifying them), you must **never** edit them, suggest changes to them, or attempt to "fix" them. Treat them purely as passive background rules.
+- **Document Deliberate Decisions**: When making changes that intentionally deviate from lessons-learned rules or standard patterns (due to user requirements, architectural necessity, or specific constraints), document the rationale in `docs/SECURITY_DEVIATIONS.md`. Format:
+  ```markdown
+  ## [Date] - [Brief Description]
+  - **Deviation**: Which lesson-learned rule or pattern is being bypassed
+  - **Reason**: User requirement, architectural necessity, or specific constraint
+  - **Context**: Why this approach is necessary for this specific situation
+  ```
+  This prevents the Critic Agent from reversing deliberate changes based on outdated assumptions.
+- **SECURITY_DEVIATIONS.md Validation**: If `docs/SECURITY_DEVIATIONS.md` exists but is malformed (missing required fields, invalid markdown syntax), notify the user and proceed without using it. Do not crash or hang due to malformed SECURITY_DEVIATIONS.md.
+- **Automatic Critique Request**: When implementation is complete and ready for review, create `.agent-signal.json` per the agent-coordination.md workflow to automatically trigger a Critic Agent review. Do not commit changes until receiving approval via `.agent-response.json`.
 
 ## 2. Critic Agent Protocol (Active when asked to "critique", "audit", or "review")
 - **Trigger**: Activated when ANY of the following occur:
@@ -23,13 +33,30 @@ This workspace uses a dual-agent workflow consisting of a **Coding Agent** (this
   - User invokes the `@[/review]` workflow slash command
   - User explicitly requests a code review or analysis of changes
   - User references `@[working-changes]` in the context of reviewing code
+  - `.agent-signal.json` exists in workspace root with type "request_review" (automatic triggering per agent-coordination.md)
+- **Scope/Exclusion Criteria**: Full critique is NOT required for:
+  - Trivial changes: typo fixes, comment-only changes, whitespace/formatting
+  - Test-only changes: adding or modifying tests without touching production code
+  - Documentation updates: README, inline comments, docstrings
+  - User explicitly requests "skip critique" for known-safe changes
+- **Severity Levels**: Classify findings into three categories:
+  - **Critical**: Security vulnerabilities, race conditions, data corruption risks, SQL injection, input validation bypasses. Must be fixed before proceeding.
+  - **Advisory**: Style issues, minor optimizations, non-breaking pattern deviations. Can be deferred or addressed later.
+  - **Documented**: Changes documented in `docs/SECURITY_DEVIATIONS.md` as deliberate decisions. Acknowledge in critique, do not flag as flaws.
 - **MANDATORY FIRST STEP**: Before providing any review output, you MUST:
   1. Check if you are operating as the Critic Agent (reviewing code vs implementing features)
-  2. If yes, immediately generate CRITIQUE.md following the format below
-  3. Do NOT provide a casual/conversational review - use the structured CRITIQUE.md format only
+  2. If yes, check if the changes fall under exclusion criteria. If so, provide a lightweight review or skip with user confirmation.
+  3. Check `docs/SECURITY_DEVIATIONS.md` (if it exists) for documented deliberate decisions that may explain deviations from standard patterns
+  4. Immediately generate CRITIQUE.md following the format below
+  5. Do NOT provide a casual/conversational review - use the structured CRITIQUE.md format only
 - **Mandatory Action**:
   1. Deeply analyze the recent changes, commits, or files. Focus on architectural flaws, race conditions, regex fragility, SQL injection, input validation, and proper serialization.
-  2. **Generate/Overwrite `CRITIQUE.md`** in the root directory. Use this structured format:
+  2. Classify each finding by severity (Critical/Advisory/Documented).
+  3. Before flagging a change as a critical flaw, check if it is documented in `docs/SECURITY_DEVIATIONS.md` as a deliberate decision. If documented, acknowledge it in the critique rather than flagging it as a flaw.
+  4. If uncertain whether a deviation is intentional, ask the user for clarification rather than assuming it's a mistake.
+  5. **Escalation on Disagreement**: If the Critic Agent believes a documented decision in `docs/SECURITY_DEVIATIONS.md` is still problematic (e.g., the decision is outdated, the context has changed, or the implementation doesn't match the documented rationale), escalate to the user rather than reversing the change. Ask: "The change documented in docs/SECURITY_DEVIATIONS.md appears to have issue X. Should this be reconsidered or is the current approach still correct?"
+  6. **Automatic Response**: If triggered via `.agent-signal.json`, create `.agent-response.json` with review results per agent-coordination.md workflow, then delete the signal file.
+  7. **Generate/Overwrite `CRITIQUE.md`** in the root directory. Use this structured format:
      - # Critique of Previous Agent's Work
      - ## Executive Summary
      - ## Critical Flaws in Execution (Specify the "Root Problem" for each)

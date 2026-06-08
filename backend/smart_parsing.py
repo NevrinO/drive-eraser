@@ -7,11 +7,50 @@ import os
 import re
 
 from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command
+from common import load_policy, get_config_dir
 
-SSD_HIGH_POH_THRESHOLD = 40000
-HDD_HIGH_POH_THRESHOLD = 40000
-SSD_NEW_POH_THRESHOLD = 500
-HDD_NEW_POH_THRESHOLD = 500
+def get_triage_thresholds():
+    """Load triage thresholds from policy.json with fallback defaults."""
+    try:
+        config_dir = get_config_dir()
+        policy = load_policy(config_dir)
+        thresholds = policy.get("triage_thresholds", {})
+        return {
+            "ssd_new_poh_threshold": thresholds.get("ssd_new_poh_threshold", 500),
+            "ssd_high_poh_threshold": thresholds.get("ssd_high_poh_threshold", 40000),
+            "hdd_new_poh_threshold": thresholds.get("hdd_new_poh_threshold", 500),
+            "hdd_high_poh_threshold": thresholds.get("hdd_high_poh_threshold", 40000),
+            "health_score_destroy_threshold": thresholds.get("health_score_destroy_threshold", 20),
+            "health_score_scratch_threshold": thresholds.get("health_score_scratch_threshold", 60),
+            "ssd_remaining_life_destroy_threshold": thresholds.get("ssd_remaining_life_destroy_threshold", 10),
+            "ssd_remaining_life_scratch_threshold": thresholds.get("ssd_remaining_life_scratch_threshold", 60),
+            "ssd_remaining_life_good_threshold": thresholds.get("ssd_remaining_life_good_threshold", 80),
+            "ssd_new_fdw_threshold": thresholds.get("ssd_new_fdw_threshold", 0.06),
+            "hdd_new_fdw_threshold": thresholds.get("hdd_new_fdw_threshold", 1.0),
+            "hdd_heavy_fdw_threshold": thresholds.get("hdd_heavy_fdw_threshold", 150),
+            "realloc_raw_new_threshold": thresholds.get("realloc_raw_new_threshold", 0),
+            "pending_sectors_destroy_threshold": thresholds.get("pending_sectors_destroy_threshold", 10),
+            "pending_sectors_scratch_threshold": thresholds.get("pending_sectors_scratch_threshold", 10)
+        }
+    except Exception:
+        # Fallback to defaults if policy loading fails
+        return {
+            "ssd_new_poh_threshold": 500,
+            "ssd_high_poh_threshold": 40000,
+            "hdd_new_poh_threshold": 500,
+            "hdd_high_poh_threshold": 40000,
+            "health_score_destroy_threshold": 20,
+            "health_score_scratch_threshold": 60,
+            "ssd_remaining_life_destroy_threshold": 10,
+            "ssd_remaining_life_scratch_threshold": 60,
+            "ssd_remaining_life_good_threshold": 80,
+            "ssd_new_fdw_threshold": 0.06,
+            "hdd_new_fdw_threshold": 1.0,
+            "hdd_heavy_fdw_threshold": 150,
+            "realloc_raw_new_threshold": 0,
+            "pending_sectors_destroy_threshold": 10,
+            "pending_sectors_scratch_threshold": 10
+        }
 
 def classify_interface_from_smart(smart_output):
     output = str(smart_output or "").strip()
@@ -182,7 +221,7 @@ def get_raw_smart_diagnostics(device):
     if not smartctl_cmd or not device:
         return "SMARTCTL command not resolved or invalid device target.\n"
     try:
-        result = subprocess.run(["sudo", smartctl_cmd, "-a", device], capture_output=True, text=True, timeout=15)
+        result = subprocess.run(["sudo", smartctl_cmd, "-a", device], capture_output=True, text=True, timeout=15, shell=False)
         output = result.stdout or ""
         stderr = result.stderr or ""
         return f"\n=== RAW SMARTCTL DIAGNOSTICS FOR {device} ===\nExit Code: {result.returncode}\nSTDOUT:\n{output}\nSTDERR:\n{stderr}\n"
@@ -279,6 +318,8 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     return min(int(round(score)), 5) if failed_override else int(round(score))
 
 def get_drive_recommendation(interface_type, smart, health_score=None):
+    thresholds = get_triage_thresholds()
+    
     iface = str(interface_type or "unknown").lower()
     is_ssd = is_drive_ssd(interface_type, smart)
     poh = safe_int(smart.get("power_on_hours"), 0)
@@ -304,20 +345,39 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
         wear_val = safe_int(wear, 0)
         remaining_life = max(0, 100 - wear_val) if ("nvme" in iface or "sas" in iface) else wear_val
 
+    health_destroy_thresh = thresholds["health_score_destroy_threshold"]
+    health_scratch_thresh = thresholds["health_score_scratch_threshold"]
+    pending_destroy_thresh = thresholds["pending_sectors_destroy_threshold"]
+    pending_scratch_thresh = thresholds["pending_sectors_scratch_threshold"]
+
     if health_score is not None:
-        if status == "FAILED" or health_score <= 20: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
-        if health_score <= 60: return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
+        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+        if health_score <= health_scratch_thresh: return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
     else:
-        if status == "FAILED" or realloc_norm < 50 or pending > 10: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
-        if realloc_norm <= realloc_thresh or (0 < pending <= 10): return {"status": "SCRATCH", "comment": "Unstable or threshold-breached sectors detected. Safe only for non-critical use."}
+        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+        if realloc_norm <= realloc_thresh or (0 < pending <= pending_scratch_thresh): return {"status": "SCRATCH", "comment": "Unstable or threshold-breached sectors detected. Safe only for non-critical use."}
 
     if is_ssd:
-        if remaining_life < 10: return {"status": "DESTROY", "comment": "SSD wear is fully depleted (less than 10% life remaining)."}
-        if remaining_life < 60: return {"status": "SCRATCH", "comment": "SSD remaining life is heavily worn (under 60%). Relegate to scratch."}
-        if poh < SSD_NEW_POH_THRESHOLD and fdw < 0.06 and remaining_life == 100 and realloc_raw == 0: return {"status": "NEW_STOCK", "comment": "This drive is practically new (low runtime, pristine life and sectors)."}
-        return {"status": "USED_HEAVY" if poh >= SSD_HIGH_POH_THRESHOLD else "USED_GOOD", "comment": f"Excellent health, but high runtime (exceeds {SSD_HIGH_POH_THRESHOLD:,} hours)." if poh >= SSD_HIGH_POH_THRESHOLD else "This drive is used but still has excellent remaining life."} if remaining_life >= 80 else {"status": "USED_HEAVY", "comment": "This drive is heavily used but still has life."}
+        ssd_life_destroy_thresh = thresholds["ssd_remaining_life_destroy_threshold"]
+        ssd_life_scratch_thresh = thresholds["ssd_remaining_life_scratch_threshold"]
+        ssd_life_good_thresh = thresholds["ssd_remaining_life_good_threshold"]
+        ssd_new_poh_thresh = thresholds["ssd_new_poh_threshold"]
+        ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
+        ssd_new_fdw_thresh = thresholds["ssd_new_fdw_threshold"]
+        realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
+        
+        if remaining_life < ssd_life_destroy_thresh: return {"status": "DESTROY", "comment": "SSD wear is fully depleted (remaining life below threshold)."}
+        if remaining_life < ssd_life_scratch_thresh: return {"status": "SCRATCH", "comment": "SSD remaining life is heavily worn (under 60%). Relegate to scratch."}
+        if poh < ssd_new_poh_thresh and fdw < ssd_new_fdw_thresh and remaining_life == 100 and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "This drive is practically new (low runtime, pristine life and sectors)."}
+        return {"status": "USED_HEAVY" if poh >= ssd_high_poh_thresh else "USED_GOOD", "comment": f"Excellent health, but high runtime (exceeds {ssd_high_poh_thresh:,} hours)." if poh >= ssd_high_poh_thresh else "This drive is used but still has excellent remaining life."} if remaining_life >= ssd_life_good_thresh else {"status": "USED_HEAVY", "comment": "This drive is heavily used but still has life."}
     else:
-        if poh >= HDD_HIGH_POH_THRESHOLD: return {"status": "SCRATCH", "comment": f"High Power-On Hours (exceeds {HDD_HIGH_POH_THRESHOLD:,} server hours)."}
-        if poh < HDD_NEW_POH_THRESHOLD and fdw < 1.0 and realloc_raw == 0: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
-        return {"status": "USED_HEAVY" if fdw >= 150 else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= 150 else "Used but has clean write history and moderate runtime."}
+        hdd_high_poh_thresh = thresholds["hdd_high_poh_threshold"]
+        hdd_new_poh_thresh = thresholds["hdd_new_poh_threshold"]
+        hdd_new_fdw_thresh = thresholds["hdd_new_fdw_threshold"]
+        hdd_heavy_fdw_thresh = thresholds["hdd_heavy_fdw_threshold"]
+        realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
+        
+        if poh >= hdd_high_poh_thresh: return {"status": "SCRATCH", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
+        if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
+        return {"status": "USED_HEAVY" if fdw >= hdd_heavy_fdw_thresh else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= hdd_heavy_fdw_thresh else "Used but has clean write history and moderate runtime."}
 # --- END OF FILE backend/smart_parsing.py ---

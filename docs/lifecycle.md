@@ -269,4 +269,294 @@ At this point the drive is considered in-process and should not be reconfigured 
 ### 7. ERASE_FAILED
 
 #### Definition
-The erase command failed, aborte
+The erase command failed, aborted, or returned an error before completion.
+
+#### Entry Conditions
+- Erase command was initiated
+- Command returned non-zero exit code
+- Command timed out
+- Device became inaccessible during erase
+
+#### System Actions
+- capture failure details:
+  - exit code if available
+  - error message from command
+  - device state at failure
+- log the failure with full context
+- mark job as failed in database
+- preserve partial results for debugging
+
+#### Technician View
+- status like:
+  - `Erase Failed`
+  - `Sanitize Error`
+- error message displayed
+- drive may be retried if appropriate
+
+#### Logging Requirements
+- serial
+- model
+- selected method
+- failure reason
+- exit code or error details
+- timestamp
+
+---
+
+### 8. VERIFYING
+
+#### Definition
+The system is verifying that the erase operation was successful and the drive is now in a sanitized state.
+
+#### Entry Conditions
+- Erase command completed successfully
+- Device is still accessible
+- Verification is enabled in policy
+
+#### System Actions
+- perform verification appropriate to the erase method:
+  - for overwrite: read back sectors and verify zeros/random pattern
+  - for sanitize: check sanitize status via ATA/NVMe commands
+  - for crypto: verify secure erase completion
+- capture verification results
+- check for bad sectors if present during erase
+
+#### Outputs
+- verification result (pass/fail)
+- verification method used
+- sectors verified (if applicable)
+- bad sector count (if applicable)
+
+#### Technician View
+- status like:
+  - `Verifying`
+  - `Confirming Sanitization`
+- progress indicator if applicable
+
+#### Notes
+Verification is a critical trust step. Even if the erase command reported success, verification confirms the actual state of the media.
+
+---
+
+### 9. VERIFY_FAILED
+
+#### Definition
+Verification indicated that the erase may not have been successful or the drive state cannot be confirmed.
+
+#### Entry Conditions
+- Erase command completed
+- Verification check failed
+- Verification could not be performed
+
+#### System Actions
+- log verification failure details
+- preserve job record with verification status
+- flag for technician review
+- do not generate certificate
+
+#### Technician View
+- status like:
+  - `Verification Failed`
+  - `Unable to Confirm Sanitization`
+- warning that certificate cannot be generated
+- recommendation for physical destruction or re-attempt
+
+#### Policy Notes
+- This is a hard stop for certificate generation
+- Drive may be re-erased if appropriate
+- Physical destruction may be recommended
+
+---
+
+### 10. MARKING
+
+#### Definition
+The system is writing a post-erase marker to the drive to indicate it has been processed by this station.
+
+#### Entry Conditions
+- Erase completed successfully
+- Verification passed (if enabled)
+- Marker writing is enabled in policy
+
+#### System Actions
+- write station marker to drive:
+  - for SATA: write to last sector or HPA/DCO area
+  - for NVMe: write to namespace or reserved area
+- marker includes:
+  - station ID
+  - timestamp
+  - technician (if applicable)
+  - method used
+- verify marker was written successfully
+
+#### Technician View
+- status like:
+  - `Writing Marker`
+  - `Tagging Drive`
+
+#### Notes
+Marker writing is optional and may fail without affecting the overall success of the erase operation.
+
+---
+
+### 11. MARK_FAILED_WARNING
+
+#### Definition
+The erase and verification succeeded, but marker writing failed.
+
+#### Entry Conditions
+- Erase completed successfully
+- Verification passed (if enabled)
+- Marker writing failed
+
+#### System Actions
+- log marker failure as warning
+- proceed to certificate generation
+- note marker status in certificate
+
+#### Technician View
+- status like:
+  - `Marker Write Failed`
+  - `Proceeding to Certificate`
+- warning that marker was not written
+- certificate will still be generated
+
+#### Notes
+This is a non-critical failure. The drive is still considered successfully erased, but future stations will not be able to read the marker.
+
+---
+
+### 12. CERTIFIED
+
+#### Definition
+The system has generated a certificate documenting the successful erase operation.
+
+#### Entry Conditions
+- Erase completed successfully
+- Verification passed (if enabled)
+- All required data captured
+
+#### System Actions
+- generate certificate with:
+  - serial
+  - model
+  - capacity
+  - method used
+  - start/end time
+  - verification result
+  - technician
+  - ticket number
+  - station ID
+- save certificate to database
+- make certificate available for download/print
+- log certificate generation
+
+#### Technician View
+- status like:
+  - `Certified`
+  - `Complete`
+- certificate available in audit vault
+- option to print or download
+
+#### Notes
+The certificate is the official record of the erase operation and may be required for compliance or audit purposes.
+
+---
+
+### 13. COMPLETE
+
+#### Definition
+The drive has completed the full lifecycle and is ready for removal or next steps.
+
+#### Entry Conditions
+- Certificate generated (or certificate generation skipped by policy)
+- All logging complete
+- Job record finalized
+
+#### System Actions
+- mark job as complete in database
+- clear drive from active processing
+- return bay to ready state
+- archive job data for retention period
+
+#### Technician View
+- status like:
+  - `Complete`
+  - `Ready for Removal`
+- drive can be removed from bay
+- certificate available in history
+
+#### Notes
+This is the terminal state for a successful lifecycle. The drive may now be removed and the bay used for the next drive.
+
+---
+
+## Lifecycle Diagram
+
+```
+DETECTED
+    ↓
+IDENTIFIED
+    ↓
+INSPECTED → REJECTED
+    ↓
+WIPE_READY
+    ↓
+ERASING → ERASE_FAILED
+    ↓
+VERIFYING → VERIFY_FAILED
+    ↓
+MARKING → MARK_FAILED_WARNING
+    ↓
+CERTIFIED
+    ↓
+COMPLETE
+```
+
+---
+
+## Policy Configuration
+
+The lifecycle behavior can be configured via `config/policy.json`:
+
+- `strict_audit_mode`: Requires non-empty wipe_passphrase and enforces verification
+- `pre_wipe_spot_check_enabled`: Enables pre-wipe spot check for data remnants
+- `marker_write_enabled`: Enables post-erase marker writing
+- `certificate_retention_days`: How long to keep certificates in database
+- `log_retention_days`: How long to keep operational logs
+
+---
+
+## Error Handling
+
+### Transient Errors
+- Device temporarily unavailable: Retry with backoff
+- Command timeout: Increase timeout or abort based on severity
+- Intermittent communication: Retry limited number of times
+
+### Permanent Errors
+- Device failure: Mark as failed, recommend physical destruction
+- Unsupported method: Reject drive for that method
+- Protected bay: Hard stop, do not allow wipe
+
+### Warnings
+- Marker write failure: Continue to certificate, note in record
+- Degraded health: Allow with technician override if policy permits
+- Verification skipped: Note in certificate if verification disabled
+
+---
+
+## Audit Trail
+
+Every lifecycle transition should be logged with:
+
+- Timestamp
+- Serial number
+- Model
+- Bay
+- Previous state
+- New state
+- Technician (if applicable)
+- Context data (method, error details, etc.)
+
+This audit trail provides a complete history of each drive's processing and is essential for compliance and troubleshooting.

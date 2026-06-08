@@ -239,4 +239,4 @@ __marimo__/
 !/data/certs/.gitkeep
 
 # Agent logs and scratchpad
-.devon/archive/
+.devin/archive/

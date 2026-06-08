@@ -3,15 +3,18 @@ import os
 import json
 import re
 from flask import Blueprint, jsonify, request
-from app_config import logger
+from app_config import logger, limiter
 from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
+from routes.admin_routes import require_admin_auth
 from disk_ops import get_os_by_path
 from smart_parsing import get_smart_data
 
 bay_mapping_bp = Blueprint('bay_mapping_routes', __name__)
 
 @bay_mapping_bp.route("/api/admin/bay-map")
+@require_admin_auth
+@limiter.limit("30 per minute")
 def get_admin_bay_map():
     try:
         config_dir = get_config_dir()
@@ -28,6 +31,8 @@ def get_admin_bay_map():
         return jsonify({"error": str(e)}), 500
 
 @bay_mapping_bp.route("/api/admin/unmapped-drives")
+@require_admin_auth
+@limiter.limit("30 per minute")
 def get_unmapped_drives():
     try:
         config_dir = get_config_dir()
@@ -99,6 +104,8 @@ def get_unmapped_drives():
         return jsonify({"error": str(e)}), 500
 
 @bay_mapping_bp.route("/api/admin/auto-detect-bays", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def auto_detect_bays():
     try:
         config_dir = get_config_dir()
@@ -286,6 +293,8 @@ def auto_detect_bays():
         return jsonify({"error": str(e)}), 500
 
 @bay_mapping_bp.route("/api/admin/save-bay-map", methods=["POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def update_bay_map():
     try:
         payload = request.get_json(silent=True) or {}

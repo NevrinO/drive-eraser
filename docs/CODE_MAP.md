@@ -1,6 +1,12 @@
 # AI Context Map: Drive Sanitization Station
 
-This document provides a high-level architectural index and dependency map of the Drive Sanitization Station. Use this file to identify which module to inspect or modify without loading the entire program codebase.
+**Purpose**: This document provides a high-level architectural index and dependency map of the Drive Sanitization Station. Use this file to identify which module to inspect or modify without loading the entire program codebase. It answers "where" things are and "how" they connect.
+
+**Relation to other docs**:
+- `docs/ARCHITECTURE.md` - Architectural decisions and design rationale (answers "why" things are this way)
+- `README.md` - Quickstart and installation instructions
+- `docs/api-contract.md` - API endpoint specifications
+- `docs/SOP_technician_guide.md` - Operational procedures for technicians
 
 ---
 
@@ -42,9 +48,14 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 │   ├── utils.js                # Utility functions (escapeHtml, formatting, clipboard)
 │   ├── auth.js                 # Authentication overlay and passphrase verification
 │   ├── driveManagement.js      # Drive discovery, rendering, batch operations
-│   ├── modals.js               # Modal dialog rendering and controls
 │   ├── auditLedger.js          # Audit history display, certificate management
-│   ├── adminPanel.js           # Admin panel and bay mapping configuration
+│   ├── admin/                  # Admin panel modules (modular)
+│   │   ├── adminUtilities.js   # Shared admin utilities and helpers
+│   │   ├── bayMapping.js       # Bay mapping configuration and management
+│   │   ├── discoveryModal.js   # Drive discovery modal and slot mapping
+│   │   ├── templateManagement.js # Certificate template management
+│   │   ├── logoManagement.js   # Custom logo upload and management
+│   │   └── triageConfig.js     # Triage threshold configuration
 │   ├── index.html              # UI Template
 │   └── styles.css              # 15-foot state colors, dashboard grids
 ├── scripts/                    # Automation and lifecycle shell wrappers
@@ -57,7 +68,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 ├── .gitignore                  # Environment-specific exclude profiles
 ├── requirements.txt            # Python dependencies index
 ├── AGENTS.md                   # Multi-agent collaboration manifest
-├── AI_CONTEXT.md               # High-level architectural index and dependency map
+├── docs/CODE_MAP.md            # High-level architectural index and dependency map
 └── README.md                   # Quickstart installation instructions
 
 ```
@@ -87,12 +98,16 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Cryptographic Certificates** | `backend/certificates.py` | `build_certificate()`, `build_certificate_html()`, `calculate_certificate_hash()` |
 | **Slack Webhooks / Chat Alerts** | `backend/notifier.py` | `send_slack_notification()` |
 | **Frontend Entry Point** | `frontend/app.js` | Imports all modules, tab switching, initialization |
-| **Frontend Utilities** | `frontend/utils.js` | `escapeHtml()`, `formatIsoDate()`, `calculateDriveHealthScore()`, `copyTextToClipboard()` |
+| **Frontend Utilities** | `frontend/utils.js` | `escapeHtml()`, `formatIsoDate()`, `calculateDriveHealthScore()`, `copyTextToClipboard()`, `classifyError()`, `handleError()` |
 | **Authentication** | `frontend/auth.js` | `showAuthOverlay()`, `hideAuthOverlay()`, `loadSecurityStatus()` |
 | **Drive Management** | `frontend/driveManagement.js` | `loadDrives()`, `renderBays()`, `pollActiveWipes()`, `toggleBaySelection()` |
-| **Modal Controls** | `frontend/modals.js` | `openModal()`, `closeModal()`, `renderLiveDetails()` |
 | **Audit Ledger** | `frontend/auditLedger.js` | `loadHistoryIndex()`, `renderAuditLedger()`, `renderExpandedAuditRow()` |
-| **Admin Panel** | `frontend/adminPanel.js` | `loadAdminMetrics()`, `loadBayMappingConfig()`, `saveBayMappingConfiguration()` |
+| **Admin Utilities** | `frontend/admin/adminUtilities.js` | Shared admin helpers, modal management, common admin functions |
+| **Bay Mapping** | `frontend/admin/bayMapping.js` | `loadBayMappingConfig()`, `saveBayMappingConfiguration()`, `renderBayMappingUI()` |
+| **Discovery Modal** | `frontend/admin/discoveryModal.js` | `openDiscoveryModal()`, `discoverSlots()`, `applySlotMapping()` |
+| **Template Management** | `frontend/admin/templateManagement.js` | `loadTemplates()`, `createTemplate()`, `applyTemplate()`, `exportTemplate()`, `importTemplate()` |
+| **Logo Management** | `frontend/admin/logoManagement.js` | `uploadLogo()`, `deleteLogo()`, `previewLogo()` |
+| **Triage Config** | `frontend/admin/triageConfig.js` | `loadTriageConfig()`, `saveTriageConfig()`, `renderTriageThresholds()` |
 
 ---
 
@@ -156,12 +171,21 @@ frontend/app.js (entry point)
 ├── auth.js
 ├── driveManagement.js
 │   └── utils.js
-├── modals.js
-│   └── utils.js
 ├── auditLedger.js
 │   └── utils.js
-└── adminPanel.js
-    └── utils.js
+└── admin/
+    ├── adminUtilities.js
+    │   └── utils.js
+    ├── bayMapping.js
+    │   └── adminUtilities.js
+    ├── discoveryModal.js
+    │   └── adminUtilities.js
+    ├── templateManagement.js
+    │   └── adminUtilities.js
+    ├── logoManagement.js
+    │   └── adminUtilities.js
+    └── triageConfig.js
+        └── adminUtilities.js
 ```
 
 ---

@@ -20,7 +20,10 @@ const selectedDrivesConfigList = document.getElementById("selectedDrivesConfigLi
 const dynamicConfirmationHint = document.getElementById("dynamicConfirmationHint");
 const confirmationText = document.getElementById("confirmationText");
 
-const POLL_INTERVAL_MS = 2000;
+const POLL_INTERVAL_MS = 5000;
+
+// Track polling interval for cleanup
+let pollingIntervalId = null;
 
 function isBayUnconfigured(drive) {
   if (!drive) return false;
@@ -38,15 +41,29 @@ function isBayUnconfigured(drive) {
 }
 
 async function pollActiveWipes() {
-  while (true) {
-    await loadDrives(true); 
-    
-    const adminTab = document.querySelector('[data-tab="adminPanel"]');
-    if (adminTab && adminTab.classList.contains("active")) {
-      await loadAdminMetrics();
+  if (pollingIntervalId !== null) {
+    console.warn("Polling already active, skipping duplicate call");
+    return;
+  }
+
+  pollingIntervalId = setInterval(async () => {
+    try {
+      await loadDrives(true);
+      
+      const adminTab = document.querySelector('[data-tab="adminPanel"]');
+      if (adminTab && adminTab.classList.contains("active")) {
+        await loadAdminMetrics();
+      }
+    } catch (error) {
+      console.error("Polling error:", error);
     }
-    
-    await sleep(POLL_INTERVAL_MS);
+  }, POLL_INTERVAL_MS);
+}
+
+function stopPolling() {
+  if (pollingIntervalId !== null) {
+    clearInterval(pollingIntervalId);
+    pollingIntervalId = null;
   }
 }
 
@@ -437,7 +454,9 @@ batchEraseForm.addEventListener("submit", async (event) => {
     ticket_number: ticket,
     bays: Array.from(selectedBays),
     confirmation_text: confirmTextVal,
-    methods: {}
+    methods: {},
+    disable_marker: !document.getElementById("writeMarkerCheckbox").checked,
+    full_verification: document.getElementById("fullVerifyCheckbox").checked
   };
 
   document.querySelectorAll(".batch-drive-method-select").forEach(select => {

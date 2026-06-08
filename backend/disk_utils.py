@@ -194,9 +194,9 @@ def read_marker_status(device, interface_type="unknown", passphrase=None):
     if not dd_cmd: return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_read", "details": {}}
     command = [dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "iflag=direct", "status=none"]
     try:
-        result = subprocess.run(["sudo"] + command, capture_output=True)
+        result = subprocess.run(["sudo"] + command, capture_output=True, shell=False)
         if result.returncode != 0:
-            result = subprocess.run(["sudo", dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True)
+            result = subprocess.run(["sudo", dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True, shell=False)
         if result.returncode != 0:
             return {"ok": False, "status": "marker_error", "error": "marker_read_failed", "details": {"return_code": result.returncode, "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip()}}
         output_bytes = result.stdout or b""
@@ -250,7 +250,7 @@ def run_command(command, diagnostics=None, key=None):
         if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": "command_not_resolved"}
         return None
     try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True)
+        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False)
         if diagnostics is not None and key: diagnostics[key] = {"ok": True, "reason": None, "exit_code": result.returncode}
         return (result.stdout or "").strip()
     except subprocess.CalledProcessError as e:
@@ -260,7 +260,7 @@ def run_command(command, diagnostics=None, key=None):
 def run_destructive_command(command):
     if not command or not command[0]: return {"ok": False, "error": "command_not_resolved", "stdout": "", "stderr": "", "exit_code": None}
     try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True)
+        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False)
         return {"ok": True, "error": None, "stdout": (result.stdout or "").strip(), "stderr": (result.stderr or "").strip(), "exit_code": result.returncode}
     except subprocess.CalledProcessError as e:
         return {"ok": False, "error": "command_failed", "stdout": (e.stdout or "").strip(), "stderr": (e.stderr or "").strip(), "exit_code": e.returncode}

@@ -2,6 +2,8 @@
 # Bulk certificate job creation and execution
 import os
 import uuid
+import secrets
+import threading
 from datetime import datetime, timezone
 
 from common import get_config_dir, get_cert_dir, purge_old_logs, DEFAULT_LOG_RETENTION_DAYS
@@ -10,13 +12,33 @@ from certificates import build_certificate, build_bulk_certificate_html
 from notifier import send_slack_notification
 from app_config import BULK_CERT_JOBS, BULK_CERT_JOBS_LOCK, logger
 
+# Medium #44: Global flag for bulk cert job interruption
+_bulk_cert_interrupted = False
+_bulk_cert_interrupt_lock = threading.Lock()
+
+def _handle_bulk_cert_signal(signum, frame):
+    """Signal handler for SIGTERM/SIGINT during bulk cert operations."""
+    global _bulk_cert_interrupted
+    with _bulk_cert_interrupt_lock:
+        _bulk_cert_interrupted = True
+    logger.warning(f"Bulk cert operation interrupted by signal {signum}")
+
+def _check_bulk_cert_interrupted():
+    """Check if bulk cert operation was interrupted by signal."""
+    global _bulk_cert_interrupted
+    with _bulk_cert_interrupt_lock:
+        return _bulk_cert_interrupted
+
 def create_bulk_cert_job(job_ids):
     """
     Create a bulk certificate generation job for multiple completed erase jobs.
-    
+
+    Medium #45: Maximum batch size is 100 job IDs to prevent DoS and memory exhaustion.
+    This limit is configurable via max_bulk_cert_batch_size in policy.json (default: 100).
+
     Args:
         job_ids: List of job IDs (or friendly IDs) to generate certificates for
-        
+
     Returns:
         Tuple of (job_dict, error_dict, status_code) on validation error,
         or (job_dict, None, None) on success
@@ -26,8 +48,18 @@ def create_bulk_cert_job(job_ids):
         return None, {"error": "job_ids must be a list"}, 400
     if len(job_ids) == 0:
         return None, {"error": "job_ids cannot be empty"}, 400
-    if len(job_ids) > 100:
-        return None, {"error": "job_ids exceeds maximum limit of 100"}, 400
+
+    # Medium #45: Load configurable batch size limit from policy
+    max_batch_size = 100  # Default fallback
+    try:
+        from common import load_policy
+        policy = load_policy()
+        max_batch_size = policy.get("max_bulk_cert_batch_size", 100)
+    except Exception:
+        pass  # Use default if policy loading fails
+
+    if len(job_ids) > max_batch_size:
+        return None, {"error": f"job_ids exceeds maximum limit of {max_batch_size}"}, 400
     
     # Detect duplicate job IDs
     seen_ids = set()
@@ -61,9 +93,9 @@ def create_bulk_cert_job(job_ids):
     job_id = str(uuid.uuid4())
     
     # Generate a human-readable friendly_id for bulk cert jobs
-    # Format: BULK-YYYYMMDD-XXXX (where XXXX is a random 4-digit hex)
+    # Format: BULK-YYYYMMDD-XXXXXX (where XXXXXX is a random 6-digit hex)
     date_str = datetime.now(timezone.utc).strftime("%Y%m%d")
-    random_suffix = uuid.uuid4().hex[:4].upper()
+    random_suffix = secrets.token_hex(3).upper()  # 6 hex chars for better entropy
     friendly_id = f"BULK-{date_str}-{random_suffix}"
     
     bulk_job = {
@@ -126,8 +158,26 @@ def run_bulk_cert_job(job_id):
     failed_jobs = []
     
     logger.info(f"Bulk cert job {job_id} starting: generating certificates for {total_jobs} jobs")
-    
+
     for idx, target_job_id in enumerate(target_job_ids):
+        # Medium #44: Check for interruption
+        if _check_bulk_cert_interrupted():
+            logger.warning(f"Bulk cert job {job_id} interrupted during certificate generation")
+            with BULK_CERT_JOBS_LOCK:
+                job = BULK_CERT_JOBS.get(job_id)
+                if job:
+                    job["status"] = "interrupted"
+                    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                    job["error"] = "Bulk cert job interrupted by signal"
+                    job["current_phase"] = "Interrupted"
+                    job["result"] = {
+                        "total_jobs": total_jobs,
+                        "successful_certificates": len(certificates),
+                        "failed_jobs": failed_jobs,
+                    }
+                    persist_job(job)
+            return
+
         # Update progress
         progress = (idx / total_jobs) * 100
         with BULK_CERT_JOBS_LOCK:
@@ -176,7 +226,7 @@ def run_bulk_cert_job(job_id):
                     raise ValueError(f"Certificate {idx} missing required field: {field}")
         
         bulk_html_content = build_bulk_certificate_html(certificates)
-        bulk_html_filename = f"bulk-cert-{job_id}.html"
+        bulk_html_filename = f"{job['friendly_id']}.html"
         bulk_html_path = os.path.join(get_cert_dir(), bulk_html_filename)
         with open(bulk_html_path, "w", encoding="utf-8") as f:
             f.write(bulk_html_content)

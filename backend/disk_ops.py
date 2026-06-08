@@ -4,12 +4,29 @@
 import os
 import json
 import subprocess
+import threading
 
 from common import get_config_dir, load_policy
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
 from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
 from disk_capabilities import detect_drive_capabilities
 from device_discovery import get_controller_for_device, scan_pci_controllers
+
+# Medium #34: Global flag for discovery interruption
+_discovery_interrupted = False
+_discovery_interrupt_lock = threading.Lock()
+
+def _handle_discovery_signal(signum, frame):
+    """Signal handler for SIGTERM/SIGINT during discovery operations."""
+    global _discovery_interrupted
+    with _discovery_interrupt_lock:
+        _discovery_interrupted = True
+
+def _check_discovery_interrupted():
+    """Check if discovery was interrupted by signal."""
+    global _discovery_interrupted
+    with _discovery_interrupt_lock:
+        return _discovery_interrupted
 
 # --- PROGRAMMATIC OS DRIVE DETECTION AND OVERRIDES ---
 
@@ -30,7 +47,7 @@ def get_os_parent_device():
                         
         if not devname:
             try:
-                res = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "/"], capture_output=True, text=True, timeout=5)
+                res = subprocess.run(["findmnt", "-n", "-o", "SOURCE", "/"], capture_output=True, text=True, timeout=5, shell=False)
                 if res.returncode == 0 and res.stdout.strip():
                     src = res.stdout.strip()
                     if src.startswith("/dev/"):
@@ -105,11 +122,19 @@ def get_all_controllers():
     return scan_pci_controllers()
 
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
+    # Medium #35: Discovery operations are read-only (no device writes/modifications).
+    # Device-level locking is intentionally skipped to avoid blocking verification operations.
+    # Discovery only reads device information (SMART data, capabilities, etc.) and does not
+    # perform any destructive operations, so concurrent discovery is safe without locks.
     try:
         with open(bay_map_path, 'r', encoding='utf-8') as f:
             bay_map_doc = json.load(f)
     except Exception:
         return []
+
+    # Medium #34: Check for interruption after loading bay map
+    if _check_discovery_interrupted():
+        return {"error": "Discovery interrupted by signal"}
 
     if isinstance(bay_map_doc, dict) and isinstance(bay_map_doc.get("bays"), dict):
         bay_map = bay_map_doc.get("bays", {})
@@ -133,6 +158,9 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     os_dev_node, os_by_path = get_os_by_path()
 
     for bay_id, config in bay_map.items():
+        # Medium #34: Check for interruption in each bay iteration
+        if _check_discovery_interrupted():
+            return {"error": "Discovery interrupted by signal"}
         target_path = config.get('by_path')
         target_path_nvme = config.get('by_path_nvme')
         

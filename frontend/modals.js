@@ -133,11 +133,13 @@ function renderLiveDetails(drive) {
 function openModal(modal) {
   modal.classList.add("open");
   modal.setAttribute("aria-hidden", "false");
+  trapFocus(modal);
 }
 
 function closeModal(modal) {
   modal.classList.remove("open");
   modal.setAttribute("aria-hidden", "true");
+  releaseFocusTrap(modal);
 }
 
 document.querySelectorAll("[data-close-modal='true']").forEach(elem => {

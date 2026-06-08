@@ -3,21 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';">
   <title>Drive Sanitization Station</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <div class="app">
+  <a href="#main-content" class="skip-to-content">Skip to main content</a>
+  <div class="app" id="main-content">
     <header class="app-header">
       <h1>Drive Sanitization Station</h1>
       <div class="header-actions">
         <div id="securityBadge" class="reliability-badge">SECURE MODE</div>
-        <button id="helpButton" type="button">Help</button>
-        <button id="refreshButton" type="button">Refresh Bays</button>
+        <button id="helpButton" type="button" class="btn btn--secondary">Help</button>
+        <button id="refreshButton" type="button" class="btn btn--secondary">Refresh Bays</button>
       </div>
     </header>
 
-    <section class="status-bar">
+    <section class="status-bar" aria-live="polite" aria-atomic="true">
       <span id="lastUpdated">Last updated: never</span>
       <span id="apiStatus">API status: unknown</span>
     </section>
@@ -33,17 +36,17 @@
       <div class="workbench-controls-header">
         <div class="section-title">Drive Bay Layout Overview</div>
         <!-- Safety Toggle: Defaults to clean inactive state -->
-        <button type="button" id="batchSelectToggleBtn" class="btn-toggle">Sanitize Mode: OFF</button>
+        <button type="button" id="batchSelectToggleBtn" class="btn btn--toggle">Sanitize Mode: OFF</button>
       </div>
       
-      <div id="baysGrid" class="bays-grid"></div>
+      <div id="baysGrid" class="bays-grid" aria-live="polite" aria-atomic="false"></div>
 
       <!-- Action Footer for selected drives -->
       <div id="batchActionFooter" class="batch-action-footer hidden">
         <div class="footer-meta-info">
           <span id="selectedCountLabel">0 Bays Staged</span>
         </div>
-        <button type="button" id="openBatchWipeModalBtn" class="btn-primary">Configure Sanitization</button>
+        <button type="button" id="openBatchWipeModalBtn" class="btn btn--primary">Configure Sanitization</button>
       </div>
     </section>
 
@@ -53,7 +56,7 @@
       <div class="control-bar history-controls">
         <label>
           Search Ledger Filter
-          <input type="text" id="historyQuery" placeholder="Type serial, ticket, model, tech, SANI-****** to find records instantly...">
+          <input type="text" id="historyQuery" placeholder="Type serial, ticket, model, tech, CERT-************ to find records instantly...">
         </label>
         <label>
           Filter Wipes
@@ -65,8 +68,8 @@
             <option value="queued">Queued in Line</option>
           </select>
         </label>
-        <button type="button" id="historyRefreshButton" class="btn-primary">Reload Ledger</button>
-        <button type="button" id="bulkSelectToggleBtn" class="btn-toggle">Bulk Select: OFF</button>
+        <button type="button" id="historyRefreshButton" class="btn btn--primary">Reload Ledger</button>
+        <button type="button" id="bulkSelectToggleBtn" class="btn btn--toggle">Bulk Select: OFF</button>
       </div>
       <div id="historyList" class="audit-vault-list"></div>
 
@@ -75,7 +78,7 @@
         <div class="footer-meta-info">
           <span id="bulkSelectedCountLabel">0 Certificates Selected</span>
         </div>
-        <button type="button" id="bulkCertDownloadBtn" class="btn-primary">Download Bulk Certificates</button>
+        <button type="button" id="bulkCertDownloadBtn" class="btn btn--primary">Download Bulk Certificates</button>
       </div>
     </section>
 
@@ -119,7 +122,7 @@
         <div class="admin-card">
           <div class="card-title">Network & Alerts Integration</div>
           <p class="admin-desc">Verify background system alerts and active configurations.</p>
-          <div class="kv" style="margin-bottom: 8px;">
+          <div class="kv mb-2">
             <span>Station IP:</span>
             <span id="metricIpText">-</span>
           </div>
@@ -127,7 +130,7 @@
             <span>Alert Target:</span>
             <span>Slack Notification Webhook</span>
           </div>
-          <button type="button" id="testWebhookBtn" class="btn-primary" style="margin-top: 12px; width: 100%;">Test Alert Notification</button>
+          <button type="button" id="testWebhookBtn" class="btn btn--primary mt-3 w-full">Test Alert Notification</button>
           <div id="webhookTestResult" class="test-result-label hidden"></div>
         </div>
 
@@ -136,59 +139,68 @@
           <div class="card-title">Bulk Exports & Diagnostics</div>
           <p class="admin-desc">Download complete historic ledgers or compile raw troubleshooting logs.</p>
           <div class="button-stack">
-            <button type="button" id="exportCsvBtn" class="btn-primary" style="width: 100%; margin-bottom: 8px;">Export Historic CSV Ledger</button>
-            <button type="button" id="downloadBundleBtn" class="btn-secondary" style="width: 100%;">Download Support Bundle (.tar.gz)</button>
+            <button type="button" id="exportCsvBtn" class="btn btn--primary w-full mb-2">Export Historic CSV Ledger</button>
+            <button type="button" id="downloadBundleBtn" class="btn btn--secondary w-full">Download Support Bundle (.tar.gz)</button>
           </div>
         </div>
 
-        <!-- Zone D: Template Management -->
+        <!-- Zone D: System Configurations -->
         <div class="admin-card">
-          <div class="card-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div class="card-title" style="margin-bottom: 0;">Layout Template Management</div>
-            <div style="display: flex; gap: 8px;">
-              <button type="button" id="exportTemplatesBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">Export</button>
-              <button type="button" id="importTemplatesBtn" class="btn-secondary" style="padding: 6px 12px; font-size: 0.75rem;">Import</button>
-              <button type="button" id="createTemplateBtn" class="btn-primary" style="padding: 6px 12px; font-size: 0.75rem;">+ Create Template</button>
+          <div class="card-title">System Configurations</div>
+          <p class="admin-desc">Configure triage thresholds and system-wide parameters.</p>
+          <div class="button-stack">
+            <button type="button" id="openTriageConfigBtn" class="btn btn--primary w-full mb-2">Configure Triage Thresholds</button>
+          </div>
+        </div>
+
+        <!-- Zone E: Template Management -->
+        <div class="admin-card">
+          <div class="card-header-row flex-row-between mb-3">
+            <div class="card-title mb-0">Layout Template Management</div>
+            <div class="flex-row gap-2">
+              <button type="button" id="exportTemplatesBtn" class="btn btn--secondary btn-sm">Export</button>
+              <button type="button" id="importTemplatesBtn" class="btn btn--secondary btn-sm">Import</button>
+              <button type="button" id="createTemplateBtn" class="btn btn--primary btn-sm">+ Create Template</button>
             </div>
           </div>
           <p class="admin-desc">Manage custom bay layout templates for different workstation configurations.</p>
-          <div id="templateList" class="template-list" style="margin-top: 12px; max-height: 200px; overflow-y: auto;">
+          <div id="templateList" class="template-list" style="margin-top: 12px; flex: 1; overflow-y: auto; min-height: 0;">
             <!-- Populated dynamically -->
           </div>
           <div id="templateStatus" class="test-result-label hidden"></div>
-          <input type="file" id="templateImportFile" accept=".json" style="display: none;">
+          <input type="file" id="templateImportFile" accept=".json" class="hidden">
         </div>
 
-        <!-- Zone E: Certificate Logo -->
+        <!-- Zone F: Certificate Logo -->
         <div class="admin-card">
           <div class="card-title">Certificate Logo</div>
           <p class="admin-desc">Upload a custom logo for certificate headers.</p>
-          <div class="logo-constraints" style="margin-bottom: 12px; font-size: 0.75rem; color: #888; background: #222; padding: 8px; border-radius: 4px;">
+          <div class="logo-constraints info-box">
             <div><strong>Accepted formats:</strong> PNG, JPG, JPEG</div>
             <div><strong>Maximum file size:</strong> 1MB</div>
             <div><strong>Logo will be scaled to fit within 500px × 500px</strong></div>
           </div>
-          <div id="logoPreviewContainer" style="margin-bottom: 12px; min-height: 60px; display: flex; align-items: center; justify-content: center; background: #222; border-radius: 4px;">
-            <img id="logoPreview" src="" alt="Logo Preview" style="max-height: 60px; display: none;">
-            <span id="noLogoText" style="color: #666; font-size: 0.8rem;">No custom logo set</span>
+          <div id="logoPreviewContainer" class="preview-container">
+            <img id="logoPreview" src="" alt="Logo Preview" class="preview-thumbnail hidden">
+            <span id="noLogoText" class="text-muted-sm">No custom logo set</span>
           </div>
           <div class="button-stack">
-            <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/jpg" style="display: none;">
-            <button type="button" id="uploadLogoBtn" class="btn-primary" style="width: 100%; margin-bottom: 8px;">Upload Logo</button>
-            <button type="button" id="deleteLogoBtn" class="btn-secondary" style="width: 100%;">Remove Logo</button>
+            <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/jpg" class="hidden">
+            <button type="button" id="uploadLogoBtn" class="btn btn--primary w-full mb-2">Upload Logo</button>
+            <button type="button" id="deleteLogoBtn" class="btn btn--secondary w-full">Remove Logo</button>
           </div>
           <div id="logoStatus" class="test-result-label hidden"></div>
         </div>
 
         <!-- Zone E: Interactive Bay Mapping -->
-        <div class="admin-card" style="grid-column: span 2;">
-          <div class="card-header-row" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <div class="card-title" style="margin-bottom: 0;">Interactive Physical Bay Mapping</div>
-            <button type="button" id="addBayBtn" class="btn-primary" style="padding: 6px 12px; font-size: 0.75rem;">+ Add Bay</button>
+        <div class="admin-card grid-span-2">
+          <div class="card-header-row flex-row-between mb-3">
+            <div class="card-title mb-0">Interactive Physical Bay Mapping</div>
+            <button type="button" id="addBayBtn" class="btn btn--primary btn-sm">+ Add Bay</button>
           </div>
           <p class="admin-desc">Correlate physical workstation slots with backend device disk-by-path references.</p>
 
-          <div class="layout-controls-row" style="margin-top: 12px;">
+          <div class="layout-controls-row mt-3">
             <label>
               Layout Template
               <select id="layoutTemplateSelect">
@@ -205,10 +217,10 @@
               </select>
             </label>
           </div>
-          <div class="layout-controls-row" style="margin-top: 8px;">
-            <button type="button" id="applyLayoutTemplateBtn" class="btn-primary" style="height: fit-content;">Apply Template</button>
+          <div class="layout-controls-row mt-2">
+            <button type="button" id="applyLayoutTemplateBtn" class="btn btn--primary h-fit-content">Apply Template</button>
             <button id="btn-auto-detect" class="btn btn-secondary" type="button">⚡ Auto-Detect</button>
-            <button type="button" id="saveBayMapBtnTop" class="btn-primary">Save Mapping</button>
+            <button type="button" id="saveBayMapBtnTop" class="btn btn--primary">Save Mapping</button>
           </div>
 
           <div id="bayLayoutStatus" class="layout-status-label hidden"></div>
@@ -221,8 +233,8 @@
             <!-- Populated dynamically via javascript -->
           </div>
 
-          <div style="margin-top: 16px;">
-            <button type="button" id="saveBayMapBtn" class="btn-primary">Save Mapping Configuration</button>
+          <div class="mt-4">
+            <button type="button" id="saveBayMapBtn" class="btn btn--primary">Save Mapping Configuration</button>
           </div>
         </div>
 
@@ -238,7 +250,7 @@
       <p>Please enter the administrator passphrase configured in policy.json to interact with this station.</p>
       <form id="authForm">
         <input type="password" id="authPassphrase" placeholder="Passphrase" autocomplete="current-password">
-        <button type="submit" class="btn-primary" style="margin-top: 12px; width: 100%;">Verify Passphrase</button>
+        <button type="submit" class="btn btn--primary mt-3 w-full">Verify Passphrase</button>
       </form>
       <div id="authErrorMsg" class="auth-error hidden">Invalid passphrase. Access denied.</div>
     </div>
@@ -268,6 +280,21 @@
           <div class="section-title" style="margin-top: 16px; margin-bottom: 8px;">Staged Drives Configurations</div>
           <div id="selectedDrivesConfigList" class="batch-config-list"></div>
 
+          <div class="section-title" style="margin-top: 16px; margin-bottom: 8px;">Wipe Options</div>
+          <div class="form-fields-stack">
+            <label style="display: flex; align-items: center; gap: 8px;">
+              <input type="checkbox" id="writeMarkerCheckbox" name="write_marker" checked>
+              <span>Write post-erase marker</span>
+            </label>
+            <label style="display: flex; align-items: flex-start; gap: 8px;">
+              <input type="checkbox" id="fullVerifyCheckbox" name="full_verification">
+              <div>
+                <span>100% verification (slower)</span>
+                <small class="text-muted-xs" style="display: block; margin-top: 4px; color: var(--color-warning);">This will significantly increase wipe time on large drives</small>
+              </div>
+            </label>
+          </div>
+
           <div class="confirmation-section">
             <label>
               Typed Confirmation
@@ -276,7 +303,7 @@
             </label>
           </div>
 
-          <button type="submit" id="batchEraseSubmit" class="btn-primary" style="width: 100%; padding: 12px; margin-top: 16px;">Validate & Execute Sanitization</button>
+          <button type="submit" id="batchEraseSubmit" class="btn btn--primary w-full py-3 mt-4">Validate & Execute Sanitization</button>
         </form>
       </div>
     </div>
@@ -337,9 +364,9 @@
       </header>
       <div class="modal-content">
         <p>A logo already exists. Are you sure you want to replace it?</p>
-        <div style="display: flex; gap: 12px; margin-top: 16px;">
-          <button type="button" id="logoConfirmYes" class="btn-primary">Yes, Replace</button>
-          <button type="button" id="logoConfirmNo" class="btn-secondary" data-close-modal="true">Cancel</button>
+        <div class="flex-row gap-3 mt-4">
+          <button type="button" id="logoConfirmYes" class="btn btn--primary">Yes, Replace</button>
+          <button type="button" id="logoConfirmNo" class="btn btn--secondary" data-close-modal="true">Cancel</button>
         </div>
       </div>
     </div>
@@ -354,13 +381,13 @@
         <button type="button" id="templateModalClose" class="close-button" data-close-modal="true">Cancel</button>
       </header>
       <div class="modal-content">
-        <div id="templateModalError" class="test-result-label hidden" style="margin-bottom: 12px;"></div>
+        <div id="templateModalError" class="test-result-label hidden mb-3"></div>
         <form id="templateForm" novalidate>
           <div class="form-fields-stack">
             <label>
               Template ID
               <input type="text" id="templateId" name="id" placeholder="e.g., dell_r320_4bay" required>
-              <small style="color: #888; font-size: 0.7rem;">Unique identifier for this template (lowercase, hyphens allowed)</small>
+              <small class="text-muted-xs">Unique identifier for this template (lowercase, hyphens allowed)</small>
             </label>
             <label>
               Template Name
@@ -373,17 +400,17 @@
             <label>
               Bay Count
               <input type="number" id="templateBayCount" name="bay_count" min="1" max="128" required>
-              <small style="color: #888; font-size: 0.7rem;">Number of bays in this layout (1-128)</small>
+              <small class="text-muted-xs">Number of bays in this layout (1-128)</small>
             </label>
             <label>
               Grid Rows
               <input type="number" id="templateRows" name="rows" min="1" max="16" required>
-              <small style="color: #888; font-size: 0.7rem;">Number of rows in the grid (1-16)</small>
+              <small class="text-muted-xs">Number of rows in the grid (1-16)</small>
             </label>
             <label>
               Grid Columns
               <input type="number" id="templateCols" name="cols" min="1" max="5" required>
-              <small style="color: #888; font-size: 0.7rem;">Number of columns in the grid (1-5)</small>
+              <small class="text-muted-xs">Number of columns in the grid (1-5)</small>
             </label>
             <label>
               Default Traversal
@@ -397,10 +424,10 @@
             <label>
               Skip Positions (Optional)
               <input type="text" id="templateSkipPositions" name="skip_positions" placeholder="e.g., 4,8,12">
-              <small style="color: #888; font-size: 0.7rem;">Comma-separated bay numbers to skip (e.g., for empty slots)</small>
+              <small class="text-muted-xs">Comma-separated bay numbers to skip (e.g., for empty slots)</small>
             </label>
           </div>
-          <button type="submit" id="templateFormSubmit" class="btn-primary" style="width: 100%; padding: 12px; margin-top: 16px;">Save Template</button>
+          <button type="submit" id="templateFormSubmit" class="btn btn--primary w-full py-3 mt-4">Save Template</button>
         </form>
       </div>
     </div>
@@ -419,12 +446,115 @@
           <!-- Template info populated dynamically -->
         </div>
         <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-          <button type="button" id="previewAnimateBtn" class="btn-primary" style="flex: 1;">Animate Traversal</button>
-          <button type="button" id="previewResetBtn" class="btn-secondary" style="flex: 1;">Reset</button>
+          <button type="button" id="previewAnimateBtn" class="btn btn--primary" style="flex: 1;">Animate Traversal</button>
+          <button type="button" id="previewResetBtn" class="btn btn--secondary" style="flex: 1;">Reset</button>
         </div>
         <div id="templatePreviewGrid" class="template-preview-grid" style="display: grid; gap: 8px; padding: 16px; background: #1a1a1a; border-radius: 4px; min-height: 300px;">
           <!-- Grid populated dynamically -->
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TRIAGE CONFIG MODAL -->
+  <div id="triageConfigModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="triageConfigTitle" style="max-width: 800px;">
+      <header class="modal-header">
+        <h3 id="triageConfigTitle">Configure Triage Thresholds</h3>
+        <button type="button" id="triageConfigClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <div id="triageConfigError" class="test-result-label hidden mb-3"></div>
+        <form id="triageConfigForm" novalidate>
+          <div class="form-fields-stack">
+            <div class="modal-section-header">Power-On Hours Thresholds</div>
+            <label>
+              SSD New POH Threshold (hours)
+              <input type="number" id="ssd_new_poh_threshold" name="ssd_new_poh_threshold" min="0" max="100000" step="100">
+              <small class="text-muted-xs">Drives below this runtime are considered "new stock"</small>
+            </label>
+            <label>
+              SSD High POH Threshold (hours)
+              <input type="number" id="ssd_high_poh_threshold" name="ssd_high_poh_threshold" min="0" max="200000" step="1000">
+              <small class="text-muted-xs">Drives above this runtime are flagged as "heavily used"</small>
+            </label>
+            <label>
+              HDD New POH Threshold (hours)
+              <input type="number" id="hdd_new_poh_threshold" name="hdd_new_poh_threshold" min="0" max="100000" step="100">
+              <small class="text-muted-xs">Drives below this runtime are considered "new stock"</small>
+            </label>
+            <label>
+              HDD High POH Threshold (hours)
+              <input type="number" id="hdd_high_poh_threshold" name="hdd_high_poh_threshold" min="0" max="200000" step="1000">
+              <small class="text-muted-xs">Drives above this runtime are flagged as "heavily used"</small>
+            </label>
+
+            <div class="modal-section-header">Health Score Thresholds</div>
+            <label>
+              Health Score Destroy Threshold
+              <input type="number" id="health_score_destroy_threshold" name="health_score_destroy_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">Drives at or below this score are marked for destruction</small>
+            </label>
+            <label>
+              Health Score Scratch Threshold
+              <input type="number" id="health_score_scratch_threshold" name="health_score_scratch_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">Drives at or below this score are marked for scratch use only</small>
+            </label>
+
+            <div class="modal-section-header">SSD Remaining Life Thresholds</div>
+            <label>
+              SSD Remaining Life Destroy Threshold (%)
+              <input type="number" id="ssd_remaining_life_destroy_threshold" name="ssd_remaining_life_destroy_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">SSDs with less than this life remaining are marked for destruction</small>
+            </label>
+            <label>
+              SSD Remaining Life Scratch Threshold (%)
+              <input type="number" id="ssd_remaining_life_scratch_threshold" name="ssd_remaining_life_scratch_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">SSDs with less than this life remaining are marked for scratch use</small>
+            </label>
+            <label>
+              SSD Remaining Life Good Threshold (%)
+              <input type="number" id="ssd_remaining_life_good_threshold" name="ssd_remaining_life_good_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">SSDs with at least this life remaining are considered "good"</small>
+            </label>
+
+            <div class="modal-section-header">Full Drive Writes (FDW) Thresholds</div>
+            <label>
+              SSD New FDW Threshold
+              <input type="number" id="ssd_new_fdw_threshold" name="ssd_new_fdw_threshold" min="0" max="100" step="0.01">
+              <small class="text-muted-xs">SSDs below this FDW ratio are considered "new stock"</small>
+            </label>
+            <label>
+              HDD New FDW Threshold
+              <input type="number" id="hdd_new_fdw_threshold" name="hdd_new_fdw_threshold" min="0" max="100" step="0.1">
+              <small class="text-muted-xs">HDDs below this FDW ratio are considered "new stock"</small>
+            </label>
+            <label>
+              HDD Heavy FDW Threshold
+              <input type="number" id="hdd_heavy_fdw_threshold" name="hdd_heavy_fdw_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">HDDs above this FDW ratio are flagged as "heavily used"</small>
+            </label>
+
+            <div class="modal-section-header">Sector Thresholds</div>
+            <label>
+              Realloc Raw New Threshold
+              <input type="number" id="realloc_raw_new_threshold" name="realloc_raw_new_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Drives with this many reallocated sectors are still considered "new"</small>
+            </label>
+            <label>
+              Pending Sectors Destroy Threshold
+              <input type="number" id="pending_sectors_destroy_threshold" name="pending_sectors_destroy_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Drives with more pending sectors are marked for destruction</small>
+            </label>
+            <label>
+              Pending Sectors Scratch Threshold
+              <input type="number" id="pending_sectors_scratch_threshold" name="pending_sectors_scratch_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Drives with more pending sectors are marked for scratch use</small>
+            </label>
+          </div>
+          <button type="submit" id="triageConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Thresholds</button>
+        </form>
       </div>
     </div>
   </div>
@@ -439,7 +569,7 @@
       </header>
       <div class="modal-content">
         <div style="margin-bottom: 16px;">
-          <button type="button" id="discoverSlotsBtn" class="btn-primary">⚡ Discover Slots</button>
+          <button type="button" id="discoverSlotsBtn" class="btn btn--primary">⚡ Discover Slots</button>
           <span id="discoveryStatus" style="margin-left: 12px; color: #888;"></span>
         </div>
 
@@ -448,9 +578,9 @@
           <div style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Controller Grouping</label>
             <div style="display: flex; gap: 8px;">
-              <button type="button" id="groupNoneBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">None</button>
-              <button type="button" id="groupTypeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By Type</button>
-              <button type="button" id="groupPciBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By PCI</button>
+              <button type="button" id="groupNoneBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">None</button>
+              <button type="button" id="groupTypeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By Type</button>
+              <button type="button" id="groupPciBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By PCI</button>
             </div>
           </div>
 
@@ -481,8 +611,8 @@
           <div style="margin-bottom: 12px; padding: 12px; background: #222; border-radius: 4px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Mapping Mode</label>
             <div style="display: flex; gap: 8px;">
-              <button type="button" id="patternModeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem; background: var(--color-primary);">Pattern-Based</button>
-              <button type="button" id="manualModeBtn" class="btn-secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">Manual</button>
+              <button type="button" id="patternModeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem; background: var(--color-primary);">Pattern-Based</button>
+              <button type="button" id="manualModeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">Manual</button>
             </div>
           </div>
 
@@ -566,10 +696,10 @@
             <!-- Validation errors populated dynamically -->
           </div>
 
-          <div style="display: flex; gap: 12px; margin-top: 16px;">
-            <button type="button" id="applyMappingBtn" class="btn-primary" style="flex: 1;" disabled>Apply Mapping</button>
-            <button type="button" id="undoMappingBtn" class="btn-secondary" style="flex: 1;" disabled>Undo Last Change</button>
-            <button type="button" id="cancelMappingBtn" class="btn-secondary" style="flex: 1;" data-close-modal="true">Cancel</button>
+          <div class="flex-row gap-3 mt-4">
+            <button type="button" id="applyMappingBtn" class="btn btn--primary" style="flex: 1;" disabled>Apply Mapping</button>
+            <button type="button" id="undoMappingBtn" class="btn btn--secondary" style="flex: 1;" disabled>Undo Last Change</button>
+            <button type="button" id="cancelMappingBtn" class="btn btn--secondary" style="flex: 1;" data-close-modal="true">Cancel</button>
           </div>
         </div>
       </div>
@@ -586,6 +716,7 @@
   <script src="/admin/logoManagement.js" defer></script>
   <script src="/admin/templateManagement.js" defer></script>
   <script src="/admin/discoveryModal.js" defer></script>
+  <script src="/admin/triageConfig.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

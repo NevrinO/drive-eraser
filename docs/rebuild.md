@@ -43,7 +43,15 @@ The script will:
 
 ## Step 5 - Configure Bay Mapping
 
-After install, edit the bay map to match this server's physical layout:
+After install, configure the bay map to match this server's physical layout. The system supports flexible bay configurations (1-128 bays) through the web UI or by editing the configuration file directly.
+
+**Option A: Use the Web UI (Recommended)**
+1. Navigate to http://localhost:5000
+2. Go to the "System Administration" tab (Tab 3)
+3. Use the "Bay Mapping" section to auto-detect drives or manually map bays
+4. Click "Save Mapping Configuration" to apply changes
+
+**Option B: Edit Configuration File Manually**
 
     sudo nano /opt/drive-eraser/config/bay_map.json
 
@@ -101,7 +109,9 @@ Your config files and wipe history will be preserved.
 
 ## Notes
 
+- The system supports flexible bay configurations from 1 to 128 bays
 - Bay 0 is always the OS drive and is locked from wiping.
-- Bay 1 is reserved and locked.
+- Bay 1 is reserved and locked by default (can be reconfigured).
 - After a fresh OS install, bay_map.json must be reconfigured
   because /dev/disk/by-path/ values may differ between servers.
+- Bay mapping can be configured through the web UI under "System Administration" tab.

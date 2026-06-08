@@ -4,19 +4,35 @@ import json
 import re
 import copy
 from flask import Blueprint, jsonify, request
-from app_config import logger, calculate_session_token
+from app_config import logger, calculate_session_token, limiter
 from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
+from routes.admin_routes import require_admin_auth
 from layout_templates import normalize_bay_map_document, compose_bay_map_document
 from device_discovery import (
     discover_controllers_and_devices,
+    scan_pci_controllers,
     validate_device_path,
-    validate_pci_address
+    validate_pci_address,
+    get_scsi_host_slot_projections
 )
 from smart_parsing import get_smart_data
 
 discovery_bp = Blueprint('discovery_routes', __name__)
 
+# Strict regex validation for projected by-path format
+# Format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+# Example: pci-0000:01:00.0-scsi-0:0:0:0
+_PROJECTED_BY_PATH_RE = re.compile(r'^pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0\Z')
+
+# Regex validation for udev by-path format (from /dev/disk/by-path/)
+# Strict whitelist of known udev by-path prefix types to prevent malicious input
+# Format: {type}-{bus-specific-info}
+# Examples: pci-0000:01:00.0-scsi-0:0:0:0, pci-0000:01:00.0-ata-1, usb-1:1.2, ieee1394-0, virtio-0, platform-...
+_UDEV_BY_PATH_RE = re.compile(r'^(pci|usb|ieee1394|virtio|platform)-[0-9a-fA-F:\-.a-zA-Z]+\Z')
+
 @discovery_bp.route("/api/admin/discover-slots")
+@require_admin_auth
+@limiter.limit("10 per minute")
 def discover_slots():
     """Enhanced discovery API for comprehensive slot and device detection.
     
@@ -45,8 +61,10 @@ def discover_slots():
         
         include_smart = include_smart_raw == "true"
         
+        # Scan all PCI storage controllers (including those without devices)
+        all_controllers = scan_pci_controllers(use_cache=True)
+        
         # Discover controllers and devices to ensure cache coherence
-        # Extract controllers from device data to guarantee consistency
         controllers_and_devices = discover_controllers_and_devices()
         
         # Extract unique controllers from device data to avoid cache coherence issues
@@ -64,19 +82,59 @@ def discover_slots():
                     composite_key = f"{pci_addr}:{vendor_id}:{device_id}:{controller_type_key}"
                     if composite_key not in controllers_set:
                         controllers_set[composite_key] = controller
+        
+        # Add controllers that have no devices attached
+        for controller in all_controllers:
+            pci_addr = controller.get("pci_address", "")
+            vendor_id = controller.get("vendor_id", "")
+            device_id = controller.get("device_id", "")
+            controller_type_key = controller.get("controller_type", "")
+            composite_key = f"{pci_addr}:{vendor_id}:{device_id}:{controller_type_key}"
+            if composite_key not in controllers_set:
+                controllers_set[composite_key] = controller
+        
         controllers = list(controllers_set.values())
         
         # DoS protection: enforce size limits
+        MAX_CONTROLLERS = 100
         MAX_DEVICES = 1000
         MAX_SLOTS = 1000
+        
+        if len(controllers) > MAX_CONTROLLERS:
+            return jsonify({"error": f"Controller count exceeds maximum limit of {MAX_CONTROLLERS}"}), 400
         
         # Build comprehensive response
         result = {
             "controllers": controllers,
             "devices_by_type": {},
             "total_devices": 0,
-            "enclosure_slots": []
+            "enclosure_slots": [],
+            "scsi_slot_projections": []
         }
+
+        # Build mapping from device nodes to by-path entries (for udev persistent paths)
+        # This is similar to how unmapped-drives endpoint works
+        by_path_dir = '/dev/disk/by-path/'
+        dev_node_to_by_path = {}
+        try:
+            for entry in os.listdir(by_path_dir):
+                if "-part" in entry:
+                    continue  # Skip partitions
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    dev_node = os.path.realpath(full_path)
+                    dev_node_to_by_path[dev_node] = entry
+        except (OSError, IOError) as e:
+            logger.warning(f"Failed to scan {by_path_dir}: {e}")
+        
+        # Add SCSI host slot projections for physical bay mapping
+        # This provides projected by-path information for empty slots
+        try:
+            scsi_projections = get_scsi_host_slot_projections()
+            result["scsi_slot_projections"] = scsi_projections
+        except Exception as e:
+            logger.warning(f"Failed to get SCSI slot projections: {e}")
+            result["scsi_slot_projections"] = []
         
         # Filter devices by controller_type if specified
         for controller_type, devices in controllers_and_devices.items():
@@ -88,6 +146,10 @@ def discover_slots():
                 device_path = device_info.get("device_path")
                 controller = device_info.get("controller", {})
                 
+                # Ensure controller is a dict before using it
+                if not controller or not isinstance(controller, dict):
+                    controller = {}
+                
                 # Filter by pci_address if specified
                 if pci_address_filter:
                     if controller.get("pci_address") != pci_address_filter:
@@ -97,8 +159,12 @@ def discover_slots():
                 if not validate_device_path(device_path):
                     continue
                 
+                # Resolve udev by-path for this device
+                by_path = dev_node_to_by_path.get(device_path, "")
+
                 enhanced_device = {
                     "device_path": device_path,
+                    "by_path": by_path,
                     "device_name": device_info.get("device_name"),
                     "controller_pci": controller.get("pci_address"),
                     "controller_type": controller.get("controller_type"),
@@ -222,6 +288,8 @@ def discover_slots():
         return jsonify({"error": str(e)}), 500
 
 @discovery_bp.route("/api/admin/apply-slot-mapping", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def apply_slot_mapping():
     """Apply discovered device mappings to bay configuration.
     
@@ -236,14 +304,6 @@ def apply_slot_mapping():
     }
     """
     try:
-        # Authentication check
-        config_dir = get_config_dir()
-        policy = load_policy(config_dir)
-        lan_passphrase = policy.get("lan_passphrase", "")
-        session_token = request.cookies.get("admin_session")
-        if not session_token or session_token != calculate_session_token(lan_passphrase):
-            return jsonify({"error": "Authentication required"}), 401
-        
         # Input validation
         payload = request.get_json(silent=True)
         if not payload or not isinstance(payload, dict):
@@ -255,6 +315,7 @@ def apply_slot_mapping():
             return jsonify({"error": f"Mapping count exceeds maximum limit of {MAX_MAPPINGS}"}), 400
         
         # Load current bay map with lock to prevent race conditions
+        config_dir = get_config_dir()
         with BAY_MAP_LOCK:
             bay_map_path = os.path.join(config_dir, "bay_map.json")
             try:
@@ -280,19 +341,45 @@ def apply_slot_mapping():
                     validation_errors.append(f"Invalid device info for {bay_id}: expected object")
                     continue
                 
-                device_path = device_info.get("device_path", "")
+                device_path = device_info.get("device_path")
+                projected_by_path = device_info.get("projected_by_path")
+                is_empty = device_info.get("is_empty", False)
+                
+                # Handle empty slots with projected by-path
+                if is_empty and not device_path and projected_by_path:
+                    # Empty slot - use projected by-path for future mapping
+                    # Validate projected by-path format strictly (Rule #9, #15)
+                    # Format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+                    if not isinstance(projected_by_path, str):
+                        validation_errors.append(f"Invalid projected_by_path for {bay_id}: not a string")
+                        continue
+                    if not _PROJECTED_BY_PATH_RE.match(projected_by_path):
+                        validation_errors.append(f"Invalid projected_by_path format for {bay_id}: {projected_by_path}")
+                        continue
+                    
+                    bay_map_copy[bay_id]["by_path"] = projected_by_path
+                    bay_map_copy[bay_id]["by_path_nvme"] = ""
+                    updated_bays += 1
+                    continue
+                
+                # For occupied slots, device_path is required
                 if not device_path:
                     validation_errors.append(f"Missing device_path for {bay_id}")
                     continue
-                
-                # Validate device path
-                if not validate_device_path(device_path):
+
+                # Validate device path - accept both device nodes and udev by-path
+                # Device nodes: /dev/sda, /dev/nvme0n1
+                # Udev by-path: pci-0000:01:00.0-scsi-0:0:0:0, etc.
+                is_valid_path = validate_device_path(device_path) or _UDEV_BY_PATH_RE.match(device_path)
+                if not is_valid_path:
                     validation_errors.append(f"Invalid device path for {bay_id}: {device_path}")
                     continue
-                
+
                 # Determine if device is NVMe using regex pattern
-                nvme_pattern = re.compile(r'^/dev/nvme[0-9]+(n[0-9]+)?(p[0-9]+)?$')
-                is_nvme = bool(nvme_pattern.match(device_path))
+                # Check both device node format and by-path format
+                nvme_device_pattern = re.compile(r'^/dev/nvme[0-9]+(n[0-9]+)?(p[0-9]+)?$')
+                nvme_by_path_pattern = re.compile(r'nvme[0-9]+n[0-9]+\Z')  # Use \Z for strict end anchor
+                is_nvme = bool(nvme_device_pattern.match(device_path)) or bool(nvme_by_path_pattern.search(device_path))
                 
                 # Apply mapping based on device type to copy
                 if is_nvme:

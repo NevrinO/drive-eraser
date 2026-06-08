@@ -4,8 +4,11 @@ import json
 import subprocess
 import hashlib
 import hmac
+import time
+import threading
 from datetime import datetime, timezone
-from common import load_policy
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from common import load_policy, get_device_lock
 
 from disk_utils import (
     read_marker_status,
@@ -17,17 +20,20 @@ from disk_utils import (
     PBKDF2_ITERATIONS,
     PBKDF2_SALT,
 )
+
+# TTL cache for software versions (1 hour cache, per lesson-learned #56)
+_VERSIONS_CACHE = {"data": None, "timestamp": 0}
+_VERSIONS_CACHE_TTL = 3600  # 1 hour in seconds
+_VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
 from smart_parsing import get_smart_data
 from crypto_verification import (
     verify_sampled_zero_check,
     capture_before_state,
-    detect_filesystem_signatures,
     verify_crypto_probe,
     verify_crypto_hash_comparison,
-    verify_crypto_conservative_probe,
 )
 
-def resolve_verify_command_path(command_name, env_var_name=None, override_key=None, fallbacks=None):
+def resolve_verify_command_path(command_name):
     # Delegate to the centralized, cached, thread-safe resolver in disk_utils so
     # there is a single source of truth for command resolution.
     return get_command_path(command_name)
@@ -35,14 +41,16 @@ def resolve_verify_command_path(command_name, env_var_name=None, override_key=No
 def run_verification_command(command, text=True):
     if not command or not command[0]:
         return {"ok": False, "stdout": "", "stderr": "", "return_code": None, "output_bytes": b""}
-    result = subprocess.run(["sudo"] + command, capture_output=True, text=text)
+    result = subprocess.run(["sudo"] + command, capture_output=True, text=text, shell=False)
     stdout = result.stdout if isinstance(result.stdout, str) else ""
     stderr = result.stderr if isinstance(result.stderr, str) else ""
     output_bytes = result.stdout if isinstance(result.stdout, bytes) else b""
     return {"ok": result.returncode == 0, "stdout": stdout.strip(), "stderr": stderr.strip(), "return_code": result.returncode, "output_bytes": output_bytes}
 
 def verify_overwrite(device):
-    dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
+    if not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": "overwrite"}}
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_verification", "details": {"method": "overwrite"}}
 
@@ -78,12 +86,19 @@ def verify_overwrite(device):
     return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sampled_zero_check", "method": "overwrite", "samples": checked_samples}}
 
 def parse_numeric_field(output, field_name):
-    match = re.search(rf"{field_name}[^\r\n:]*:\s*(0x[0-9a-fA-F]+|\d+)", output, re.IGNORECASE)
+    # Match hex or decimal numbers, using word boundary to prevent partial matches
+    match = re.search(rf"{field_name}[^\r\n:]*:\s*(0x[0-9a-fA-F]+|\d+)\b", output, re.IGNORECASE)
     if not match:
         return None
     raw_value = match.group(1)
     try:
-        return int(raw_value, 16) if raw_value.lower().startswith("0x") else int(raw_value)
+        if raw_value.lower().startswith("0x"):
+            # Validate hex characters before parsing
+            hex_chars = raw_value[2:]
+            if not hex_chars or not all(c in "0123456789abcdefABCDEF" for c in hex_chars):
+                return None
+            return int(raw_value, 16)
+        return int(raw_value)
     except ValueError:
         return None
 
@@ -132,21 +147,24 @@ def parse_sata_erase_time_estimate(output):
     return None
 
 def verify_nvme_sanitize(device, method):
-    nvme_cmd = resolve_verify_command_path("nvme", "DRIVE_ERASER_NVME_PATH", "nvme", ["/usr/sbin/nvme", "/usr/bin/nvme", "/bin/nvme"])
+    if not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": method}}
+    nvme_cmd = resolve_verify_command_path("nvme")
     if not nvme_cmd:
         return {"ok": False, "status": "verification_error", "error": "nvme_not_available_for_verification", "details": {"method": method}}
 
     result = run_verification_command([nvme_cmd, "sanitize-log", device], text=True)
     output = extract_command_output(result)
     
+    if not result.get("ok"):
+        return {
+            "ok": False,
+            "status": "verification_error",
+            "error": "nvme_sanitize_log_failed",
+            "details": {"method": method, "stderr": result.get("stderr", ""), "return_code": result.get("return_code")},
+        }
+    
     if not output.strip():
-        if not result.get("ok"):
-            return {
-                "ok": False,
-                "status": "verification_error",
-                "error": "nvme_sanitize_log_failed",
-                "details": {"method": method, "stderr": result.get("stderr", ""), "return_code": result.get("return_code")},
-            }
         return {"ok": False, "status": "verification_error", "error": "nvme_sanitize_log_empty", "details": {"method": method}}
 
     lowered = output.lower()
@@ -168,7 +186,9 @@ def verify_nvme_sanitize(device, method):
     }
 
 def verify_sata_secure_erase(device, method):
-    hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
+    if not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": method}}
+    hdparm_cmd = resolve_verify_command_path("hdparm")
     if not hdparm_cmd:
         return {"ok": False, "status": "verification_error", "error": "hdparm_not_available_for_verification", "details": {"method": method}}
 
@@ -254,7 +274,9 @@ def verify_sata_secure_erase(device, method):
     }
 
 def verify_sata_sanitize(device, method):
-    hdparm_cmd = resolve_verify_command_path("hdparm", "DRIVE_ERASER_HDPARM_PATH", "hdparm", ["/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"])
+    if not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": method}}
+    hdparm_cmd = resolve_verify_command_path("hdparm")
     if not hdparm_cmd:
         return {"ok": False, "status": "verification_error", "error": "hdparm_not_available_for_verification", "details": {"method": method}}
 
@@ -309,7 +331,9 @@ def verify_sata_sanitize(device, method):
     return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sata_sanitize_status", "method": method, "output": output}}
 
 def verify_sas_block(device, method):
-    sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize", "DRIVE_ERASER_SG_SANITIZE_PATH", "sg_sanitize", ["/usr/bin/sg_sanitize", "/usr/sbin/sg_sanitize", "/bin/sg_sanitize"])
+    if not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": method}}
+    sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize")
     if not sg_sanitize_cmd:
         return {"ok": False, "status": "verification_error", "error": "sg_sanitize_not_available_for_verification", "details": {"method": method}}
 
@@ -344,7 +368,7 @@ def verify_sas_block(device, method):
     return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sas_sanitize_status", "method": method, "output": output}}
 
 def write_marker_and_verify(job):
-    dd_cmd = resolve_verify_command_path("dd", "DRIVE_ERASER_DD_PATH", "dd", ["/usr/bin/dd", "/bin/dd"])
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_write", "details": {}}
 
@@ -355,62 +379,74 @@ def write_marker_and_verify(job):
     if not validate_device_path(device):
         return {"ok": False, "status": "marker_error", "error": "invalid_device_path", "details": {}}
 
-    smart_metrics = get_smart_data(device)
-    raw_writes = smart_metrics.get("data_written_raw")
-    job["request"]["data_written_at_wipe"] = raw_writes
+    # High #13: Acquire device lock for marker write
+    device_lock = get_device_lock(device)
+    device_lock.acquire()
+    logger = logging.getLogger("app")
 
-    payload = build_marker_payload(job)
-    if len(payload) > (MARKER_BLOCK_SIZE - 1):
-        return {"ok": False, "status": "marker_error", "error": "marker_payload_too_large", "details": {"payload_bytes": len(payload)}}
+    try:
+        smart_metrics = get_smart_data(device)
+        raw_writes = smart_metrics.get("data_written_raw")
+        job["request"]["data_written_at_wipe"] = raw_writes
 
-    block = payload + b"\n" + b"\x00" * (MARKER_BLOCK_SIZE - len(payload) - 1)
-    command = [dd_cmd, f"of={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "conv=fsync", "oflag=direct", "status=none"]
-    result = subprocess.run(["sudo"] + command, input=block, capture_output=True)
-    if result.returncode != 0:
+        payload = build_marker_payload(job)
+        if len(payload) > (MARKER_BLOCK_SIZE - 1):
+            return {"ok": False, "status": "marker_error", "error": "marker_payload_too_large", "details": {"payload_bytes": len(payload)}}
+
+        block = payload + b"\n" + b"\x00" * (MARKER_BLOCK_SIZE - len(payload) - 1)
+        command = [dd_cmd, f"of={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "conv=fsync", "oflag=direct", "status=none"]
+        result = subprocess.run(["sudo"] + command, input=block, capture_output=True, shell=False)
+        if result.returncode != 0:
+            return {
+                "ok": False,
+                "status": "marker_error",
+                "error": "marker_write_failed",
+                "details": {
+                    "return_code": result.returncode,
+                    "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip(),
+                },
+            }
+
+        passphrase = None
+        try:
+            passphrase = load_policy().get("wipe_passphrase")
+        except Exception:
+            passphrase = None
+
+        readback = read_marker_status(device, interface_type, passphrase)
+        if not readback.get("ok"):
+            return readback
+
+        if readback.get("status") == "checksum_valid":
+            stored_writes = readback.get("details", {}).get("data_written_at_wipe")
+            current_writes = get_smart_data(device).get("data_written_raw")
+            is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
+            readback["is_pristine"] = is_pristine
+
+            if not is_pristine:
+                readback["status"] = "written_since_wipe"
+            else:
+                readback["status"] = "pristine_secure" if readback.get("hmac_verified") else "pristine_insecure"
+
+        if readback.get("status") not in {"pristine_secure", "pristine_insecure"}:
+            return {"ok": False, "status": "marker_error", "error": f"marker_verification_failed:{readback.get('status')}", "details": readback.get("details") or {}}
+
         return {
-            "ok": False,
-            "status": "marker_error",
-            "error": "marker_write_failed",
+            "ok": True,
+            "status": "marked",
+            "error": None,
             "details": {
-                "return_code": result.returncode,
-                "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip(),
+                "signature": MARKER_SIGNATURE,
+                "block_size": MARKER_BLOCK_SIZE,
+                "readback": readback.get("details") or {},
             },
         }
-
-    passphrase = None
-    try:
-        passphrase = load_policy().get("wipe_passphrase")
-    except Exception:
-        passphrase = None
-
-    readback = read_marker_status(device, interface_type, passphrase)
-    if not readback.get("ok"):
-        return readback
-
-    if readback.get("status") == "checksum_valid":
-        stored_writes = readback.get("details", {}).get("data_written_at_wipe")
-        current_writes = get_smart_data(device).get("data_written_raw")
-        is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
-        readback["is_pristine"] = is_pristine
-
-        if not is_pristine:
-            readback["status"] = "written_since_wipe"
-        else:
-            readback["status"] = "pristine_secure" if readback.get("hmac_verified") else "pristine_insecure"
-
-    if readback.get("status") not in {"pristine_secure", "pristine_insecure"}:
-        return {"ok": False, "status": "marker_error", "error": f"marker_verification_failed:{readback.get('status')}", "details": readback.get("details") or {}}
-
-    return {
-        "ok": True,
-        "status": "marked",
-        "error": None,
-        "details": {
-            "signature": MARKER_SIGNATURE,
-            "block_size": MARKER_BLOCK_SIZE,
-            "readback": readback.get("details") or {},
-        },
-    }
+    except Exception as e:
+        logger.error(f"Marker write exception: {e}")
+        return {"ok": False, "status": "marker_error", "error": f"marker_exception:{str(e)}", "details": {}}
+    finally:
+        # High #13: Release device lock
+        device_lock.release()
 
 def build_marker_payload(job):
     request_data = job.get("request") or {}
@@ -441,7 +477,76 @@ def build_marker_payload(job):
 
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
-def verification_for_method(device, interface_type, method, execution, before_state=None):
+def _get_tool_version(tool_name, command_path, version_flag):
+    """Helper function to get version of a single tool. Used for parallel execution."""
+    import logging
+    logger = logging.getLogger("app")
+    
+    if not command_path:
+        logger.warning(f"{tool_name} command not found")
+        return tool_name, "not_found"
+    
+    try:
+        result = subprocess.run([command_path, version_flag], capture_output=True, text=True, timeout=5, shell=False)
+        # Check both stdout and stderr for version info (some tools output to stderr)
+        output = (result.stdout.strip() or result.stderr.strip()) if result.returncode == 0 else ""
+        if output and any(char.isdigit() for char in output):
+            return tool_name, output
+        else:
+            logger.warning(f"{tool_name} {version_flag} failed with return code {result.returncode}, stdout: '{result.stdout.strip()[:100]}', stderr: '{result.stderr.strip()[:100]}'")
+            return tool_name, "unavailable"
+    except subprocess.TimeoutExpired:
+        logger.warning(f"{tool_name} {version_flag} timed out after 5 seconds")
+        return tool_name, "timeout"
+    except Exception as e:
+        logger.warning(f"{tool_name} {version_flag} failed: {str(e)}")
+        return tool_name, "error"
+
+def get_software_versions():
+    """Capture versions of key software tools used for verification. Cached with 1-hour TTL."""
+    import logging
+    logger = logging.getLogger("app")
+    
+    # Check cache first (per lesson-learned #56: only cache successful data)
+    current_time = time.time()
+    with _VERSIONS_CACHE_LOCK:
+        if _VERSIONS_CACHE["data"] is not None and (current_time - _VERSIONS_CACHE["timestamp"]) < _VERSIONS_CACHE_TTL:
+            return _VERSIONS_CACHE["data"]
+    
+    versions = {}
+    
+    # Define tools to check in parallel
+    tools_to_check = [
+        ("hdparm", resolve_verify_command_path("hdparm"), "-V"),
+        ("nvme-cli", resolve_verify_command_path("nvme"), "--version"),
+        ("sg_sanitize", resolve_verify_command_path("sg_sanitize"), "--version"),
+    ]
+    
+    # Run version checks in parallel using ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {
+            executor.submit(_get_tool_version, tool_name, cmd_path, flag): tool_name
+            for tool_name, cmd_path, flag in tools_to_check
+        }
+        
+        for future in as_completed(futures):
+            tool_name, result = future.result()
+            versions[tool_name] = result
+    
+    # Log if all tools failed
+    if all(v in {"not_found", "error", "timeout", "unavailable"} for v in versions.values()):
+        logger.error("All software version detection tools failed - certificates may have incomplete version information")
+        # Per lesson-learned #56: do not cache failure states
+        return versions
+    
+    # Cache successful version data (per lesson-learned #56) with thread-safe write
+    with _VERSIONS_CACHE_LOCK:
+        _VERSIONS_CACHE["data"] = versions
+        _VERSIONS_CACHE["timestamp"] = current_time
+    
+    return versions
+
+def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
 
@@ -464,8 +569,32 @@ def verification_for_method(device, interface_type, method, execution, before_st
 
     if primary_result and primary_result.get("ok"):
         primary_result.setdefault("details", {})
-        if selected_method in {"overwrite", "block", "secure_erase", "enhanced_secure_erase"}:
-            secondary_result = verify_sampled_zero_check(device, sample_ratio=0.10)
+        # Unified secondary verification: hash comparison if before_state available, otherwise sampled zero check
+        if before_state and before_state.get("ok"):
+            try:
+                policy = load_policy()
+            except Exception:
+                policy = {}
+            crypto_probe = verify_crypto_probe(device, policy.get("crypto_verification_mode", "conservative_probe"), before_state=before_state, sample_ratio=sample_ratio)
+            if not crypto_probe.get("ok"):
+                return {
+                    "ok": False,
+                    "status": "verification_failed",
+                    "error": f"secondary_verification_failed: {crypto_probe.get('error')}" if crypto_probe.get("error") else "secondary_verification_failed",
+                    "details": {
+                        "primary_details": primary_result.get("details"),
+                        "secondary_details": crypto_probe.get("details")
+                    }
+                }
+            primary_result["details"]["secondary_validation"] = crypto_probe.get("details")
+            probe_status = crypto_probe.get("status")
+            if probe_status == "skipped":
+                primary_result["details"]["secondary_status"] = "SKIPPED"
+            else:
+                primary_result["details"]["secondary_status"] = "PASSED_HASH_COMPARISON"
+            primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_hash_comparison")
+        else:
+            secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio)
             if not secondary_result.get("ok"):
                 return {
                     "ok": False,
@@ -477,30 +606,8 @@ def verification_for_method(device, interface_type, method, execution, before_st
                     }
                 }
             primary_result["details"]["secondary_validation"] = secondary_result.get("details")
-            primary_result["details"]["secondary_status"] = "PASSED"
-            primary_result["details"]["verification_level"] = "full_overwrite_sampled"
-        else:
-            try:
-                policy = load_policy()
-            except Exception:
-                policy = {}
-            crypto_probe = verify_crypto_probe(device, policy.get("crypto_verification_mode", "conservative_probe"), before_state=before_state)
-            if not crypto_probe.get("ok"):
-                return {
-                    "ok": False,
-                    "status": "verification_failed",
-                    "error": crypto_probe.get("error") or "crypto_probe_failed",
-                    "details": {
-                        "primary_details": primary_result.get("details"),
-                        "secondary_details": crypto_probe.get("details")
-                    }
-                }
-            primary_result["details"]["secondary_validation"] = crypto_probe.get("details")
-            probe_status = crypto_probe.get("status")
-            if probe_status == "skipped":
-                primary_result["details"]["secondary_status"] = "SKIPPED"
-            else:
-                primary_result["details"]["secondary_status"] = "PASSED_CRYPTO_PROBE"
-            primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_probe")
+            primary_result["details"]["secondary_status"] = "PASSED_SAMPLED_ZERO_CHECK"
+            primary_result["details"]["verification_level"] = "sampled_zero_check"
+            primary_result["details"]["sample_ratio"] = sample_ratio
 
     return primary_result

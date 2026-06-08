@@ -44,7 +44,7 @@ async function loadLogoStatus() {
 function showLogoStatus(message, isError = false) {
   if (!logoStatus) return;
   logoStatus.classList.remove("hidden");
-  logoStatus.className = `test-result-label ${isError ? "test-result-error" : "test-result-success"}`;
+  logoStatus.className = `test-result-label ${isError ? "test-result-label--error" : "test-result-label--success"}`;
   logoStatus.textContent = message;
   setTimeout(() => {
     logoStatus.classList.add("hidden");

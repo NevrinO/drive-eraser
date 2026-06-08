@@ -4,7 +4,7 @@ import json
 import io
 from datetime import datetime, timezone
 from flask import Blueprint, jsonify, request, send_file
-from app_config import logger
+from app_config import logger, limiter
 from common import get_config_dir
 from layout_templates import (
     load_layout_templates,
@@ -18,10 +18,13 @@ from layout_templates import (
     TEMPLATES_LOCK,
     validate_layout_metadata
 )
+from routes.admin_routes import require_admin_auth
 
 template_bp = Blueprint('template_routes', __name__)
 
 @template_bp.route("/api/admin/layout-templates", methods=["GET", "POST", "PUT", "DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def layout_templates_crud():
     try:
         config_dir = get_config_dir()
@@ -132,6 +135,8 @@ def layout_templates_crud():
         return jsonify({"error": str(e)}), 500
 
 @template_bp.route("/api/admin/layout-templates/export", methods=["GET"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def layout_templates_export():
     """Export all layout templates as a JSON file download."""
     try:
@@ -165,6 +170,8 @@ def layout_templates_export():
         return jsonify({"error": str(e)}), 500
 
 @template_bp.route("/api/admin/layout-templates/import", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
 def layout_templates_import():
     """Import layout templates from a JSON file upload."""
     try:
@@ -230,7 +237,7 @@ def layout_templates_import():
         overwritten_templates = []
         with TEMPLATES_LOCK:
             config_dir = get_config_dir()
-            existing_templates = load_layout_templates(config_dir)
+            existing_templates, _ = load_layout_templates(config_dir)
             
             # Track which templates will be overwritten
             for template_id in imported_templates.keys():
@@ -269,6 +276,8 @@ def layout_templates_import():
         return jsonify({"error": str(e)}), 500
 
 @template_bp.route("/api/admin/apply-template", methods=["POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
 def admin_apply_template():
     try:
         payload = request.get_json(silent=True) or {}

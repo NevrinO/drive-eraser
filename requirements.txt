@@ -1,5 +1,7 @@
 Flask==3.0.3
 flask-cors==4.0.1
+flask-limiter==3.5.1
 beautifulsoup4==4.12.3
 # Pillow 11.1.0: Updated for Ubuntu 26.04 compatibility (10.4.0 wheels unavailable)
 Pillow==11.1.0
+jsonschema==4.22.0

@@ -1,14 +1,17 @@
 # Drive-related routes
 import os
 from flask import Blueprint, jsonify
-from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
+from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, limiter
 from common import get_config_dir, load_policy
 from disk_ops import discover_drives
 from disk_utils import format_capacity_bytes
+from routes.admin_routes import require_admin_auth
 
 drive_bp = Blueprint('drive_routes', __name__)
 
 @drive_bp.route("/api/drives")
+@require_admin_auth
+@limiter.limit("15 per minute")
 def get_drives():
     try:
         config_dir = get_config_dir()
