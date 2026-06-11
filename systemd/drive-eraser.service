@@ -26,6 +26,9 @@ TimeoutStopSec=10
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=drive-eraser
+# Rate limit logging as emergency brake for pathological log storms (max 5000 lines per 30s)
+LogRateLimitIntervalSec=30s
+LogRateLimitBurst=5000
 
 # Security hardening
 NoNewPrivileges=false

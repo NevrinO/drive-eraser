@@ -298,8 +298,8 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
     block_devices = []
     if os.path.exists('/sys/class/block'):
         for device_name in os.listdir('/sys/class/block'):
-            # Skip partitions and device mapper
-            if '-' in device_name or device_name.startswith('dm-'):
+            # Skip partitions, device mapper, and loop devices
+            if '-' in device_name or device_name.startswith('dm-') or device_name.startswith('loop'):
                 continue
 
             device_path = f"/dev/{device_name}"
@@ -619,26 +619,144 @@ def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
     return max_slot
 
 
+def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
+    """Detect if a SCSI host is connected to a SAS expander and extract expander information.
+
+    Args:
+        host_path: Path to the SCSI host directory (e.g., /sys/class/scsi_host/host0)
+        pci_address: PCI address of the controller (e.g., 0000:af:00.0)
+
+    Returns:
+        Dictionary with expander info if detected, None otherwise:
+        - expander_id: SAS expander identifier (e.g., 0x500056b3059bdcff)
+        - phy_count: Number of phy ports on the expander
+    """
+    # Walk up the sysfs tree to find sas_device directories
+    device_link = os.path.join(host_path, 'device')
+    try:
+        real_path = os.path.realpath(device_link)
+    except (OSError, IOError):
+        return None
+
+    expander_id = None
+    total_phy_count = 0
+    
+    # Skip SAS expander detection for ATA/SATA hosts
+    # ATA hosts have paths like /sys/devices/.../ata1/hostX
+    if 'ata' in real_path.lower():
+        return None
+    
+    # Try to extract expander ID from existing device by-paths in /dev/disk/by-path
+    # This is more reliable than sysfs traversal for some systems
+    by_path_base = "/dev/disk/by-path"
+    if os.path.exists(by_path_base):
+        try:
+            by_path_entries = os.listdir(by_path_base)
+            # Look for SAS expander patterns: pci-{pci_addr}-sas-exp{expander_id}-phy*
+            pattern = f"pci-{pci_address}-sas-exp"
+            for entry in by_path_entries:
+                if entry.startswith(pattern):
+                    # Extract expander ID from the by-path entry
+                    # Format: pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0
+                    match = re.search(r'sas-exp(0x[0-9a-fA-F]+)-', entry)
+                    if match:
+                        expander_id = match.group(1)
+                        break
+        except (OSError, IOError):
+            pass
+    
+    if expander_id:
+        # Count phy ports by looking at by-path entries with this expander
+        phy_count = 0
+        if os.path.exists(by_path_base):
+            try:
+                by_path_entries = os.listdir(by_path_base)
+                pattern = f"pci-{pci_address}-sas-exp{expander_id}-phy"
+                phy_count = sum(1 for entry in by_path_entries if entry.startswith(pattern))
+            except (OSError, IOError):
+                pass
+        
+        if phy_count == 0:
+            phy_count = get_max_slot_from_enclosure()
+        
+        if phy_count == 0:
+            phy_count = 10  # Common SAS expander configuration
+        
+        return {
+            'expander_id': expander_id,
+            'phy_count': phy_count
+        }
+    
+    # Fallback to sysfs traversal if by-path didn't work
+    npath = real_path
+    while npath and npath != "/":
+        sas_device_dir = os.path.join(npath, "sas_device")
+        if os.path.isdir(sas_device_dir):
+            try:
+                end_dev_ids = os.listdir(sas_device_dir)
+                for end_dev_id in end_dev_ids:
+                    # Extract expander ID from the end device ID format
+                    # Format: typically contains the expander SAS address
+                    if end_dev_id.startswith('0x') or ':' in end_dev_id:
+                        if not expander_id:
+                            expander_id = end_dev_id
+                        
+                        # Only count phy ports from end devices belonging to the same expander
+                        # This prevents incorrectly summing phy counts from multiple expanders
+                        if end_dev_id == expander_id:
+                            phy_dir = os.path.join(sas_device_dir, end_dev_id)
+                            if os.path.isdir(phy_dir):
+                                try:
+                                    phy_entries = os.listdir(phy_dir)
+                                    phy_count = sum(1 for entry in phy_entries if entry.startswith('phy'))
+                                    total_phy_count += phy_count
+                                except (OSError, IOError):
+                                    pass
+            except (OSError, IOError):
+                pass
+        if expander_id:
+            break
+        npath = os.path.dirname(npath)
+
+    if not expander_id:
+        return None
+
+    # If no phy count found in sas_device directories, fall back to enclosure slot count
+    if total_phy_count == 0:
+        total_phy_count = get_max_slot_from_enclosure()
+
+    # If still no count, use a reasonable default for SAS expanders
+    if total_phy_count == 0:
+        total_phy_count = 10  # Common SAS expander configuration
+
+    return {
+        'expander_id': expander_id,
+        'phy_count': total_phy_count
+    }
+
+
 def get_scsi_host_slot_projections() -> List[Dict]:
     """Scan SCSI hosts and project slot by-path information for physical bay mapping.
 
     This function implements the logic from the bash script that:
     1. Iterates /sys/class/scsi_host/host* to find HBA controllers
     2. Extracts PCI address from host device symlink
-    3. Projects slot paths like pci-0000:01:00.0-scsi-0:0:0:0
-    4. Checks /sys/class/scsi_device/{host}:0:{slot}:0 to see if slots are occupied
-    5. Only projects slots that actually exist (detected by SCSI device directories)
-    6. Filters out SES/enclosure management devices by checking device type
-    7. Uses enclosure metadata to determine max slot for complete enumeration
+    3. Detects SAS expanders and projects phy-based paths if present
+    4. Otherwise projects slot paths like pci-0000:01:00.0-scsi-0:0:0:0
+    5. Checks /sys/class/scsi_device/{host}:0:{slot}:0 to see if slots are occupied
+    6. Only projects slots that actually exist (detected by SCSI device directories)
+    7. Filters out SES/enclosure management devices by checking device type
+    8. Uses enclosure metadata to determine max slot for complete enumeration
 
     Returns:
         List of slot projection dictionaries with keys:
         - pci_address: PCI address of the controller
         - host_number: SCSI host number
         - slot_number: Physical slot number (0-indexed)
-        - projected_by_path: Predicted by-path string (e.g., pci-0000:01:00.0-scsi-0:0:0:0)
+        - projected_by_path: Predicted by-path string (e.g., pci-0000:01:00.0-scsi-0:0:0:0 or pci-0000:01:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0)
         - device_path: Actual device path if occupied (e.g., /dev/sda), None if empty
         - device_name: Device name if occupied (e.g., sda), None if empty
+        - is_sas_expander: True if this projection uses SAS expander phy paths
     """
     projections = []
     scsi_host_base = "/sys/class/scsi_host"
@@ -655,13 +773,13 @@ def get_scsi_host_slot_projections() -> List[Dict]:
 
     # Get max slot from enclosure metadata once (outside host loop to avoid redundant scans)
     enclosure_max_slot = get_max_slot_from_enclosure()
-    
+
     try:
         host_dirs = os.listdir(scsi_host_base)
     except (OSError, IOError):
         logging.warning(f"Failed to list SCSI host directory: {scsi_host_base}")
         return projections
-    
+
     # Move SCSI device directory listing outside host loop to avoid redundant I/O
     try:
         scsi_device_dirs = os.listdir(scsi_device_base)
@@ -675,18 +793,18 @@ def get_scsi_host_slot_projections() -> List[Dict]:
     for host_dir_name in host_dirs:
         if not host_dir_name.startswith('host'):
             continue
-        
+
         host_path = os.path.join(scsi_host_base, host_dir_name)
         if not os.path.isdir(host_path):
             continue
-        
+
         # Extract host number (e.g., host0 -> 0)
         try:
             host_num = int(host_dir_name[4:])
         except (ValueError, IndexError):
             logging.warning(f"Invalid host directory name: {host_dir_name}")
             continue
-        
+
         # Trace back to the actual physical PCI device folder
         device_link = os.path.join(host_path, 'device')
         try:
@@ -694,90 +812,125 @@ def get_scsi_host_slot_projections() -> List[Dict]:
         except (OSError, IOError):
             logging.debug(f"Failed to resolve device link for {host_dir_name}")
             continue
-        
+
         # Extract PCI address from sysfs path
         # Path format: /sys/devices/pci0000:00/0000:00:1f.2/ata1/host0
         pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])', real_path)
         if not pci_matches:
             logging.debug(f"No PCI address found in sysfs path for {host_dir_name}: {real_path}")
             continue
-        
+
         pci_addr = pci_matches[-1]  # Use the last PCI address (actual controller, not bridge)
-        
-        # Find actual slots for this host by scanning SCSI device directories
-        # Pattern: {host_num}:0:{slot}:0
-        slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0$')
 
-        # Collect and sort slot numbers for deterministic ordering
-        # Filter out SES/enclosure management devices by checking device type
-        slot_numbers = []
-        for device_dir in scsi_device_dirs:
-            match = slot_pattern.match(device_dir)
-            if match:
-                slot_num = int(match.group(1))
-                scsi_device_path = os.path.join(scsi_device_base, device_dir)
+        # Detect SAS expander for this host
+        sas_expander_info = detect_sas_expander(host_path, pci_addr)
+        is_sas_expander = sas_expander_info is not None
 
-                # Skip SES/enclosure management devices (not drive slots)
-                # Empty drive slots will NOT be filtered because they are not enclosure type
-                if is_enclosure_device(scsi_device_path, device_type_cache=device_type_cache):
-                    logging.debug(f"Skipping SES/enclosure device at slot {slot_num}")
-                    continue
+        if is_sas_expander:
+            logging.info(f"Detected SAS expander for host {host_num}: expander_id={sas_expander_info['expander_id']}, phy_count={sas_expander_info['phy_count']}")
+            # For SAS expanders, use phy-based projection
+            max_slot = sas_expander_info['phy_count'] - 1
+            expander_id = sas_expander_info['expander_id']
 
-                slot_numbers.append(slot_num)
-
-        slot_numbers.sort()
-
-        # Use the higher of: enclosure max slot or highest SCSI device slot
-        # This handles cases where enclosure metadata is available or not
-        if slot_numbers:
-            scsi_max_slot = max(slot_numbers)
-            max_slot = max(scsi_max_slot, enclosure_max_slot)
-        else:
-            max_slot = enclosure_max_slot
-
-        # Project all slots sequentially from 0 to max_slot for complete enumeration
-        if max_slot > 0:
-            for slot_num in range(max_slot + 1):
+            for phy_num in range(sas_expander_info['phy_count']):
                 # Rule #5: enforce total projection limit to prevent unbounded memory allocation
                 if len(projections) >= MAX_TOTAL_PROJECTIONS:
                     logging.warning(f"Reached maximum projection limit of {MAX_TOTAL_PROJECTIONS}")
                     break
 
-                # Construct the standardized udev by-path string layout
-                # Format: pci-{pci_addr}-scsi-{host_num}:0:{slot}:0
-                projected_by_path = f"pci-{pci_addr}-scsi-{host_num}:0:{slot_num}:0"
+                # Construct SAS expander phy-based by-path string
+                # Format: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
+                projected_by_path = f"pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0"
 
-                # Check if this slot is currently occupied
-                scsi_device_path = os.path.join(scsi_device_base, f"{host_num}:0:{slot_num}:0")
-                device_path = None
-                device_name = None
-
-                if os.path.isdir(scsi_device_path):
-                    # Find the current OS drive letter assigned to this slot
-                    block_path = os.path.join(scsi_device_path, 'device', 'block')
-                    try:
-                        block_entries = os.listdir(block_path)
-                        for entry in block_entries:
-                            if entry.startswith('sd') or entry.startswith('nvme'):
-                                device_name = entry
-                                device_path = f"/dev/{entry}"
-                                break
-                    except (OSError, IOError):
-                        pass
-
+                # For SAS expanders, we cannot easily detect which phy slots are occupied
+                # without more complex sysfs traversal. Set as empty for now.
+                # Enclosure slots data should provide the actual device mappings.
                 projections.append({
                     'pci_address': pci_addr,
                     'host_number': host_num,
-                'slot_number': slot_num,
-                'projected_by_path': projected_by_path,
-                'device_path': device_path,
-                'device_name': device_name
-            })
-        
+                    'slot_number': phy_num,
+                    'projected_by_path': projected_by_path,
+                    'device_path': None,
+                    'device_name': None,
+                    'is_sas_expander': True
+                })
+        else:
+            # Standard SCSI slot projection
+            # Find actual slots for this host by scanning SCSI device directories
+            # Pattern: {host_num}:0:{slot}:0
+            slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0$')
+
+            # Collect and sort slot numbers for deterministic ordering
+            # Filter out SES/enclosure management devices by checking device type
+            slot_numbers = []
+            for device_dir in scsi_device_dirs:
+                match = slot_pattern.match(device_dir)
+                if match:
+                    slot_num = int(match.group(1))
+                    scsi_device_path = os.path.join(scsi_device_base, device_dir)
+
+                    # Skip SES/enclosure management devices (not drive slots)
+                    # Empty drive slots will NOT be filtered because they are not enclosure type
+                    if is_enclosure_device(scsi_device_path, device_type_cache=device_type_cache):
+                        logging.debug(f"Skipping SES/enclosure device at slot {slot_num}")
+                        continue
+
+                    slot_numbers.append(slot_num)
+
+            slot_numbers.sort()
+
+            # Use the higher of: enclosure max slot or highest SCSI device slot
+            # This handles cases where enclosure metadata is available or not
+            if slot_numbers:
+                scsi_max_slot = max(slot_numbers)
+                max_slot = max(scsi_max_slot, enclosure_max_slot)
+            else:
+                max_slot = enclosure_max_slot
+
+            # Project all slots sequentially from 0 to max_slot for complete enumeration
+            if max_slot > 0:
+                for slot_num in range(max_slot + 1):
+                    # Rule #5: enforce total projection limit to prevent unbounded memory allocation
+                    if len(projections) >= MAX_TOTAL_PROJECTIONS:
+                        logging.warning(f"Reached maximum projection limit of {MAX_TOTAL_PROJECTIONS}")
+                        break
+
+                    # Construct the standardized udev by-path string layout
+                    # Format: pci-{pci_addr}-scsi-{host_num}:0:{slot}:0
+                    projected_by_path = f"pci-{pci_addr}-scsi-{host_num}:0:{slot_num}:0"
+
+                    # Check if this slot is currently occupied
+                    scsi_device_path = os.path.join(scsi_device_base, f"{host_num}:0:{slot_num}:0")
+                    device_path = None
+                    device_name = None
+
+                    if os.path.isdir(scsi_device_path):
+                        # Find the current OS drive letter assigned to this slot
+                        block_path = os.path.join(scsi_device_path, 'device', 'block')
+                        try:
+                            block_entries = os.listdir(block_path)
+                            for entry in block_entries:
+                                if entry.startswith('sd') or entry.startswith('nvme'):
+                                    device_name = entry
+                                    device_path = f"/dev/{entry}"
+                                    break
+                        except (OSError, IOError):
+                            pass
+
+                    projections.append({
+                        'pci_address': pci_addr,
+                        'host_number': host_num,
+                        'slot_number': slot_num,
+                        'projected_by_path': projected_by_path,
+                        'device_path': device_path,
+                        'device_name': device_name,
+                        'is_sas_expander': False
+                    })
+
         # Break outer loop if we've reached the limit
         if len(projections) >= MAX_TOTAL_PROJECTIONS:
             break
-    
+
     return projections
 
 

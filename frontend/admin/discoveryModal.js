@@ -541,8 +541,24 @@ function validateDevicePath(devicePath) {
 // Example: pci-0000:01:00.0-scsi-0:0:0:0
 function validateProjectedByPath(projectedByPath) {
   // Strict regex for udev by-path format from SCSI host projection
-  const projectedPathRegex = /^pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0$/;
+  // Supports both SCSI and SAS expander phy formats
+  // SCSI format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+  // SAS expander format: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
+  const projectedPathRegex = /^(?:pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0|pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-sas-exp0x[0-9a-fA-F]+-phy\d+-lun-0)$/;
   return validateRegex(projectedByPath, projectedPathRegex);
+}
+
+// Validate udev by-path format (from /dev/disk/by-path/)
+// Matches backend _UDEV_BY_PATH_RE pattern
+// Format: {type}-{bus-specific-info}
+// Examples: pci-0000:01:00.0-scsi-0:0:0:0, pci-0000:01:00.0-ata-1, pci-0000:aF:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0
+//          usb-1:1.2, ieee1394-0, virtio-0, platform-...
+// Note: JavaScript regex uses $ (not \Z) for end anchor, but validateRegex explicitly checks for newlines,
+// providing equivalent strict validation to the backend's \Z anchor.
+function validateUdevByPath(udevByPath) {
+  // Strict whitelist of known udev by-path prefix types to prevent malicious input
+  const udevByPathRegex = /^(pci|usb|ieee1394|virtio|platform)-[0-9a-fA-F:\-.a-zA-Z]+$/;
+  return validateRegex(udevByPath, udevByPathRegex);
 }
 
 // Comprehensive mapping validation (Task 4.8)
@@ -571,11 +587,17 @@ function validateMapping(mapping) {
     const device = mapping[bayId];
     if (device && device.device_path) {
       // Validate device path format (Rule #9, #15)
-      // Use validateProjectedByPath for SCSI projection paths, validateDevicePath for actual device paths
+      // Check in order: projected SCSI path, udev by-path, regular /dev/ device path
       const isProjectedPath = device.device_path.startsWith('pci-') && device.device_path.includes('-scsi-');
+      const isUdevByPath = /^(pci|usb|ieee1394|virtio|platform)-/.test(device.device_path);
+      
       if (isProjectedPath) {
         if (!validateProjectedByPath(device.device_path)) {
           errors.push(`Invalid projected device path for ${bayId}: ${device.device_path}`);
+        }
+      } else if (isUdevByPath) {
+        if (!validateUdevByPath(device.device_path)) {
+          errors.push(`Invalid udev by-path for ${bayId}: ${device.device_path}`);
         }
       } else {
         if (!validateDevicePath(device.device_path)) {
@@ -710,7 +732,11 @@ function flattenDevices(devicesByType, filter = 'all') {
     devices.forEach(device => {
       if (device && device.device_path) {
         // Rule #9: Validate device path against whitelist before using
-        if (!validateDevicePath(device.device_path)) {
+        // Accept /dev/ device paths, udev by-path, and projected SCSI paths
+        const isUdevByPath = /^(pci|usb|ieee1394|virtio|platform)-/.test(device.device_path);
+        const isProjectedPath = device.device_path.startsWith('pci-') && device.device_path.includes('-scsi-');
+        
+        if (!validateDevicePath(device.device_path) && !isUdevByPath && !isProjectedPath) {
           console.warn(`Skipping invalid device path: ${device.device_path}`);
           return;
         }
@@ -741,11 +767,29 @@ function applyEnclosureBasedMapping(devices, enclosureSlots) {
   let skippedCount = 0;
   let mismatchCount = 0;
 
+  // Create a map of device_path -> controller_pci for filtering
+  const deviceToController = {};
+  devices.forEach(device => {
+    if (device.device_path && device.controller_pci) {
+      deviceToController[device.device_path] = device.controller_pci;
+    }
+  });
+
   // Create a map of slot_number -> device_path from enclosure data
+  // Filter by selected controllers if any are selected
   const slotToDevice = {};
   enclosureSlots.forEach(slot => {
     if (slot.slot_number !== null && slot.device) {
-      slotToDevice[slot.slot_number] = slot.device;
+      // If controllers are selected, check if this slot's device matches
+      if (discoveryState.selectedControllers.size > 0) {
+        const controller = deviceToController[slot.device];
+        if (controller && discoveryState.selectedControllers.has(controller)) {
+          slotToDevice[slot.slot_number] = slot.device;
+        }
+      } else {
+        // No controller filter, include all slots
+        slotToDevice[slot.slot_number] = slot.device;
+      }
     }
   });
 
@@ -791,7 +835,7 @@ function applyEnclosureBasedMapping(devices, enclosureSlots) {
 }
 
 // Helper function for SCSI host slot projection mapping
-function applyScsiProjectionMapping(devices, scsiProjections, startBay) {
+function applyScsiProjectionMapping(devices, scsiProjections, startBay, groupingStrategy = 'none') {
   // Type validation (CRITIQUE.md #3)
   if (!Array.isArray(scsiProjections)) {
     console.error("applyScsiProjectionMapping: expected array for scsiProjections, got", typeof scsiProjections);
@@ -810,18 +854,35 @@ function applyScsiProjectionMapping(devices, scsiProjections, startBay) {
   let skippedCount = 0;
   let emptySlotCount = 0;
 
-  // Group projections by (pci_address, host_number) for ordered traversal
+  // Group projections based on grouping strategy
   const projectionGroups = {};
   filteredProjections.forEach(proj => {
-    const key = `${proj.pci_address}:${proj.host_number}`;
-    if (!projectionGroups[key]) {
-      projectionGroups[key] = [];
+    let groupKey;
+    if (groupingStrategy === 'controller') {
+      // Group by full PCI address
+      groupKey = proj.pci_address;
+    } else if (groupingStrategy === 'pci') {
+      // Group by PCI prefix (domain:bus)
+      const pciParts = proj.pci_address.split(':');
+      groupKey = pciParts.length >= 2 ? `${pciParts[0]}:${pciParts[1]}` : proj.pci_address;
+    } else {
+      // 'none' - group all together for sequential mapping
+      groupKey = 'all';
     }
-    projectionGroups[key].push(proj);
+    
+    if (!projectionGroups[groupKey]) {
+      projectionGroups[groupKey] = [];
+    }
+    projectionGroups[groupKey].push(proj);
   });
 
-  // Sort groups by PCI address then host number for deterministic ordering
-  const sortedGroupKeys = Object.keys(projectionGroups).sort();
+  // Sort groups based on grouping strategy
+  let sortedGroupKeys;
+  if (groupingStrategy === 'none') {
+    sortedGroupKeys = ['all'];
+  } else {
+    sortedGroupKeys = Object.keys(projectionGroups).sort();
+  }
 
   let bayNum = startBay;
   sortedGroupKeys.forEach(groupKey => {
@@ -897,11 +958,14 @@ function applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections,
   // Note: startBay parameter is ignored when enclosure data is present, as physical
   // slot numbers from SCSI Enclosure Services determine the bay mapping
   if (enclosureSlots && enclosureSlots.length > 0) {
+    console.log('Using enclosure-based mapping. enclosureSlots:', enclosureSlots);
     const result = applyEnclosureBasedMapping(filteredDevices, enclosureSlots);
+    console.log('Enclosure mapping result:', result);
     // If enclosure slots exist but have no device data, fall back to SCSI projection mapping
     if (!result.hasDeviceData) {
+      console.log('Enclosure has no device data, falling back to SCSI projections');
       if (scsiProjections && scsiProjections.length > 0) {
-        return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay);
+        return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay, groupingStrategy);
       }
       // Final fallback to sequential mapping with grouping strategy
       return applySequentialMappingWithGrouping(filteredDevices, startBay, groupingStrategy);
@@ -911,7 +975,7 @@ function applyPatternMapping(devices, startBay, enclosureSlots, scsiProjections,
 
   // If SCSI projections are available, use them for physical bay mapping
   if (scsiProjections && scsiProjections.length > 0) {
-    return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay);
+    return applyScsiProjectionMapping(filteredDevices, scsiProjections, startBay, groupingStrategy);
   }
 
   // Fallback to sequential mapping with grouping strategy if no enclosure or SCSI data
@@ -1303,7 +1367,11 @@ function addManualMapping() {
   }
 
   // Validate device path (Rule #9, #15)
-  if (!validateDevicePath(selectedDevice.device_path)) {
+  // Accept /dev/ device paths, udev by-path, and projected SCSI paths
+  const isUdevByPath = /^(pci|usb|ieee1394|virtio|platform)-/.test(selectedDevice.device_path);
+  const isProjectedPath = selectedDevice.device_path.startsWith('pci-') && selectedDevice.device_path.includes('-scsi-');
+  
+  if (!validateDevicePath(selectedDevice.device_path) && !isUdevByPath && !isProjectedPath) {
     showMappingValidationError(`Invalid device path: ${selectedDevice.device_path}`);
     return;
   }

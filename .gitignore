@@ -240,3 +240,6 @@ __marimo__/
 
 # Agent logs and scratchpad
 .devin/archive/
+
+# Release build artifacts
+drive-eraser-*.zip

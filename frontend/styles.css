@@ -753,7 +753,7 @@ input:focus, select:focus {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(680px, 94vw);
+  max-width: min(680px, 94vw);
   max-height: 85vh;
   overflow-y: auto;
   border: 1px solid var(--color-border-strong);

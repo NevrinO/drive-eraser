@@ -20,9 +20,12 @@ from smart_parsing import get_smart_data
 discovery_bp = Blueprint('discovery_routes', __name__)
 
 # Strict regex validation for projected by-path format
-# Format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+# Supports both SCSI and SAS expander phy formats
+# SCSI format: pci-{pci_addr}-scsi-{host}:0:{slot}:0
 # Example: pci-0000:01:00.0-scsi-0:0:0:0
-_PROJECTED_BY_PATH_RE = re.compile(r'^pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0\Z')
+# SAS expander format: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
+# Example: pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0
+_PROJECTED_BY_PATH_RE = re.compile(r'^(?:pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-scsi-\d+:0:\d+:0|pci-[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]-sas-exp0x[0-9a-fA-F]+-phy\d+-lun-0)\Z', re.IGNORECASE)
 
 # Regex validation for udev by-path format (from /dev/disk/by-path/)
 # Strict whitelist of known udev by-path prefix types to prevent malicious input

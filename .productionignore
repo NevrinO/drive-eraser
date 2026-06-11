@@ -1,0 +1,45 @@
+# Development tools
+.devin/
+.windsurf/
+.windsurfignore
+
+# Git repository
+.git/
+.gitignore
+.productionignore
+
+# Build artifacts
+drive-eraser-*.zip
+
+# Tests
+tests/
+scripts/seed_test_data.sh
+scripts/tests*
+
+# Python cache and environments
+__pycache__/
+*.py[codz]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Test coverage
+htmlcov/
+.coverage
+.coverage.*
+.pytest_cache/
+
+# Development-only documentation
+docs/COVERAGE_ASSESSMENT.md
+docs/SECURITY_DEVIATIONS.md
+docs/DEPLOYMENT.md
+
+# System files
+.DS_Store
+.Thumbs.db
+
+# .gitkeep files (directories will be created by app)
+data/certs/.gitkeep
+data/logs/active/.gitkeep
+data/logs/failed/.gitkeep

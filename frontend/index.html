@@ -562,7 +562,7 @@
   <!-- DISCOVERY MODAL -->
   <div id="discoveryModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="discoveryTitle" style="max-width: 900px;">
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="discoveryTitle" style="max-width: 1200px;">
       <header class="modal-header">
         <h3 id="discoveryTitle">Slot Discovery & Mapping</h3>
         <button type="button" id="discoveryClose" class="close-button" data-close-modal="true">Close</button>
@@ -586,20 +586,20 @@
 
           <!-- Controllers Section -->
           <div class="modal-section-header" style="margin-top: 16px; margin-bottom: 8px;">Detected Controllers</div>
-          <div id="controllersList" style="margin-bottom: 16px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+          <div id="controllersList" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
             <!-- Controllers populated dynamically -->
           </div>
 
           <!-- Devices Section -->
           <div class="modal-section-header" style="margin-bottom: 8px;">Detected Devices</div>
-          <div id="devicesList" style="margin-bottom: 16px; max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+          <div id="devicesList" style="margin-bottom: 16px; max-height: 500px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
             <!-- Devices populated dynamically -->
           </div>
 
           <!-- Enclosure Slots Section -->
           <div id="enclosureSlotsSection" style="display: none;">
             <div class="modal-section-header" style="margin-bottom: 8px;">Enclosure Slots</div>
-            <div id="enclosureSlotsList" style="margin-bottom: 16px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+            <div id="enclosureSlotsList" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
               <!-- Enclosure slots populated dynamically -->
             </div>
           </div>
@@ -639,7 +639,7 @@
               </select>
             </div>
             <button type="button" id="previewMappingBtn" style="width: 100%; padding: 8px; background: #444; border: 1px solid #666; color: #fff; cursor: pointer;">Preview Mapping</button>
-            <div id="mappingPreview" style="margin-top: 12px; max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; display: none;">
+            <div id="mappingPreview" style="margin-top: 12px; max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; display: none;">
               <!-- Preview populated dynamically -->
             </div>
           </div>
@@ -661,7 +661,7 @@
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
               <div>
                 <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Available Devices</label>
-                <div id="availableDevicesList" style="max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 150px;">
+                <div id="availableDevicesList" style="max-height: 500px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 150px;">
                   <!-- Devices populated dynamically -->
                 </div>
               </div>
