@@ -349,6 +349,18 @@ class TestVerifyNvmeSanitize:
         assert result["ok"] is False
         assert result["error"] == "nvme_sanitize_log_failed"
 
+    @patch('verification.validate_device_path')
+    @patch('verification.resolve_verify_command_path')
+    def test_invalid_extracted_device_path(self, mock_resolve, mock_validate):
+        """Test that invalid extracted controller path is rejected."""
+        # First call validates original device path (passes)
+        # Second call validates extracted controller path (fails)
+        mock_validate.side_effect = [True, False]
+        mock_resolve.return_value = "/usr/bin/nvme"
+        result = verify_nvme_sanitize("/dev/nvme0n1", "crypto")
+        assert result["ok"] is False
+        assert result["error"] == "invalid_extracted_device_path"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

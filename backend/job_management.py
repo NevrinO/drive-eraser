@@ -49,6 +49,7 @@ from verification import (
 from certificates import build_certificate
 from notifier import send_slack_notification
 from disk_ops import get_os_by_path, invalidate_drive_cache
+from disk_utils import validate_device_path
 from smart_parsing import get_raw_smart_diagnostics
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
 
@@ -257,8 +258,19 @@ def prepare_erase_command(device, interface_type, method):
             nvme_cmd = resolve_verify_command_path("nvme")
             if not nvme_cmd:
                 return {"ok": False, "error": "nvme_not_available"}
-            action = "crypto" if selected_method == "crypto" else "block"
-            return {"ok": True, "command": [nvme_cmd, "sanitize", device, "-a", action]}
+            # NVMe sanitize must be run on the controller device (/dev/nvmeX), not namespace (/dev/nvmeXnY)
+            sanitize_device = device
+            if device and re.match(r'^/dev/nvme\d+n\d+\Z', device):
+                # Extract controller from namespace (e.g., /dev/nvme0n1 -> /dev/nvme0)
+                match = re.match(r'^(/dev/nvme\d+)n\d+\Z', device)
+                if match:
+                    sanitize_device = match.group(1)
+                    # Validate extracted controller path before use (lesson-learned #9)
+                    if not validate_device_path(sanitize_device):
+                        return {"ok": False, "error": "invalid_extracted_device_path"}
+            # --sanact expects decimal value: 4=crypto erase, 2=block erase
+            sanact_value = "4" if selected_method == "crypto" else "2"
+            return {"ok": True, "command": [nvme_cmd, "sanitize", sanitize_device, "--sanact", sanact_value]}
             
         if iface == "sata":
             hdparm_cmd = resolve_verify_command_path("hdparm")

@@ -978,7 +978,7 @@ class TestRunEraseJob:
                 with patch('job_management.send_slack_notification'):
                     with patch('job_management.persist_job'):
                         with patch('job_management.capture_before_state', return_value={"ok": True}):
-                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["nvme", "sanitize"]}):
+                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["nvme", "sanitize", "/dev/nvme0", "--sanact", "4"]}):
                                 with patch('job_management.get_active_logs_dir', return_value=tmpdir):
                                     with patch('job_management.verification_for_method', return_value={"ok": True}):
                                         with patch('job_management.write_marker_and_verify', return_value={"ok": True}):

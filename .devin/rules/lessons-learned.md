@@ -377,3 +377,7 @@ This file contains generalized architectural guardrails derived from past agent 
   - Restructure so that dependent modules do not import from the central module at module level (move those imports into route functions)
   - Extract shared utilities into a separate module that both can import from without circularity
 Before centralizing initialization, trace the import graph to ensure no cycles exist.
+
+### 81. Validate Extracted Device Paths Before Use
+- **Rule**: When extracting or deriving device paths from validated input (e.g., extracting controller from namespace), the extracted path must also be validated before use.
+- **Guardrail**: Validation of the original input does not guarantee the extracted/derived value is safe. Any path used in command construction must pass `validate_device_path()` regardless of its origin. For example, when extracting `/dev/nvme0` from `/dev/nvme0n1` via regex, the extracted controller path must be validated before being passed to subprocess commands. This defense-in-depth approach prevents security regressions if the extraction logic changes or if new code paths bypass the original validation. Apply this principle to all derived values: extracted substrings, transformed paths, or computed identifiers used in security-sensitive contexts.

@@ -153,7 +153,18 @@ def verify_nvme_sanitize(device, method):
     if not nvme_cmd:
         return {"ok": False, "status": "verification_error", "error": "nvme_not_available_for_verification", "details": {"method": method}}
 
-    result = run_verification_command([nvme_cmd, "sanitize-log", device], text=True)
+    # NVMe sanitize-log must be queried on the controller device (/dev/nvmeX), not namespace (/dev/nvmeXnY)
+    sanitize_device = device
+    if device and re.match(r'^/dev/nvme\d+n\d+\Z', device):
+        # Extract controller from namespace (e.g., /dev/nvme0n1 -> /dev/nvme0)
+        match = re.match(r'^(/dev/nvme\d+)n\d+\Z', device)
+        if match:
+            sanitize_device = match.group(1)
+            # Validate extracted controller path before use (lesson-learned #9)
+            if not validate_device_path(sanitize_device):
+                return {"ok": False, "status": "verification_error", "error": "invalid_extracted_device_path", "details": {"method": method}}
+
+    result = run_verification_command([nvme_cmd, "sanitize-log", sanitize_device], text=True)
     output = extract_command_output(result)
     
     if not result.get("ok"):
@@ -177,6 +188,11 @@ def verify_nvme_sanitize(device, method):
 
     if "in progress" in lowered or (sprog is not None and sprog < 65535):
         return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
+
+    # sprog=65535 means no sanitize operation has ever been performed.
+    # If sstat is also 0x0 (no status), the sanitize command didn't execute or was rejected.
+    if sprog == 65535 and (sstat is None or sstat == 0):
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_never_executed", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
 
     return {
         "ok": True,

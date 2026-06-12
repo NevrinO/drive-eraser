@@ -96,7 +96,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/nvme0n1", "nvme", "crypto")
 
         assert result["ok"] is True
-        assert result["command"] == ["/usr/bin/nvme", "sanitize", "/dev/nvme0n1", "-a", "crypto"]
+        assert result["command"] == ["/usr/bin/nvme", "sanitize", "/dev/nvme0", "--sanact", "4"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_block_erase_nvme(self, mock_resolve):
@@ -105,7 +105,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/nvme0n1", "nvme", "block")
 
         assert result["ok"] is True
-        assert result["command"] == ["/usr/bin/nvme", "sanitize", "/dev/nvme0n1", "-a", "block"]
+        assert result["command"] == ["/usr/bin/nvme", "sanitize", "/dev/nvme0", "--sanact", "2"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_nvme_not_available(self, mock_resolve):
@@ -115,6 +115,19 @@ class TestPrepareEraseCommand:
 
         assert result["ok"] is False
         assert result["error"] == "nvme_not_available"
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.validate_device_path')
+    def test_invalid_extracted_device_path_nvme(self, mock_validate, mock_resolve):
+        """Test that invalid extracted controller path is rejected for NVMe."""
+        # First call validates original device path (passes)
+        # Second call validates extracted controller path (fails)
+        mock_validate.side_effect = [True, False]
+        mock_resolve.return_value = "/usr/bin/nvme"
+        result = prepare_erase_command("/dev/nvme0n1", "nvme", "crypto")
+
+        assert result["ok"] is False
+        assert result["error"] == "invalid_extracted_device_path"
 
     @patch('job_management.resolve_verify_command_path')
     def test_crypto_erase_sata(self, mock_resolve):
