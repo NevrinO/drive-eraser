@@ -381,3 +381,12 @@ Before centralizing initialization, trace the import graph to ensure no cycles e
 ### 81. Validate Extracted Device Paths Before Use
 - **Rule**: When extracting or deriving device paths from validated input (e.g., extracting controller from namespace), the extracted path must also be validated before use.
 - **Guardrail**: Validation of the original input does not guarantee the extracted/derived value is safe. Any path used in command construction must pass `validate_device_path()` regardless of its origin. For example, when extracting `/dev/nvme0` from `/dev/nvme0n1` via regex, the extracted controller path must be validated before being passed to subprocess commands. This defense-in-depth approach prevents security regressions if the extraction logic changes or if new code paths bypass the original validation. Apply this principle to all derived values: extracted substrings, transformed paths, or computed identifiers used in security-sensitive contexts.
+
+### 82. Subprocess Lifecycle Management for Job Termination
+- **Rule**: When implementing job termination features, store subprocess references and explicitly terminate them rather than just updating status flags.
+- **Guardrail**: Updating a job's status to "failed" or "killed" in memory/database does not stop the actual subprocess executing the work. The job execution loop must check for termination signals, and the termination endpoint must:
+  1. Store the subprocess `Popen` object in the job dict (e.g., `job["_process"] = process`)
+  2. When terminating: check `process.poll() is None` to verify it's still running
+  3. Call `process.terminate()` followed by `process.wait(timeout=N)` with fallback to `process.kill()`
+  4. Ensure the job execution loop checks the same termination condition as the admin endpoint
+  Without this, "kill" operations give false assurance while subprocesses continue running (e.g., `nwipe`, `hdparm`, `nvme sanitize` operations on hardware). This creates orphaned processes, resource conflicts, and inconsistent state between database and actual hardware operations.

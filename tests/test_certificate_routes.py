@@ -5,7 +5,6 @@ import os
 import json
 import tempfile
 import sqlite3
-import gc
 from unittest.mock import patch, MagicMock, Mock
 from io import BytesIO
 
@@ -187,8 +186,6 @@ class TestGetCertificate:
                     )
                     conn.commit()
                 
-                gc.collect()  # Force garbage collection to release file handle on Windows
-                
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/db-job?format=json')
                     assert response.status_code == 200
@@ -215,7 +212,6 @@ class TestGetCertificate:
                         ("real-id", "friendly-2", json.dumps(test_cert))
                     )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/friendly-2?format=json')
@@ -231,7 +227,6 @@ class TestGetCertificate:
                 with sqlite3.connect(db_path) as conn:
                     conn.execute("CREATE TABLE IF NOT EXISTS erase_jobs (id TEXT PRIMARY KEY, friendly_id TEXT, certificate_json TEXT, request_json TEXT)")
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/missing-job?format=json')
@@ -249,7 +244,6 @@ class TestGetCertificate:
                     conn.execute("INSERT INTO erase_jobs (id, friendly_id, certificate_json) VALUES (?, ?, ?)",
                                ("no-cert-job", "friendly-3", None))
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/no-cert-job?format=json')
@@ -502,7 +496,6 @@ class TestGetBulkCertificatesHtml:
                         ("job-1", "friendly-1", json.dumps(test_cert), "2026-01-01T00:00:00")
                     )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
@@ -532,7 +525,6 @@ class TestGetBulkCertificatesHtml:
                         ("job-2", "friendly-2", json.dumps(test_cert), "2026-01-01T00:00:00", json.dumps({"ticket_number": "TICKET-123"}))
                     )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
@@ -562,7 +554,6 @@ class TestGetBulkCertificatesHtml:
                         ("job-3", "friendly-3", json.dumps(test_cert), "2026-06-01T00:00:00")
                     )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
@@ -582,7 +573,6 @@ class TestGetBulkCertificatesHtml:
                 with sqlite3.connect(db_path) as conn:
                     conn.execute("CREATE TABLE IF NOT EXISTS erase_jobs (id TEXT PRIMARY KEY, friendly_id TEXT, certificate_json TEXT, request_json TEXT, finished_at TEXT)")
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     response = admin_session.post('/api/certificates/bulk-html', json={"ticket_number": "NONEXISTENT"})
@@ -611,7 +601,6 @@ class TestGetBulkCertificatesHtml:
                         ("job-bad", "friendly-bad", "invalid-json{", "2026-01-01T00:00:00")
                     )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
@@ -643,7 +632,6 @@ class TestGetBulkCertificatesHtml:
                             (f"job-{i}", f"friendly-{i}", json.dumps(test_cert), "2026-01-01T00:00:00")
                         )
                     conn.commit()
-                gc.collect()  # Force garbage collection to release file handle on Windows
                 
                 with patch('routes.admin_routes.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):

@@ -345,7 +345,7 @@ def run_erase_job(job_id):
         capacity_bytes = 100 * 1024 * 1024 * 1024
 
     # High-signal event marking the active beginning of physical wipe commands
-    logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}'")
+    logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}', Interface: '{interface_type}'")
 
     # Capture before-state for all methods for hash comparison verification
     before_state = None
@@ -397,6 +397,7 @@ def run_erase_job(job_id):
         command = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
     else:
         cmd_result = prepare_erase_command(device, interface_type, method)
+        logger.info(f"prepare_erase_command result: ok={cmd_result.get('ok')}, error={cmd_result.get('error')}, interface_type={interface_type}, method={method}")
         if not cmd_result.get("ok"):
             finalize_failed_job(job_id, cmd_result.get("error") or "prepare_command_failed")
             return
@@ -426,6 +427,11 @@ def run_erase_job(job_id):
             stderr=log_file,
             text=True
         )
+        # Store process reference for admin kill-all functionality
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["_process"] = process
     except Exception as e:
         log_file.close()
         finalize_failed_job(job_id, f"process_spawn_failed:{str(e)}")
@@ -541,6 +547,7 @@ def run_erase_job(job_id):
     }
 
     if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
+        logger.info(f"Starting firmware polling: method={method}, interface_type={interface_type}, device={device}")
         firmware_complete = False
         poll_start_time = datetime.now(timezone.utc)
         # Use erase command start time for progress calculation, not polling start time
@@ -581,7 +588,9 @@ def run_erase_job(job_id):
                 else:
                     status_report = verify_sata_sanitize(device, method)
             elif interface_type == "nvme":
+                logger.info(f"Polling NVMe firmware: device={device}, method={method}")
                 status_report = verify_nvme_sanitize(device, method)
+                logger.info(f"NVMe firmware poll result: ok={status_report.get('ok')}, error={status_report.get('error')}")
             elif interface_type == "sas":
                 status_report = verify_sas_block(device, method)
                 
@@ -640,10 +649,12 @@ def run_erase_job(job_id):
                     fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                     progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
             else:
+                # Unknown error - log details and increment error counter
+                logger.warning(f"Unexpected verification error during firmware polling for {device}: {status_report.get('error')}, details: {status_report.get('details')}")
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
                     break
-                phase_text = f"Polling drive (no response... {consecutive_errors}/{max_consecutive_errors})"
+                phase_text = f"Polling drive (verification error... {consecutive_errors}/{max_consecutive_errors})"
                 fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                 progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                 

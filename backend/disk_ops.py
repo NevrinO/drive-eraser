@@ -73,7 +73,7 @@ def get_os_parent_device():
         devname = None
         if os.path.exists(uevent_path):
             with open(uevent_path, "r") as f:
-                for line in f:
+                for line in f.read().splitlines():
                     if line.startswith("DEVNAME="):
                         devname = line.strip().split("=")[1]
                         break
@@ -91,7 +91,7 @@ def get_os_parent_device():
         if not devname:
             if os.path.exists("/proc/mounts"):
                 with open("/proc/mounts", "r") as f:
-                    for line in f:
+                    for line in f.read().splitlines():
                         parts = line.split()
                         if len(parts) >= 2 and parts[1] == "/":
                             src = parts[0]

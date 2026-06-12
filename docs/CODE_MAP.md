@@ -31,6 +31,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 │   ├── database.py             # Schema initialization, PRAGMA alterations, SQLite writes
 │   ├── notifier.py             # Webhook alerting dispatcher
 │   └── verification.py         # Resilient firmware sanitize status checkers & marker logic
+│                                 # See "NVMe Sanitize Log Reference" section below for SSTAT/SPROG values
 ├── config/                     # Static operational profiles
 │   ├── bay_map.json            # Mapping of physical bays to dev-by-path values
 │   └── policy.json             # System rule configurations, methods priority, passphrase
@@ -190,7 +191,119 @@ frontend/app.js (entry point)
 
 ---
 
-## 5. Instructions for Future AI Assistants
+## 5. NVMe Sanitize Log Reference (verification.py)
+
+**Critical**: The NVMe Sanitize Log Status Field (SSTAT) values are often misunderstood. Below are the correct values per the NVMe specification:
+
+| SSTAT Value | Status | Meaning |
+|-------------|--------|---------|
+| `0x000` | Never Sanitized | No sanitize operation has been performed since manufacture |
+| `0x101` | Completed Successfully | Sanitize finished without errors (Status=1 + Global Data Erased bit) |
+| `0x002` | In Progress | Drive is actively wiping; track SPROG 0-65535 for percentage |
+| `0x003` | Completed with Failure | Operation failed (power loss or hardware issue) |
+| `0x102` | No-Deallocate Completed | Finished successfully but blocks not deallocated (allows forensic verification) |
+
+**Field breakdown**:
+- Bits 0-7: Status Code (the values above)
+- Bit 8 (0x100): Global Data Erased bit - set when all namespaces have been erased
+
+**SPROG values** (uint16, range 0-65535):
+- 0 (0x0000): 0% - Operation initialized / NAND block preparation
+- 1-65534: In progress (percentage = SPROG/65535 * 100)
+- 65535 (0xFFFF): 100% - Finalized/completed (triggers sstat 0x101 or 0x102)
+
+**SSTAT + SPROG Relationship Table**:
+
+| SSTAT | SPROG | State | Meaning |
+|-------|-------|-------|---------|
+| `0x000` | 0 | Never Sanitized | No sanitize operation has been performed |
+| `0x002` | 0-65534 | In Progress | Drive is actively wiping (percentage = SPROG/65535*100) |
+| `0x003` | 65535 | Failed | Operation failed at completion point |
+| `0x101` | 65535 | Completed Successfully | Operation finished, all data destroyed |
+| `0x102` | 65535 | No-Deallocate Completed | Operation finished, blocks not deallocated |
+
+**Critical**: 
+- SPROG=65535 means **100% complete**, not "never executed"
+- SPROG=0 means **0% / initialization phase**, not "completed"
+- When sstat=0x101 or 0x102 (Completed), SPROG should always be 65535
+
+**Important**: Do NOT treat specific sstat values as drive-specific "quirks" - these are standard NVMe spec values applicable to all drives.
+
+---
+
+## 6. Vendor-Specific NVMe Sanitize Behaviors (Future Implementation)
+
+**Status**: Documented for troubleshooting reference. Not yet implemented in verification logic.
+
+The following vendor-specific behaviors have been observed in the field and may require future handling if verification issues arise. Detection can be implemented via `nvme id-ctrl` model string matching or PCI VID lookup.
+
+### 6.1 Samsung Enterprise (PM/SM Series)
+
+| Behavior | Impact |
+|----------|--------|
+| Post-sanitize GC delay | After `sstat=0x101`, drive returns busy for ~180s while garbage collection completes |
+| "Instant" crypto erase | SPROG jumps 0→65535 instantly for crypto erase (normal, key destruction is fast) |
+| Bus reset required | May require PCIe endpoint reset to accept new namespaces post-sanitize |
+
+**Detection**: Model strings containing `Samsung`, `MZ`, `PM`, `SM` prefixes.
+
+**Future Fix**: If verification fails with "device busy" after `sstat=0x101` on Samsung drives, add retry-with-delay logic (180s max).
+
+### 6.2 Solidigm / Intel Data Center (D7/D5 Series)
+
+| Behavior | Impact |
+|----------|--------|
+| Auto-namespace creation | Creates blank default namespace automatically post-wipe |
+| Linear SPROG progress | SPROG increments predictably across all sanitize methods |
+| Extended SMART log | Additional SMART log (0xCA) contains physical erase counts for verification |
+
+**Detection**: Model strings containing `Intel`, `Solidigm`, or PCI VID `0x8086` (Intel).
+
+**Future Fix**: For physical verification of block erase, query Intel/Solidigm Additional SMART Log:
+```bash
+sudo nvme intel smart-log-add /dev/nvme0
+```
+
+### 6.3 Micron (Enterprise)
+
+| Behavior | Impact |
+|----------|--------|
+| 99% pause | SPROG pauses at ~99% while internal capacitor banks verify flash voltage states |
+| Power-loss protection errors | May throw PCIe vendor error bits if capacitors lack charge to commit the wipe |
+
+**Detection**: Model strings containing `Micron`, `MT`, or PCI VID `0x1344`.
+
+**Future Fix**: Extended timeout (>5min) when `sstat=0x002` and `SPROG` stuck near 65535 on Micron drives.
+
+### 6.4 General Vendor Detection Approach
+
+**Option A: Model String Matching** (Simple)
+```python
+result = run_verification_command([nvme_cmd, "id-ctrl", device], text=True)
+model = parse_model_from_id_ctrl(result["stdout"])
+vendor = detect_vendor_from_model(model)  # "Samsung", "Intel", "Micron", etc.
+```
+
+**Option B: PCI VID Lookup** (Reliable)
+```python
+# Read /sys/bus/pci/devices/XXXX:XX:XX.X/vendor
+vid = read_pci_vendor_id(device)  # 0x144d=Samsung, 0x8086=Intel, 0x1344=Micron
+```
+
+### 6.5 Warning Signs to Monitor
+
+If future NVMe verification issues occur, check for these vendor-specific patterns:
+
+| Symptom | Likely Vendor | Likely Cause |
+|---------|---------------|--------------|
+| `sstat=0x101` but "device busy" errors | Samsung | Post-sanitize GC in progress |
+| Stuck at 99% for >5min | Micron | Capacitor verification phase |
+| Instant completion (<5s) for block erase | Any | Likely crypto erase instead of block erase |
+| No namespace after `sstat=0x101` | Samsung | Requires bus reset to recreate |
+
+---
+
+## 7. Instructions for Future AI Assistants
 
 1. **Context Economy**: Do not read the entire directory unless a system-wide structural change is explicitly requested. Read this file first, choose the target module, and request only that file from the user.
 2. **Backward Compatibility**: Ensure any modifications to the output shapes or endpoints inside `api_routes.py` preserve compatibility with the payload keys expected by the frontend modules (specifically during bay card mapping and ledger expansions).

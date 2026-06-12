@@ -10,7 +10,8 @@ from unittest.mock import patch, MagicMock
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_TTL, _discovery_interrupted, _discovery_interrupt_lock
+import disk_ops
+from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_TTL, _discovery_interrupt_lock
 
 
 class TestGetOSParentDevice:
@@ -63,7 +64,8 @@ class TestGetOSParentDevice:
     @patch('os.stat')
     @patch('os.path.exists')
     @patch('os.path.realpath')
-    def test_get_os_parent_device_from_proc_mounts(self, mock_realpath, mock_exists, mock_stat):
+    @patch('subprocess.run')
+    def test_get_os_parent_device_from_proc_mounts(self, mock_subprocess, mock_realpath, mock_exists, mock_stat):
         """Test detection via /proc/mounts as fallback."""
         # Mock os.stat("/") to return device numbers
         mock_stat_result = MagicMock()
@@ -75,6 +77,8 @@ class TestGetOSParentDevice:
         # Mock realpath to return a path that resolves to the base device (not partition)
         # For /sys/class/block/sda, return path that ends with sda (not sda2)
         mock_realpath.side_effect = lambda path: "/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0/target0:0:0/0:0:0:0/block/sda" if "sda" in path and "/sys/class/block/" in path else path
+        # findmnt must fail so execution falls through to /proc/mounts
+        mock_subprocess.return_value = MagicMock(returncode=1, stdout=MagicMock(strip=MagicMock(return_value="")))
 
         # Mock /proc/mounts content
         mounts_content = "/dev/sda / ext4 rw 0 0\n"
@@ -344,10 +348,10 @@ class TestPresenceDetectionUncached:
 
     def setup_method(self):
         """Clear cache and reset interruption flag before each test."""
+        import disk_ops
         invalidate_drive_cache()
-        global _discovery_interrupted
-        with _discovery_interrupt_lock:
-            _discovery_interrupted = False
+        with disk_ops._discovery_interrupt_lock:
+            disk_ops._discovery_interrupted = False
 
     def teardown_method(self):
         """Clear cache after each test."""

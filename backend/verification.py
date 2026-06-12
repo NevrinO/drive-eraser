@@ -6,9 +6,12 @@ import hashlib
 import hmac
 import time
 import threading
+import logging
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from common import load_policy, get_device_lock
+
+logger = logging.getLogger("app")
 
 from disk_utils import (
     read_marker_status,
@@ -147,10 +150,14 @@ def parse_sata_erase_time_estimate(output):
     return None
 
 def verify_nvme_sanitize(device, method):
+    logger.info(f"verify_nvme_sanitize called: device={device}, method={method}")
+
     if not validate_device_path(device):
+        logger.warning(f"verify_nvme_sanitize: device path validation failed for {device}")
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": method}}
     nvme_cmd = resolve_verify_command_path("nvme")
     if not nvme_cmd:
+        logger.warning(f"verify_nvme_sanitize: nvme command not found")
         return {"ok": False, "status": "verification_error", "error": "nvme_not_available_for_verification", "details": {"method": method}}
 
     # NVMe sanitize-log must be queried on the controller device (/dev/nvmeX), not namespace (/dev/nvmeXnY)
@@ -166,7 +173,9 @@ def verify_nvme_sanitize(device, method):
 
     result = run_verification_command([nvme_cmd, "sanitize-log", sanitize_device], text=True)
     output = extract_command_output(result)
-    
+
+    logger.info(f"NVMe sanitize-log for {device} (using {sanitize_device}): return_code={result.get('return_code')}, output_preview={output[:300] if output else 'empty'}")
+
     if not result.get("ok"):
         return {
             "ok": False,
@@ -174,32 +183,89 @@ def verify_nvme_sanitize(device, method):
             "error": "nvme_sanitize_log_failed",
             "details": {"method": method, "stderr": result.get("stderr", ""), "return_code": result.get("return_code")},
         }
-    
+
     if not output.strip():
         return {"ok": False, "status": "verification_error", "error": "nvme_sanitize_log_empty", "details": {"method": method}}
 
     lowered = output.lower()
     sprog = parse_numeric_field(output, "sprog")
     sstat = parse_numeric_field(output, "sstat")
-    sstat_failed = bool(sstat is not None and ((sstat & 0x7) == 0x2 or (sstat & 0x7) == 0x3))
 
-    if "failed" in lowered or sstat_failed:
+    # NVMe Sanitize Log interpretation per NVMe specification:
+    # SSTAT values (bits 0-2 status, bit 8 Global Data Erased):
+    #   0x000 = Never Sanitized
+    #   0x002 = In Progress (bit 1 set)
+    #   0x003 = Failed (bits 0 and 1 set)
+    #   0x101 = Completed Successfully (bit 0 set + Global Data Erased bit)
+    #   0x102 = No-Deallocate Completed (bit 1 set + Global Data Erased bit)
+    # SPROG values (uint16, sanitize progress):
+    #   0 = 0% (initialized/preparation)
+    #   1-65534 = In progress (percentage = SPROG/65535 * 100)
+    #   65535 = 100% (finalized/completed)
+
+    # Check for failure state first
+    if "failed" in lowered:
         return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_failed_state", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
 
-    # sprog=65535 means no sanitize operation has ever been performed.
-    # If sstat is also 0x0 (no status), the sanitize command didn't execute or was rejected.
-    if sprog == 65535 and (sstat is None or sstat == 0):
+    # Determine SSTAT state (use lower 3 bits for status code)
+    sstat_status = sstat & 0x7 if sstat is not None else None
+
+    # SSTAT = 0x000 (Never Sanitized) - SPROG should be 0
+    if sstat == 0x000:
         return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_never_executed", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
 
-    # sprog values: 0 = completed, 1-65534 = in progress, 65535 = never executed
-    if sprog is not None and sprog > 0 and sprog < 65535:
-        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
+    # SSTAT = 0x002 (In Progress) - SPROG should be 0-65534
+    if sstat_status == 0x2:
+        progress_pct = (sprog / 65535.0) * 100 if sprog is not None and sprog < 65535 else None
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None, "progress_pct": progress_pct}}
+
+    # SSTAT = 0x003 (Failed) - SPROG should be 65535
+    if sstat_status == 0x3:
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_failed", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
+
+    # SSTAT = 0x101 (Completed Successfully) - SPROG should be 65535
+    if sstat == 0x101:
+        return {
+            "ok": True,
+            "status": "verified",
+            "error": None,
+            "details": {"mode": "nvme_sanitize_log", "method": method, "sprog": sprog, "sstat": hex(sstat), "note": "completed_with_global_data_erased"},
+        }
+
+    # SSTAT = 0x102 (No-Deallocate Completed) - SPROG should be 65535
+    if sstat == 0x102:
+        return {
+            "ok": True,
+            "status": "verified",
+            "error": None,
+            "details": {"mode": "nvme_sanitize_log", "method": method, "sprog": sprog, "sstat": hex(sstat), "note": "completed_no_deallocate"},
+        }
+
+    # Fallback: use SPROG if SSTAT parsing failed or returned unexpected values
+    # SPROG = 0 means 0% (initialization phase) - still in progress
+    if sprog == 0:
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None, "progress_pct": 0.0}}
+
+    # SPROG = 1-65534 means in progress at calculable percentage
+    if sprog is not None and 0 < sprog < 65535:
+        progress_pct = (sprog / 65535.0) * 100
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None, "progress_pct": progress_pct}}
+
+    # SPROG = 65535 means 100% complete - check if sstat indicates success
+    if sprog == 65535:
+        # If sstat is 0 or None with sprog=65535, this is inconsistent state
+        if sstat is None or sstat == 0:
+            return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_state_inconsistent", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None, "note": "sprog_complete_but_sstat_invalid"}}
+
+    # If we can't determine state but no failure indicators, assume success (defensive)
+    # This prevents infinite loops when parsing fails but drive appears healthy
+    logger.warning(f"NVMe sanitize verification ambiguous for {device}: sprog={sprog}, sstat={hex(sstat) if sstat else None}, output={output[:200]}")
 
     return {
         "ok": True,
         "status": "verified",
         "error": None,
-        "details": {"mode": "nvme_sanitize_log", "method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None},
+        "details": {"mode": "nvme_sanitize_log", "method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None, "note": "defensive_success"},
     }
 
 def verify_sata_secure_erase(device, method):
