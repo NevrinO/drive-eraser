@@ -48,7 +48,7 @@ from verification import (
 )
 from certificates import build_certificate
 from notifier import send_slack_notification
-from disk_ops import get_os_by_path
+from disk_ops import get_os_by_path, invalidate_drive_cache
 from smart_parsing import get_raw_smart_diagnostics
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
 
@@ -300,6 +300,8 @@ def finalize_failed_job(job_id, error_message):
                 logger.warning(f"Failed to write failure diagnostics to log: {e}")
                 
             persist_job(job)
+            # Drop cached discovery data for this device so the next discovery reflects post-job state
+            invalidate_drive_cache(job["request"].get("device"))
             send_slack_notification(job)
             
             # Emit a high-signal application log representing an initialization failure
@@ -770,6 +772,9 @@ def run_erase_job(job_id):
                 job["certificate"] = None
 
         persist_job(job)
+
+    # Drop cached discovery data for this device so the next discovery reflects post-wipe state
+    invalidate_drive_cache(device)
 
     send_slack_notification(job)
 

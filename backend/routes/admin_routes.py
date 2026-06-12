@@ -19,6 +19,7 @@ from common import get_config_dir, load_policy, save_policy, get_data_dir, get_l
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
+from disk_ops import invalidate_drive_cache
 import ipaddress
 
 admin_bp = Blueprint('admin_routes', __name__)
@@ -287,10 +288,16 @@ def admin_policy():
                     current_policy[field] = payload[field]
                     
             new_pass = str(payload.get("lan_passphrase") or "").strip()
+            passphrase_changed = False
             if new_pass:
                 current_policy["lan_passphrase"] = new_pass
+                passphrase_changed = True
                 
             save_policy(current_policy, config_dir)
+            
+            # Passphrase change invalidates marker HMAC verification results in drive cache
+            if passphrase_changed:
+                invalidate_drive_cache()
             
             logger.info("Operational policies modified successfully by administrator.")
             return jsonify({"status": "success", "message": "System policies updated successfully."}), 200

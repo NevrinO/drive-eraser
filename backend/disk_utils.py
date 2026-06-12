@@ -16,6 +16,11 @@ from common import get_config_dir, load_policy
 MARKER_SIGNATURE = "DWS_MARKER_V1"
 MARKER_BLOCK_SIZE = 4096
 
+# Timeout for read-only discovery commands (smartctl/hdparm/nvme/sg_sanitize --status/dd reads).
+# Prevents a hung device from stalling discovery worker threads indefinitely.
+# Destructive commands (run_destructive_command) intentionally have NO timeout.
+_READONLY_COMMAND_TIMEOUT = 30  # seconds
+
 # Single source of truth for marker HMAC key derivation. Both the write path
 # (verification.build_marker_payload) and read path (read_marker_status) must
 # use these identical parameters or HMAC verification will always fail.
@@ -194,9 +199,9 @@ def read_marker_status(device, interface_type="unknown", passphrase=None):
     if not dd_cmd: return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_read", "details": {}}
     command = [dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "iflag=direct", "status=none"]
     try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, shell=False)
+        result = subprocess.run(["sudo"] + command, capture_output=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT)
         if result.returncode != 0:
-            result = subprocess.run(["sudo", dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True, shell=False)
+            result = subprocess.run(["sudo", dd_cmd, f"if={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "status=none"], capture_output=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT)
         if result.returncode != 0:
             return {"ok": False, "status": "marker_error", "error": "marker_read_failed", "details": {"return_code": result.returncode, "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip()}}
         output_bytes = result.stdout or b""
@@ -250,9 +255,12 @@ def run_command(command, diagnostics=None, key=None):
         if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": "command_not_resolved"}
         return None
     try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False)
+        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT)
         if diagnostics is not None and key: diagnostics[key] = {"ok": True, "reason": None, "exit_code": result.returncode}
         return (result.stdout or "").strip()
+    except subprocess.TimeoutExpired:
+        if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": f"command_timeout_{_READONLY_COMMAND_TIMEOUT}s", "exit_code": None}
+        return None
     except subprocess.CalledProcessError as e:
         if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": (e.stderr or "").strip() or f"exit_code_{e.returncode}", "exit_code": e.returncode}
         return (e.stdout or "").strip() if command and os.path.basename(command[0]) == "smartctl" else None
