@@ -641,27 +641,10 @@ setup_sudo() {
 # Suppress syslog logging for disk utility commands to reduce journalctl spam
 # Application-level audit trail is maintained in SQLite database (data/wipes.db)
 
-Defaults!$SMARTCTL_PATH !syslog
-Defaults!$HDPARM_PATH !syslog
-Defaults!$NVME_PATH !syslog
-Defaults!$SG_SANITIZE_PATH !syslog
-Defaults!$SG_INQ_PATH !syslog
-Defaults!$DD_PATH !syslog
-Defaults!$LSBLK_PATH !syslog
-Defaults!$LSHW_PATH !syslog
-Defaults!$SYSTEMCTL_PATH !syslog
-Defaults!$BLOCKDEV_PATH !syslog
+Cmnd_Alias DISK_CMDS = $SMARTCTL_PATH, $HDPARM_PATH, $NVME_PATH, $SG_SANITIZE_PATH, $SG_INQ_PATH, $DD_PATH, $LSBLK_PATH, $LSHW_PATH, $SYSTEMCTL_PATH, $BLOCKDEV_PATH
+Defaults!DISK_CMDS !syslog
 
-$APP_USER ALL=(root) NOPASSWD: $SMARTCTL_PATH
-$APP_USER ALL=(root) NOPASSWD: $HDPARM_PATH
-$APP_USER ALL=(root) NOPASSWD: $NVME_PATH
-$APP_USER ALL=(root) NOPASSWD: $SG_SANITIZE_PATH
-$APP_USER ALL=(root) NOPASSWD: $SG_INQ_PATH
-$APP_USER ALL=(root) NOPASSWD: $DD_PATH
-$APP_USER ALL=(root) NOPASSWD: $LSBLK_PATH
-$APP_USER ALL=(root) NOPASSWD: $LSHW_PATH
-$APP_USER ALL=(root) NOPASSWD: $SYSTEMCTL_PATH
-$APP_USER ALL=(root) NOPASSWD: $BLOCKDEV_PATH
+$APP_USER ALL=(root) NOPASSWD: DISK_CMDS
 EOF
 
     chmod 440 "$TMP_SUDOERS_FILE"
