@@ -186,13 +186,14 @@ def verify_nvme_sanitize(device, method):
     if "failed" in lowered or sstat_failed:
         return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_failed_state", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
 
-    if "in progress" in lowered or (sprog is not None and sprog < 65535):
-        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
-
     # sprog=65535 means no sanitize operation has ever been performed.
     # If sstat is also 0x0 (no status), the sanitize command didn't execute or was rejected.
     if sprog == 65535 and (sstat is None or sstat == 0):
         return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_never_executed", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
+
+    # sprog values: 0 = completed, 1-65534 = in progress, 65535 = never executed
+    if sprog is not None and sprog > 0 and sprog < 65535:
+        return {"ok": False, "status": "verification_failed", "error": "nvme_sanitize_still_in_progress", "details": {"method": method, "sprog": sprog, "sstat": hex(sstat) if sstat is not None else None}}
 
     return {
         "ok": True,

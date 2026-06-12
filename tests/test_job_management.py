@@ -120,9 +120,8 @@ class TestPrepareEraseCommand:
     @patch('job_management.validate_device_path')
     def test_invalid_extracted_device_path_nvme(self, mock_validate, mock_resolve):
         """Test that invalid extracted controller path is rejected for NVMe."""
-        # First call validates original device path (passes)
-        # Second call validates extracted controller path (fails)
-        mock_validate.side_effect = [True, False]
+        # The code only validates the extracted controller path (/dev/nvme0), not the original
+        mock_validate.return_value = False
         mock_resolve.return_value = "/usr/bin/nvme"
         result = prepare_erase_command("/dev/nvme0n1", "nvme", "crypto")
 

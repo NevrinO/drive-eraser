@@ -312,7 +312,7 @@ class TestVerifyNvmeSanitize:
                 with patch('verification.run_verification_command') as mock_run:
                     mock_run.return_value = {
                         "ok": True,
-                        "stdout": "sprog: 65535\nsstat: 0x0"
+                        "stdout": "sprog: 0\nsstat: 0x5"
                     }
                     result = verify_nvme_sanitize("/dev/nvme0n1", "crypto")
                     assert result["ok"] is True

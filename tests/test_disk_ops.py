@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_TTL
+from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_TTL, _discovery_interrupted, _discovery_interrupt_lock
 
 
 class TestGetOSParentDevice:
@@ -343,8 +343,11 @@ class TestPresenceDetectionUncached:
     """Test that presence detection (by-path resolution) is NOT cached for real-time detection."""
 
     def setup_method(self):
-        """Clear cache before each test."""
+        """Clear cache and reset interruption flag before each test."""
         invalidate_drive_cache()
+        global _discovery_interrupted
+        with _discovery_interrupt_lock:
+            _discovery_interrupted = False
 
     def teardown_method(self):
         """Clear cache after each test."""

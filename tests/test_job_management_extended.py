@@ -463,8 +463,8 @@ class TestPrepareEraseCommand:
             assert result["ok"] is True
             assert any("nvme" in cmd for cmd in result["command"])
             assert "sanitize" in result["command"]
-            assert "-a" in result["command"]
-            assert "crypto" in result["command"]
+            assert "--sanact" in result["command"]
+            assert "4" in result["command"]
 
     def test_block_erase_nvme(self):
         """Test block erase for NVMe."""
@@ -474,8 +474,8 @@ class TestPrepareEraseCommand:
             assert result["ok"] is True
             assert any("nvme" in cmd for cmd in result["command"])
             assert "sanitize" in result["command"]
-            assert "-a" in result["command"]
-            assert "block" in result["command"]
+            assert "--sanact" in result["command"]
+            assert "2" in result["command"]
 
     def test_nvme_not_available(self):
         """Test handling when nvme not available."""
