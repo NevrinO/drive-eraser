@@ -19,17 +19,17 @@ _PCI_ADDRESS_RE = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0
 
 # Cache for PCI controller scan results to avoid redundant subprocess calls
 _PCI_CACHE = {'data': None, 'timestamp': 0}
-_PCI_CACHE_TTL = 60  # seconds
+_PCI_CACHE_TTL = 180  # seconds (PCI topology changes rarely; longer TTL reduces lspci calls)
 _PCI_CACHE_LOCK = threading.Lock()
 
 # Cache for enclosure slot metadata to avoid redundant sysfs scans
 _ENCLOSURE_CACHE = {'data': None, 'timestamp': 0}
-_ENCLOSURE_CACHE_TTL = 60  # seconds
+_ENCLOSURE_CACHE_TTL = 180  # seconds
 _ENCLOSURE_CACHE_LOCK = threading.Lock()
 
 # Cache for NVMe list output to avoid redundant subprocess calls
 _NVME_CACHE = {'data': None, 'timestamp': 0}
-_NVME_CACHE_TTL = 60  # seconds
+_NVME_CACHE_TTL = 180  # seconds
 _NVME_CACHE_LOCK = threading.Lock()
 
 # Cache for device discovery results to avoid redundant full scans

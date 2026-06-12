@@ -7,7 +7,7 @@ from app_config import logger, limiter
 from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
 from routes.admin_routes import require_admin_auth
-from disk_ops import get_os_by_path
+from disk_ops import get_os_by_path, invalidate_drive_cache
 from smart_parsing import get_smart_data
 
 bay_mapping_bp = Blueprint('bay_mapping_routes', __name__)
@@ -280,6 +280,8 @@ def auto_detect_bays():
                 updates_count += 1
 
         save_bay_map(compose_bay_map_document(bay_map, layout_metadata), config_dir)
+        # Bay mapping changed: drop cached drive data so the next discovery re-resolves everything
+        invalidate_drive_cache()
         
         logger.info(f"Auto-detect bays updated {updates_count} map elements out of {len(discovered_slots)} total discovered enclosures.")
         return jsonify({
@@ -320,6 +322,8 @@ def update_bay_map():
             return jsonify({"error": validation_error}), 400
 
         save_bay_map(compose_bay_map_document(bays, layout_metadata), config_dir)
+        # Bay mapping changed: drop cached drive data so the next discovery re-resolves everything
+        invalidate_drive_cache()
 
         logger.info("Enclosure bay map edited manually by administrator.")
         return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200
