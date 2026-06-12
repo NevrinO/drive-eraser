@@ -26,6 +26,7 @@ def register_routes(flask_app):
     """
     # Home route
     @flask_app.route("/")
+    @limiter.exempt
     def home():
         index_path = os.path.join(FRONTEND_DIR, "index.html")
         if os.path.exists(index_path):
@@ -33,6 +34,7 @@ def register_routes(flask_app):
         return "<h1>Drive Wipe Station API</h1><p>Status: Online</p>"
 
     @flask_app.route("/<path:path>")
+    @limiter.exempt
     def frontend_assets(path):
         if path.startswith("api/"):
             return jsonify({"error": "not found"}), 404
@@ -42,6 +44,7 @@ def register_routes(flask_app):
         return jsonify({"error": "not found"}), 404
 
     @flask_app.route("/docs/<path:path>")
+    @limiter.exempt
     def serve_docs(path):
         docs_dir = os.path.join(PROJECT_ROOT, "docs")
         doc_path = os.path.join(docs_dir, path)
