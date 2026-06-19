@@ -150,6 +150,7 @@
           <p class="admin-desc">Configure triage thresholds and system-wide parameters.</p>
           <div class="button-stack">
             <button type="button" id="openTriageConfigBtn" class="btn btn--primary w-full mb-2">Configure Triage Thresholds</button>
+            <button type="button" id="openSystemConfigBtn" class="btn btn--secondary w-full">Configure System Settings</button>
           </div>
         </div>
 
@@ -559,6 +560,65 @@
     </div>
   </div>
 
+  <div id="systemConfigModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="systemConfigTitle" style="max-width: 700px;">
+      <header class="modal-header">
+        <h3 id="systemConfigTitle">Configure System Settings</h3>
+        <button type="button" id="systemConfigClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <div id="systemConfigError" class="test-result-label hidden mb-3"></div>
+        <form id="systemConfigForm" novalidate>
+          <div class="form-fields-stack">
+            <div class="modal-section-header">Notifications</div>
+            <label>
+              Slack Webhook URL
+              <input type="url" id="slack_webhook_url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
+              <small class="text-muted-xs">Slack webhook URL for wipe completion/failure notifications</small>
+            </label>
+
+            <div class="modal-section-header">Verification Mode</div>
+            <label>
+              Crypto Verification Mode
+              <select id="crypto_verification_mode" name="crypto_verification_mode">
+                <option value="conservative_probe">Conservative Probe (recommended)</option>
+                <option value="full_verify">Full Verify (slower, more thorough)</option>
+                <option value="disabled">Disabled (no verification)</option>
+              </select>
+              <small class="text-muted-xs">Controls post-wipe verification behavior for crypto/block erase methods</small>
+            </label>
+
+            <div class="modal-section-header">Performance Settings</div>
+            <label>
+              Discovery Max Workers
+              <input type="number" id="discovery_max_workers" name="discovery_max_workers" min="1" max="32" step="1">
+              <small class="text-muted-xs">Maximum parallel threads for drive discovery (1-32)</small>
+            </label>
+            <label>
+              Max Concurrent Wipes
+              <input type="number" id="max_concurrent_wipes" name="max_concurrent_wipes" min="1" max="256" step="1">
+              <small class="text-muted-xs">Maximum simultaneous wipe operations (1-256)</small>
+            </label>
+
+            <div class="modal-section-header">Post-Wipe Retry Settings</div>
+            <label>
+              Blockdev Post-Wipe Retries
+              <input type="number" id="blockdev_post_wipe_retries" name="blockdev_post_wipe_retries" min="0" max="10" step="1">
+              <small class="text-muted-xs">Number of retry attempts for post-wipe capacity checks (0-10)</small>
+            </label>
+            <label>
+              Blockdev Post-Wipe Retry Delay (seconds)
+              <input type="number" id="blockdev_post_wipe_retry_delay" name="blockdev_post_wipe_retry_delay" min="0" max="60" step="1">
+              <small class="text-muted-xs">Delay between retry attempts in seconds (0-60)</small>
+            </label>
+          </div>
+          <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
   <!-- DISCOVERY MODAL -->
   <div id="discoveryModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
@@ -717,6 +777,7 @@
   <script src="/admin/templateManagement.js" defer></script>
   <script src="/admin/discoveryModal.js" defer></script>
   <script src="/admin/triageConfig.js" defer></script>
+  <script src="/admin/systemConfig.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

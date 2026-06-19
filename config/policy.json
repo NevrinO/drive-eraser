@@ -23,7 +23,7 @@
     "ssd_high_poh_threshold": 40000,
     "hdd_new_poh_threshold": 500,
     "hdd_high_poh_threshold": 40000,
-    "health_score_destroy_threshold": 20,
+    "health_score_destroy_threshold": 30,
     "health_score_scratch_threshold": 60,
     "ssd_remaining_life_destroy_threshold": 10,
     "ssd_remaining_life_scratch_threshold": 60,

@@ -8,7 +8,7 @@ import os
 import re
 import logging
 from logging.handlers import RotatingFileHandler
-from threading import Lock
+from threading import Lock, Semaphore
 import hmac
 import hashlib
 import socket
@@ -95,6 +95,30 @@ app.config['SESSION_COOKIE_HTTPONLY'] = True
 
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()
+
+# Semaphore for limiting concurrent wipe operations
+WIPE_SEMAPHORE = None
+WIPE_SEMAPHORE_LOCK = Lock()
+WIPE_SEMAPHORE_CURRENT_LIMIT = None
+
+def get_wipe_semaphore():
+    """Get or create the wipe semaphore based on policy configuration."""
+    global WIPE_SEMAPHORE, WIPE_SEMAPHORE_CURRENT_LIMIT
+    with WIPE_SEMAPHORE_LOCK:
+        try:
+            policy = load_policy()
+            max_concurrent = policy.get("max_concurrent_wipes", 64)
+            # Clamp to reasonable bounds
+            max_concurrent = max(1, min(max_concurrent, 256))
+        except Exception:
+            max_concurrent = 64
+        
+        # Recreate semaphore if limit changed
+        if WIPE_SEMAPHORE is None or WIPE_SEMAPHORE_CURRENT_LIMIT != max_concurrent:
+            WIPE_SEMAPHORE = Semaphore(max_concurrent)
+            WIPE_SEMAPHORE_CURRENT_LIMIT = max_concurrent
+        
+        return WIPE_SEMAPHORE
 
 BULK_CERT_JOBS = {}
 BULK_CERT_JOBS_LOCK = Lock()

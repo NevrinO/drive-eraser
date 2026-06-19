@@ -285,7 +285,7 @@ def admin_policy():
             payload = request.get_json(silent=True) or {}
             current_policy = load_policy(config_dir)
             
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override"]
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]

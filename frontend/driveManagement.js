@@ -209,6 +209,7 @@ function renderBays(drives) {
         const isCritical = String(drive.status).toUpperCase() === "FAILED";
         const isRunning = String(drive.status).toUpperCase() === "RUNNING";
         const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+        const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
         const isUnconfigured = isBayUnconfigured(drive);
 
         let stateClass = "healthy";
@@ -226,6 +227,9 @@ function renderBays(drives) {
         } else if (isRunning) {
           stateClass = "running";
           bannerLabel = "WIPING IN PROGRESS";
+        } else if (isMarkerDisabled) {
+          stateClass = "completed";
+          bannerLabel = "SANITIZED (NO MARKER)";
         } else if (isCompleted) {
           stateClass = "completed";
           bannerLabel = "SANITIZED & VERIFIED";
@@ -381,9 +385,10 @@ function renderBatchModalForm() {
       return `<option value="${escapeHtml(method)}" ${method === recommended ? "selected" : ""}>${escapeHtml(method)}${isRec}</option>`;
     }).join("");
 
+    const displayLabel = drive?.display_number ? `BAY ${drive.display_number}` : bay.toUpperCase();
     return `
       <div class="batch-config-row">
-        <span>${escapeHtml(bay.toUpperCase())}</span>
+        <span>${escapeHtml(displayLabel)}</span>
         <small style="color: var(--color-text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
           ${escapeHtml(drive?.model || "Generic")} (S/N: ${escapeHtml(drive?.serial || "-")})
         </small>
@@ -397,7 +402,15 @@ function renderBatchModalForm() {
   selectedDrivesConfigList.innerHTML = listHtml;
   
   const count = selectedBays.size;
-  const hintText = count === 1 ? `Type "erase ${Array.from(selectedBays)[0]}" to confirm:` : `Type "erase ${count} drives" to confirm:`;
+  let hintText;
+  if (count === 1) {
+    const bay = Array.from(selectedBays)[0];
+    const drive = currentDrives.find(d => d.bay === bay);
+    const displayLabel = drive?.display_number ? `BAY ${drive.display_number}` : bay.toUpperCase();
+    hintText = `Type "erase ${displayLabel}" to confirm:`;
+  } else {
+    hintText = `Type "erase ${count} drives" to confirm:`;
+  }
   dynamicConfirmationHint.textContent = hintText;
   confirmationText.value = "";
 }

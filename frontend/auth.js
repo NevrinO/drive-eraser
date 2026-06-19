@@ -67,7 +67,7 @@ async function loadSecurityStatus() {
       console.error("Failed to parse security status JSON:", e);
       throw new Error("Invalid JSON response from status API");
     }
-    if (data.passphrase_enabled) {
+    if (data.strict_audit_mode) {
       badge.textContent = "SECURE MODE";
       badge.className = "reliability-badge secure";
     } else {

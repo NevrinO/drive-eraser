@@ -60,8 +60,10 @@ def get_status():
             passphrase.strip() and 
             passphrase != "your_secure_shared_secret_passphrase_here"
         )
+        strict_audit = policy.get("strict_audit_mode", False)
         return jsonify({
-            "passphrase_enabled": has_passphrase
+            "passphrase_enabled": has_passphrase,
+            "strict_audit_mode": strict_audit
         })
     except Exception as e:
         logger.error(f"Error getting status: {e}")

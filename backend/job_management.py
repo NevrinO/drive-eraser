@@ -403,9 +403,14 @@ def run_erase_job(job_id):
             return
         command = cmd_result["command"]
 
+    start_time = datetime.now(timezone.utc)
     initial_sectors = None
+    last_sectors = None
+    last_progress_time = None
     if method == "overwrite":
         initial_sectors = get_device_sectors_written(device)
+        last_sectors = initial_sectors
+        last_progress_time = start_time
 
     active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
     try:
@@ -438,7 +443,6 @@ def run_erase_job(job_id):
         return
 
     try:
-        start_time = datetime.now(timezone.utc)
         estimated_seconds = ESTIMATED_ERASE_TIMEOUT_SECONDS
 
         # Thread sleep telemetry updates loop (contained within individual job context)
@@ -474,7 +478,30 @@ def run_erase_job(job_id):
                     delta_sectors = max(0, current_sectors - initial_sectors)
                     wrote_bytes = delta_sectors * 512
                     progress = min(99.9, (wrote_bytes / capacity_bytes) * 100)
-                    phase = f"Writing zeroes ({progress:.1f}%)"
+                    
+                    # Calculate ETA based on write speed
+                    eta_text = ""
+                    if last_sectors is not None and last_progress_time is not None and elapsed > 5:
+                        time_since_last = elapsed - (last_progress_time - start_time).total_seconds()
+                        if time_since_last > 0:
+                            sectors_since_last = max(0, current_sectors - last_sectors)
+                            bytes_since_last = sectors_since_last * 512
+                            write_speed = bytes_since_last / time_since_last  # bytes per second
+                            # Minimum write speed threshold to prevent extremely large ETA estimates
+                            min_write_speed = 1024 * 1024  # 1 MB/s minimum
+                            if write_speed > min_write_speed:
+                                remaining_bytes = capacity_bytes - wrote_bytes
+                                eta_seconds = remaining_bytes / write_speed
+                                eta_minutes = eta_seconds / 60
+                                if eta_minutes < 60:
+                                    eta_text = f" - ~{eta_minutes:.0f} min remaining"
+                                else:
+                                    eta_hours = eta_minutes / 60
+                                    eta_text = f" - ~{eta_hours:.1f} hr remaining"
+                    
+                    phase = f"Writing zeroes ({progress:.1f}%){eta_text}"
+                    last_sectors = current_sectors
+                    last_progress_time = datetime.now(timezone.utc)
                 else:
                     progress = min(99.9, (elapsed / (capacity_bytes / (50 * 1024 * 1024))) * 100)
                     phase = f"Overwriting blocks ({progress:.1f}%)"

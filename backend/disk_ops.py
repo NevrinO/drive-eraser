@@ -32,6 +32,16 @@ _OS_BY_PATH_LOCK = threading.Lock()
 _DISCOVERY_MAX_WORKERS = min(8, os.cpu_count() or 4)
 _DISCOVERY_OVERALL_TIMEOUT = 120  # seconds for the whole parallel collection batch
 
+def get_discovery_max_workers():
+    """Get the maximum number of workers for parallel drive discovery from policy."""
+    try:
+        policy = load_policy(get_config_dir())
+        workers = policy.get("discovery_max_workers", 8)
+        # Clamp to reasonable bounds
+        return max(1, min(workers, 32))
+    except Exception:
+        return _DISCOVERY_MAX_WORKERS
+
 # Medium #34: Global flag for discovery interruption
 _discovery_interrupted = False
 _discovery_interrupt_lock = threading.Lock()
@@ -247,7 +257,7 @@ def _collect_pending_serial(pending, passphrase):
 
 def _collect_pending_parallel(pending, passphrase):
     """Collect drive data for all pending bays in parallel with bounded workers."""
-    max_workers = min(_DISCOVERY_MAX_WORKERS, len(pending))
+    max_workers = min(get_discovery_max_workers(), len(pending))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
     futures = {}
     try:

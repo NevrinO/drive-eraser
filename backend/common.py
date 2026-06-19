@@ -41,6 +41,11 @@ DEFAULT_POLICY = {
     "crypto_verification_mode": "conservative_probe",
     "health_soft_stop": True,
     "lan_passphrase": "eraser123",
+    "slack_webhook_url": "",
+    "discovery_max_workers": 8,
+    "max_concurrent_wipes": 64,
+    "blockdev_post_wipe_retries": 3,
+    "blockdev_post_wipe_retry_delay": 5,
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -70,6 +75,10 @@ POLICY_SCHEMA = {
         "slack_webhook_url": {"type": "string"},
         "lan_passphrase": {"type": "string"},
         "allowed_cors_origins": {"type": "array", "items": {"type": "string"}},
+        "discovery_max_workers": {"type": "integer", "minimum": 1, "maximum": 32},
+        "max_concurrent_wipes": {"type": "integer", "minimum": 1, "maximum": 256},
+        "blockdev_post_wipe_retries": {"type": "integer", "minimum": 0, "maximum": 10},
+        "blockdev_post_wipe_retry_delay": {"type": "integer", "minimum": 0, "maximum": 60},
         "certificate_retention_days": {"type": "integer", "minimum": 1},
         "max_logo_size_mb": {"type": "number", "minimum": 0.1},
         "max_bulk_cert_batch_size": {"type": "integer", "minimum": 1, "maximum": 1000},

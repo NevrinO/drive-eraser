@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from threading import Thread
 from flask import request, jsonify, send_from_directory
 
-from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, calculate_session_token, limiter
+from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, calculate_session_token, limiter, get_wipe_semaphore
 from routes.admin_routes import require_admin_auth
 from job_management import validate_single_bay, create_erase_job, run_erase_job
 from common import get_config_dir, load_policy, get_db_path
@@ -119,17 +119,31 @@ def register_routes(flask_app):
             full_verification = payload.get("full_verification", False)
 
             accepted_jobs = []
+            semaphore = get_wipe_semaphore()
             for validated in validated_bays:
-                job = create_erase_job(validated)
-                # Store wipe options in job request for use during execution
-                job["request"]["disable_marker"] = disable_marker
-                job["request"]["full_verification"] = full_verification
-                with ERASE_JOBS_LOCK:
-                    ERASE_JOBS[job["id"]] = job
-                persist_job(job)
+                # Acquire semaphore to limit concurrent wipes
+                semaphore.acquire()
+                try:
+                    job = create_erase_job(validated)
+                    # Store wipe options in job request for use during execution
+                    job["request"]["disable_marker"] = disable_marker
+                    job["request"]["full_verification"] = full_verification
+                    with ERASE_JOBS_LOCK:
+                        ERASE_JOBS[job["id"]] = job
+                    persist_job(job)
 
-                worker = Thread(target=run_erase_job, args=(job["id"],), daemon=True)
-                worker.start()
+                    # Wrap worker to release semaphore when done
+                    def worker_with_cleanup(job_id):
+                        try:
+                            run_erase_job(job_id)
+                        finally:
+                            semaphore.release()
+
+                    worker = Thread(target=worker_with_cleanup, args=(job["id"],), daemon=True)
+                    worker.start()
+                except Exception:
+                    semaphore.release()
+                    raise
 
                 accepted_jobs.append({
                     "id": job["id"],

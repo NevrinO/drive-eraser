@@ -555,14 +555,17 @@ input:focus, select:focus {
 }
 
 .btn--toggle {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--color-success);
+  color: var(--color-success);
+  animation: pulse-green-btn 2.2s infinite ease-in-out;
 }
 
 .btn--toggle.active {
   background: var(--color-danger);
   border-color: var(--color-danger);
   color: var(--color-white);
-  animation: pulse-danger-btn 2.2s infinite ease-in-out;
+  animation: pulse-danger-border 2.2s infinite ease-in-out;
 }
 
 .btn--danger {
@@ -579,6 +582,18 @@ input:focus, select:focus {
 @keyframes pulse-danger-btn {
   0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
   70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}
+
+@keyframes pulse-green-btn {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.3); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+@keyframes pulse-danger-border {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
   100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
 }
 
@@ -694,6 +709,8 @@ input:focus, select:focus {
 .kv span:last-child {
   color: var(--color-white);
   font-weight: 700;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .batch-config-list {
