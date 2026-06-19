@@ -164,6 +164,7 @@ sync_app_files() {
 
     run_cmd rsync -a \
         --delete \
+        --exclude='.*' \
         --exclude='venv/' \
         --exclude='data/' \
         --exclude='logs/' \

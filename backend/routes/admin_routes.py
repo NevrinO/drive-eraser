@@ -11,7 +11,9 @@ import base64
 import hashlib
 import sqlite3
 import urllib.request
+import re
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK
@@ -26,6 +28,30 @@ from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_
 from job_management import poll_nvme_sanitize_progress, poll_sata_sanitize_progress, poll_sas_sanitize_progress, get_device_sectors_written
 
 admin_bp = Blueprint('admin_routes', __name__)
+
+# Device name validation patterns following lesson #9 and #15
+# Use \Z (not $) for strict end-of-string anchor to prevent "/dev/sda\n" bypass
+_SATA_DEVICE_RE = re.compile(r'^[a-z]+[0-9]*\Z')
+_NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
+MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
+
+def is_valid_device_name(name: str) -> bool:
+    """Validate device name against strict whitelist to prevent path traversal and injection.
+    
+    Following lessons-learned rule #9: Never accept raw device paths without validation.
+    Following lessons-learned rule #15: Use \Z for strict end-of-string anchor.
+    
+    Args:
+        name: Device name string (e.g., "sda", "nvme0n1")
+        
+    Returns:
+        True if name is valid, False otherwise
+    """
+    if not name or not isinstance(name, str):
+        return False
+    if ".." in name or "\n" in name or "\r" in name:
+        return False
+    return bool(_SATA_DEVICE_RE.match(name) or _NVME_DEVICE_RE.match(name))
 
 def is_local_request(request):
     """Check if the request is from localhost or local network."""
@@ -203,6 +229,73 @@ def download_support_bundle():
                 f.write("\n\n=== LSHW STORAGE DETAILS ===\n")
                 lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15, shell=False)
                 f.write(lshw_proc.stdout or "")
+
+            # Parse lsblk JSON to get disk devices and run smartctl -x on each
+            lsblk_data = json.loads(lsblk_proc.stdout) if lsblk_proc.stdout else {}
+            blockdevices = lsblk_data.get("blockdevices", [])
+            
+            # Collect valid disk devices with validation and count limit
+            valid_devices = []
+            for device in blockdevices:
+                device_name = device.get("name", "")
+                # Validate device name against whitelist (lesson #9)
+                if not device_name or not is_valid_device_name(device_name):
+                    logger.warning(f"Skipping invalid device name: {device_name}")
+                    continue
+                # Rule #5: enforce size limits for DoS prevention
+                if len(valid_devices) >= MAX_DEVICES_FOR_BUNDLE:
+                    logger.warning(f"Reached device limit ({MAX_DEVICES_FOR_BUNDLE}), skipping remaining devices")
+                    break
+                device_path = f"/dev/{device_name}"
+                valid_devices.append((device_name, device_path))
+            
+            # Collect smartctl data in parallel using ThreadPoolExecutor
+            def _collect_smartctl_for_device(device_name, device_path):
+                """Collect smartctl -x output for a single device."""
+                try:
+                    smartctl_proc = subprocess.run(
+                        ["sudo", "smartctl", "-x", device_path],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                        shell=False
+                    )
+                    # Improved filename sanitization with regex
+                    safe_name = re.sub(r'[^\w\-]', '_', device_name)
+                    smartctl_file = os.path.join(workspace_dir, f"smartctl-{safe_name}.txt")
+                    with open(smartctl_file, "w") as f:
+                        f.write(f"=== SMARTCTL -X OUTPUT FOR {device_path} ===\n")
+                        f.write(smartctl_proc.stdout or "")
+                        if smartctl_proc.stderr:
+                            f.write(f"\n=== STDERR ===\n")
+                            f.write(smartctl_proc.stderr)
+                    return (device_name, None)
+                except subprocess.TimeoutExpired:
+                    logger.warning(f"smartctl -x timed out for {device_path}")
+                    return (device_name, "timeout")
+                except Exception as e:
+                    logger.warning(f"smartctl -x failed for {device_path}: {e}")
+                    return (device_name, str(e))
+            
+            # Use ThreadPoolExecutor for parallel collection (similar to disk_ops.py pattern)
+            max_workers = min(8, len(valid_devices))
+            if valid_devices:
+                executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="smartctl-bundle")
+                futures = {}
+                try:
+                    for device_name, device_path in valid_devices:
+                        futures[executor.submit(_collect_smartctl_for_device, device_name, device_path)] = device_name
+                    # Overall timeout for the entire batch (120 seconds)
+                    for future in as_completed(futures, timeout=120):
+                        device_name = futures[future]
+                        try:
+                            future.result()
+                        except FuturesTimeoutError:
+                            logger.warning(f"smartctl collection timed out for {device_name}")
+                        except Exception as e:
+                            logger.warning(f"smartctl collection failed for {device_name}: {e}")
+                finally:
+                    executor.shutdown(wait=False)
         except Exception as e:
             with open(os.path.join(workspace_dir, "hardware_environment_error.txt"), "w") as f:
                 f.write(f"Failed to gather hardware details: {str(e)}")

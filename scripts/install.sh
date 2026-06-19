@@ -211,6 +211,7 @@ install_app() {
 
     # Copy app files (preserve existing configs)
     rsync -a \
+        --exclude='.*' \
         --exclude='venv/' \
         --exclude='data/' \
         --exclude='logs/' \
