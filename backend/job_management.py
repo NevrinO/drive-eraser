@@ -242,7 +242,7 @@ def prepare_erase_command(device, interface_type, method):
         dd_cmd = resolve_verify_command_path("dd")
         if not dd_cmd:
             return {"ok": False, "error": "dd_not_available"}
-        return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "oflag=direct"]}
+        return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "conv=fdatasync"]}
 
     if selected_method in {"secure_erase", "enhanced_secure_erase"}:
         hdparm_cmd = resolve_verify_command_path("hdparm")
@@ -746,7 +746,8 @@ def run_erase_job(job_id):
 
             if post_erase_marker and not disable_marker_request:
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
-                marker_result = write_marker_and_verify(job)
+                smart_baseline = verification.get("details", {}).get("smart_baseline_for_marker")
+                marker_result = write_marker_and_verify(job, smart_baseline=smart_baseline)
                 job["marker"] = marker_result
                 if not marker_result.get("ok"):
                     warnings_list = job.get("result", {}).get("warnings", [])

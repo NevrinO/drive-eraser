@@ -450,7 +450,7 @@ def verify_sas_block(device, method):
 
     return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sas_sanitize_status", "method": method, "output": output}}
 
-def write_marker_and_verify(job):
+def write_marker_and_verify(job, smart_baseline=None):
     dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "marker_error", "error": "dd_not_available_for_marker_write", "details": {}}
@@ -468,16 +468,21 @@ def write_marker_and_verify(job):
     logger = logging.getLogger("app")
 
     try:
-        smart_metrics = get_smart_data(device)
-        raw_writes = smart_metrics.get("data_written_raw")
+        # Use provided SMART baseline if available, otherwise capture it now
+        if smart_baseline is not None:
+            raw_writes = smart_baseline
+        else:
+            smart_metrics = get_smart_data(device)
+            raw_writes = smart_metrics.get("data_written_raw")
         job["request"]["data_written_at_wipe"] = raw_writes
+        logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
 
         payload = build_marker_payload(job)
         if len(payload) > (MARKER_BLOCK_SIZE - 1):
             return {"ok": False, "status": "marker_error", "error": "marker_payload_too_large", "details": {"payload_bytes": len(payload)}}
 
         block = payload + b"\n" + b"\x00" * (MARKER_BLOCK_SIZE - len(payload) - 1)
-        command = [dd_cmd, f"of={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "conv=fsync", "oflag=direct", "status=none"]
+        command = [dd_cmd, f"of={device}", f"bs={MARKER_BLOCK_SIZE}", "count=1", "conv=fdatasync", "status=none"]
         result = subprocess.run(["sudo"] + command, input=block, capture_output=True, shell=False)
         if result.returncode != 0:
             return {
@@ -503,6 +508,7 @@ def write_marker_and_verify(job):
         if readback.get("status") == "checksum_valid":
             stored_writes = readback.get("details", {}).get("data_written_at_wipe")
             current_writes = get_smart_data(device).get("data_written_raw")
+            logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
             is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
             readback["is_pristine"] = is_pristine
 
@@ -650,6 +656,8 @@ def verification_for_method(device, interface_type, method, execution, before_st
     else:
         return {"ok": False, "status": "unsupported_method", "error": f"verification_not_defined:{selected_method}:{iface}", "details": {"method": selected_method, "interface_type": iface}}
 
+    smart_baseline = None
+
     if primary_result and primary_result.get("ok"):
         primary_result.setdefault("details", {})
         # Unified secondary verification: hash comparison if before_state available, otherwise sampled zero check
@@ -692,5 +700,10 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["secondary_status"] = "PASSED_SAMPLED_ZERO_CHECK"
             primary_result["details"]["verification_level"] = "sampled_zero_check"
             primary_result["details"]["sample_ratio"] = sample_ratio
+
+        # Capture SMART baseline after secondary verification to leverage natural delay from read pass
+        smart_metrics = get_smart_data(device)
+        smart_baseline = smart_metrics.get("data_written_raw")
+        primary_result["details"]["smart_baseline_for_marker"] = smart_baseline
 
     return primary_result
