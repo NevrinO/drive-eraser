@@ -83,10 +83,14 @@ class TestAdminRoutes:
         finally:
             # Clean up database connections before stopping patches
             import sqlite3
+            import gc
             try:
+                # Force garbage collection to trigger any pending connection cleanup
+                gc.collect()
                 # Force close any open connections to the test database
                 with sqlite3.connect(test_db_path) as conn:
                     conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    conn.execute("PRAGMA optimize")
             except Exception:
                 pass
             for p in patches:

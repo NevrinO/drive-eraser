@@ -375,9 +375,12 @@ class TestGetBulkCertificatesHtml:
         from flask import Flask
         from api_routes import register_routes
         from database import init_wipe_db
+        from common import get_db_path
         # Patch limiter at module level before routes are imported
-        with patch('app_config.limiter') as mock_limiter:
-            mock_limiter.limit = lambda x: lambda f: f
+        mock_limiter = patch('app_config.limiter')
+        limiter_mock = mock_limiter.start()
+        limiter_mock.limit = lambda x: lambda f: f
+        try:
             app = Flask(__name__)
             app.config['TESTING'] = True
             register_routes(app)
@@ -385,6 +388,17 @@ class TestGetBulkCertificatesHtml:
             app.register_blueprint(certificate_routes.certificate_bp)
             init_wipe_db()
             yield app
+        finally:
+            # Clean up database connections
+            import gc
+            try:
+                gc.collect()
+                with sqlite3.connect(get_db_path()) as conn:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    conn.execute("PRAGMA optimize")
+            except Exception:
+                pass
+            mock_limiter.stop()
 
     @pytest.fixture
     def client(self, app):

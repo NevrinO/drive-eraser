@@ -55,7 +55,10 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 │   ├── admin/                  # Admin panel modules (modular)
 │   │   ├── adminUtilities.js   # Shared admin utilities and helpers
 │   │   ├── bayMapping.js       # Bay mapping configuration and management
-│   │   ├── discoveryModal.js   # Drive discovery modal and slot mapping
+│   │   ├── discoveryModal.js       # Discovery modal UI and event handlers
+│   │   ├── discoveryMapping.js     # Pattern/manual mapping business logic
+│   │   ├── discoveryValidation.js  # Validation functions (regex, device paths, mapping)
+│   │   └── discoveryState.js       # State management and undo functionality
 │   │   ├── templateManagement.js # Certificate template management
 │   │   ├── logoManagement.js   # Custom logo upload and management
 │   │   └── triageConfig.js     # Triage threshold configuration
@@ -109,7 +112,10 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Audit Ledger** | `frontend/auditLedger.js` | `loadHistoryIndex()`, `renderAuditLedger()`, `renderExpandedAuditRow()` |
 | **Admin Utilities** | `frontend/admin/adminUtilities.js` | Shared admin helpers, modal management, common admin functions |
 | **Bay Mapping** | `frontend/admin/bayMapping.js` | `loadBayMappingConfig()`, `saveBayMappingConfiguration()`, `renderBayMappingUI()` |
-| **Discovery Modal** | `frontend/admin/discoveryModal.js` | `openDiscoveryModal()`, `discoverSlots()`, `applySlotMapping()` |
+| **Discovery Modal UI** | `frontend/admin/discoveryModal.js` | `openDiscoveryModal()`, `renderControllers()`, `renderDevices()` |
+| **Discovery Mapping** | `frontend/admin/discoveryMapping.js` | `applyPatternMapping()`, `applyManualMapping()`, `generateMappingPreview()` |
+| **Discovery Validation** | `frontend/admin/discoveryValidation.js` | `validateMapping()`, `validateDevicePath()`, `validatePciAddress()` |
+| **Discovery State** | `frontend/admin/discoveryState.js` | `savePreviousBayMapState()`, `restorePreviousBayMapState()`, `deepCopyBayMap()` |
 | **Template Management** | `frontend/admin/templateManagement.js` | `loadTemplates()`, `createTemplate()`, `applyTemplate()`, `exportTemplate()`, `importTemplate()` |
 | **Logo Management** | `frontend/admin/logoManagement.js` | `uploadLogo()`, `deleteLogo()`, `previewLogo()` |
 | **Triage Config** | `frontend/admin/triageConfig.js` | `loadTriageConfig()`, `saveTriageConfig()`, `renderTriageThresholds()` |
@@ -186,7 +192,10 @@ frontend/app.js (entry point)
     ├── bayMapping.js
     │   └── adminUtilities.js
     ├── discoveryModal.js
-    │   └── adminUtilities.js
+    │   ├── adminUtilities.js
+    │   ├── discoveryValidation.js
+    │   ├── discoveryState.js
+    │   └── discoveryMapping.js
     ├── templateManagement.js
     │   └── adminUtilities.js
     ├── logoManagement.js

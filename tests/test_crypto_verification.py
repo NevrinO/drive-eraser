@@ -390,7 +390,7 @@ class TestVerifyCryptoHashComparison:
                     from crypto_verification import verify_crypto_hash_comparison
                     result = verify_crypto_hash_comparison("/dev/sda", {"ok": True}, 32*1024*1024)
                     assert result["ok"] is False
-                    assert result["error"] == "crypto_comparison_capacity_failed"
+                    assert result["error"] == "secondary_capacity_check_failed"
 
     def test_before_state_no_offsets(self):
         """Test that missing offsets in before_state is rejected."""
@@ -591,15 +591,16 @@ class TestBlockdevRetryLogic:
                     with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 2, "blockdev_post_wipe_retry_delay": 1}):
                         with patch('subprocess.run') as mock_run:
                             with patch('time.sleep') as mock_sleep:
-                                # First two attempts fail, third succeeds
-                                mock_run.side_effect = [
-                                    MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
-                                    MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
-                                    MagicMock(returncode=0, stdout="1073741824"),
-                                    MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
-                                ]
-                                from crypto_verification import verify_sampled_zero_check
-                                result = verify_sampled_zero_check("/dev/sda")
+                                with patch('random.randint', return_value=0):
+                                    # First two attempts fail, third succeeds
+                                    mock_run.side_effect = [
+                                        MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
+                                        MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
+                                        MagicMock(returncode=0, stdout="1073741824"),
+                                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
+                                    ]
+                                    from crypto_verification import verify_sampled_zero_check
+                                    result = verify_sampled_zero_check("/dev/sda", sample_ratio=0.01, max_read_bytes=64*1024*1024)
                                 assert result["ok"] is True
                                 assert mock_sleep.call_count == 2  # Slept between retries
 
@@ -657,16 +658,17 @@ class TestBlockdevRetryLogic:
                     with patch('crypto_verification.load_policy', side_effect=Exception("Policy load failed")):
                         with patch('subprocess.run') as mock_run:
                             with patch('time.sleep') as mock_sleep:
-                                # First 3 attempts fail, 4th succeeds (default retries=3 means 4 total attempts)
-                                mock_run.side_effect = [
-                                    MagicMock(returncode=1, stderr="Transient error"),
-                                    MagicMock(returncode=1, stderr="Transient error"),
-                                    MagicMock(returncode=1, stderr="Transient error"),
-                                    MagicMock(returncode=0, stdout="1073741824"),
-                                    MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
-                                ]
-                                from crypto_verification import verify_sampled_zero_check
-                                result = verify_sampled_zero_check("/dev/sda")
+                                with patch('random.randint', return_value=0):
+                                    # First 3 attempts fail, 4th succeeds (default retries=3 means 4 total attempts)
+                                    mock_run.side_effect = [
+                                        MagicMock(returncode=1, stderr="Transient error"),
+                                        MagicMock(returncode=1, stderr="Transient error"),
+                                        MagicMock(returncode=1, stderr="Transient error"),
+                                        MagicMock(returncode=0, stdout="1073741824"),
+                                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
+                                    ]
+                                    from crypto_verification import verify_sampled_zero_check
+                                    result = verify_sampled_zero_check("/dev/sda", sample_ratio=0.01, max_read_bytes=64*1024*1024)
                                 assert result["ok"] is True
                                 assert mock_sleep.call_count == 3  # Default 3 retries
 

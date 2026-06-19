@@ -245,6 +245,14 @@ This file contains generalized architectural guardrails derived from past agent 
 
 ### 55. User Feedback for Data Reduction During Transformations
 
+### 56. State Update Functions Must Preserve Non-Serializable Types
+- **Rule**: When updating state objects that contain non-serializable types (Sets, Maps, custom objects), use deep merging or explicit field preservation rather than shallow spread operators.
+- **Guardrail**: The spread operator (`{ ...state, ...newState }`) creates a shallow copy and does not preserve Set or Map references. If the newState does not include these fields, they become undefined. Either: (1) explicitly preserve non-serializable fields in the spread, (2) use deep merging that handles these types correctly, or (3) only update specific fields rather than replacing the entire state object. This is critical for state management in browser applications where Sets are used for tracking selections.
+
+### 57. UI Button State Synchronization Across Mode Switches
+- **Rule**: When implementing mode switches (e.g., pattern vs manual mode), all UI state including button enable/disable states must be synchronized with the new mode.
+- **Guardrail**: Mode switches should reset or disable any UI controls that are not applicable to the new mode. For example, if an "Undo" button is only meaningful in pattern mode, it must be disabled when switching to manual mode. Leaving stateful UI controls enabled across mode switches creates inconsistent state where user actions can produce confusing or invalid results. All button states, selection states, and validation states should be reviewed when adding mode switching logic.
+
 ### 56. Authentication Parameter Consistency Across Multiple Mechanisms
 - **Rule**: When multiple authentication mechanisms exist in the same application, they must use identical default values and parameter sources.
 - **Guardrail**: If the application has both a global authentication middleware (e.g., `@app.before_request`) and route-specific authentication decorators, they must derive their authentication parameters from the same source with the same defaults. Inconsistent default values (e.g., one mechanism uses "eraser123" as default passphrase, another uses "") create security vulnerabilities where authentication succeeds via one path but fails via another. Define authentication parameters as shared constants in a single location, or ensure all mechanisms call the same configuration retrieval function with identical default values.
@@ -389,4 +397,16 @@ Before centralizing initialization, trace the import graph to ensure no cycles e
   2. When terminating: check `process.poll() is None` to verify it's still running
   3. Call `process.terminate()` followed by `process.wait(timeout=N)` with fallback to `process.kill()`
   4. Ensure the job execution loop checks the same termination condition as the admin endpoint
-  Without this, "kill" operations give false assurance while subprocesses continue running (e.g., `nwipe`, `hdparm`, `nvme sanitize` operations on hardware). This creates orphaned processes, resource conflicts, and inconsistent state between database and actual hardware operations.
+
+### 83. Raw Strings for Docstrings Containing Regex Escape Sequences
+- **Rule**: When writing docstrings or comments that reference regex escape sequences like `\Z`, use raw string literals to avoid SyntaxWarnings.
+- **Guardrail**: Python's string parser treats backslashes as escape characters. Writing `\Z` in a regular string literal triggers a SyntaxWarning because `\Z` is not a recognized escape sequence. Use raw string prefixes (`r"""` or `r'`) for docstrings and comments that reference regex anchors. This tells Python to treat backslashes literally, which is what regex engines expect. Never escape the backslash in documentation (e.g., `\\Z`) as this is technically inaccurate—the regex engine reads a single backslash. The regex patterns themselves should always use raw strings (`r'pattern\Z'`), and any documentation describing them should also use raw strings.
+
+### 84. Database Connection Cleanup in Test Fixtures
+- **Rule**: Test fixtures that create or use SQLite databases must explicitly clean up connections to prevent ResourceWarnings.
+- **Guardrail**: When writing pytest fixtures that initialize databases or use `init_wipe_db()`, the fixture's finally block must:
+  1. Call `gc.collect()` to trigger garbage collection of pending connections
+  2. Open a connection to the test database and run `PRAGMA wal_checkpoint(TRUNCATE)` to close WAL files
+  3. Optionally run `PRAGMA optimize` to help SQLite clean up
+  4. Wrap this in try-except to handle cases where the database file doesn't exist
+  This prevents unclosed connection warnings that originate from SQLite's connection pooling and WAL mode. The backend code should use context managers (`with closing(sqlite3.connect(...))`), but test fixtures need explicit cleanup because connections may be held by Flask, Werkzeug, or mock objects during test execution.

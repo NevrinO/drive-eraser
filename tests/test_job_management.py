@@ -32,7 +32,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/sda", "sata", "overwrite")
 
         assert result["ok"] is True
-        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "oflag=direct"]
+        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "conv=fdatasync"]
         mock_resolve.assert_called_once_with("dd")
 
     @patch('job_management.resolve_verify_command_path')
@@ -42,7 +42,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/nvme0n1", "nvme", "overwrite")
 
         assert result["ok"] is True
-        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/nvme0n1", "bs=16M", "status=none", "oflag=direct"]
+        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/nvme0n1", "bs=16M", "status=none", "conv=fdatasync"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_overwrite_method_sas(self, mock_resolve):
@@ -51,7 +51,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/sdb", "sas", "overwrite")
 
         assert result["ok"] is True
-        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sdb", "bs=16M", "status=none", "oflag=direct"]
+        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sdb", "bs=16M", "status=none", "conv=fdatasync"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_dd_not_available(self, mock_resolve):
@@ -190,7 +190,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/sda", "sata", "OVERWRITE")
 
         assert result["ok"] is True
-        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "oflag=direct"]
+        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "conv=fdatasync"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_whitespace_in_method(self, mock_resolve):
@@ -199,7 +199,7 @@ class TestPrepareEraseCommand:
         result = prepare_erase_command("/dev/sda", "sata", "  overwrite  ")
 
         assert result["ok"] is True
-        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "oflag=direct"]
+        assert result["command"] == ["/bin/dd", "if=/dev/zero", "of=/dev/sda", "bs=16M", "status=none", "conv=fdatasync"]
 
     @patch('job_management.resolve_verify_command_path')
     def test_none_method(self, mock_resolve):

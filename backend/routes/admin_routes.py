@@ -36,7 +36,7 @@ _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 
 def is_valid_device_name(name: str) -> bool:
-    """Validate device name against strict whitelist to prevent path traversal and injection.
+    r"""Validate device name against strict whitelist to prevent path traversal and injection.
     
     Following lessons-learned rule #9: Never accept raw device paths without validation.
     Following lessons-learned rule #15: Use \Z for strict end-of-string anchor.
