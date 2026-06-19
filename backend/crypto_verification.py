@@ -9,14 +9,19 @@ import logging
 import threading
 
 from disk_utils import resolve_command_path, validate_device_path
-from common import get_device_lock
+from common import get_device_lock, load_policy
 
 # High #12: Global flag for signal interruption
 _verification_interrupted = False
 _verification_interrupt_lock = threading.Lock()
 
 def _handle_verification_signal(signum, frame):
-    """Signal handler for SIGTERM/SIGINT during verification operations."""
+    """Signal handler for SIGTERM/SIGINT during verification operations.
+    
+    Note: Signal handler registration is centralized in app.py to ensure
+    consistent handling across the application. This function is called
+    when SIGTERM or SIGINT signals are received during verification operations.
+    """
     global _verification_interrupted
     with _verification_interrupt_lock:
         _verification_interrupted = True
@@ -28,6 +33,62 @@ def _check_interrupted():
     global _verification_interrupted
     with _verification_interrupt_lock:
         return _verification_interrupted
+
+def _run_blockdev_getsize64(device, retries=3, retry_delay=5):
+    """
+    Run blockdev --getsize64 with retry logic for post-wipe transient failures.
+    
+    Issue 14: After an overwrite, drives may temporarily drop off the bus, causing
+    blockdev to return ENOTTY. This helper retries with delays and distinguishes
+    between "drive detached" and "capacity check failed" errors.
+    
+    Args:
+        device: Device path (e.g., /dev/sda)
+        retries: Number of retry attempts (default 3, total attempts = retries + 1)
+        retry_delay: Delay in seconds between retries (default 5)
+    
+    Returns:
+        On success: {"capacity": int, "error": None}
+        On failure: {"capacity": None, "error": str, "details": str}
+            error is "drive_detached_post_wipe" if device appears detached,
+            or "secondary_capacity_check_failed" for other failures
+    """
+    logger = logging.getLogger("app")
+    attempts = retries + 1
+    last_stderr = ""
+    
+    for attempt in range(attempts):
+        blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
+        result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
+        
+        if result.returncode == 0:
+            try:
+                capacity = int(result.stdout.strip())
+                logger.debug(f"blockdev --getsize64 succeeded on attempt {attempt + 1}/{attempts} for {device}")
+                return {"capacity": capacity, "error": None}
+            except ValueError:
+                last_stderr = f"Invalid capacity output: {result.stdout}"
+                logger.warning(f"blockdev returned invalid output on attempt {attempt + 1}/{attempts}: {last_stderr}")
+        else:
+            last_stderr = result.stderr or ""
+            logger.warning(f"blockdev failed on attempt {attempt + 1}/{attempts} for {device}: exit={result.returncode}, stderr={last_stderr}")
+        
+        # Sleep before retry, but not after the last attempt
+        if attempt < attempts - 1:
+            time.sleep(retry_delay)
+    
+    # All attempts failed - determine error type based on stderr
+    detached_indicators = ["ioctl error", "Inappropriate ioctl", "No such device", "No such file or directory"]
+    is_detached = any(indicator.lower() in last_stderr.lower() for indicator in detached_indicators)
+    
+    if is_detached:
+        error_code = "drive_detached_post_wipe"
+        logger.error(f"Device {device} appears detached after {attempts} blockdev attempts: {last_stderr}")
+    else:
+        error_code = "secondary_capacity_check_failed"
+        logger.error(f"blockdev failed after {attempts} attempts for {device}: {last_stderr}")
+    
+    return {"capacity": None, "error": error_code, "details": last_stderr}
 
 def resolve_verify_command_path(command_name):
     """
@@ -48,6 +109,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
     spatially distributed samples across the drive LBA range. Combines random
     sampling with sequential chunk reads to avoid disk head seek bottlenecks on HDDs.
     High #12: Signal handling for interruption. High #13: Device-level locking.
+    Issue 14: Uses policy-configured retry logic for blockdev calls.
     """
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
@@ -64,12 +126,21 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
         if _check_interrupted():
             return {"ok": False, "error": "verification_interrupted", "details": "Operation interrupted by signal"}
 
-        # Get capacity using blockdev
-        blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
-        result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
-        if result.returncode != 0:
-            return {"ok": False, "error": "secondary_capacity_check_failed", "details": f"blockdev failed (exit code {result.returncode}): stderr={result.stderr}, stdout={result.stdout}"}
-        capacity = int(result.stdout.strip())
+        # Issue 14: Load policy for retry configuration with hardcoded fallback
+        try:
+            policy = load_policy()
+            retries = policy.get("blockdev_post_wipe_retries", 3)
+            retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
+        except Exception:
+            logger.warning("Failed to load policy, using default retry values")
+            retries = 3
+            retry_delay = 5
+
+        # Get capacity using blockdev with retry logic
+        result = _run_blockdev_getsize64(device, retries, retry_delay)
+        if result["error"]:
+            return {"ok": False, "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+        capacity = result["capacity"]
 
         # Always check first 32MB (holds VBR/partition table)
         offsets = [0]
@@ -264,6 +335,7 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
 def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     """
     Compares before/after hashes to verify crypto erase changed the data.
+    Issue 14: Uses policy-configured retry logic for blockdev calls.
     """
     if not validate_device_path(device):
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {}}
@@ -271,15 +343,22 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_comparison", "details": {}}
 
-    # Get capacity for end-of-drive calculations
+    # Issue 14: Load policy for retry configuration with hardcoded fallback
     try:
-        blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
-        result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
-        if result.returncode != 0:
-            return {"ok": False, "status": "verification_error", "error": "crypto_comparison_capacity_failed", "details": f"blockdev failed (exit code {result.returncode}): stderr={result.stderr}, stdout={result.stdout}"}
-        capacity = int(result.stdout.strip())
-    except Exception as e:
-        return {"ok": False, "status": "verification_error", "error": "crypto_comparison_capacity_failed", "details": f"exception: {str(e)}"}
+        policy = load_policy()
+        retries = policy.get("blockdev_post_wipe_retries", 3)
+        retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
+    except Exception:
+        logger = logging.getLogger("app")
+        logger.warning("Failed to load policy, using default retry values")
+        retries = 3
+        retry_delay = 5
+
+    # Get capacity for end-of-drive calculations with retry logic
+    result = _run_blockdev_getsize64(device, retries, retry_delay)
+    if result["error"]:
+        return {"ok": False, "status": "verification_error", "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+    capacity = result["capacity"]
 
     before_details = before_state.get("details", {})
     offsets = before_details.get("offsets", [])

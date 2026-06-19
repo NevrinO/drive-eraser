@@ -556,27 +556,138 @@ class TestVerifyCryptoHashComparison:
         with patch('crypto_verification.validate_device_path', return_value=True):
             with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
-                    with patch('time.sleep') as mock_sleep:
-                        mock_run.side_effect = [
-                            MagicMock(returncode=0, stdout="1073741824"),  # capacity
-                            MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after (changed)
-                            MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 after (unchanged)
-                            Exception("dd read failed"),  # All zero check retries fail
-                        ]
-                        from crypto_verification import verify_crypto_hash_comparison
-                        before_state = {
-                            "ok": True,
-                            "details": {
-                                "offsets": [0, 1],
-                                "hashes": [
-                                    hashlib.sha256(b'\x01' * (32*1024*1024)).hexdigest(),  # offset 0 before
-                                    hashlib.sha256(b'\x01' * (32*1024*1024)).hexdigest(),  # offset 1 before
-                                ]
-                            }
+                    mock_run.side_effect = [
+                        MagicMock(returncode=0, stdout="1073741824"),  # capacity
+                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after
+                        MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 after
+                        Exception("dd read failed"),  # All retries fail for zero check
+                    ]
+                    from crypto_verification import verify_crypto_hash_comparison
+                    before_state = {
+                        "ok": True,
+                        "details": {
+                            "offsets": [0, 1],
+                            "hashes": [
+                                hashlib.sha256(b'\x01' * (32*1024*1024)).hexdigest(),
+                                hashlib.sha256(b'\x01' * (32*1024*1024)).hexdigest(),
+                            ]
                         }
-                        result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
-                        assert result["ok"] is False
-                        assert result["error"] == "crypto_comparison_unchanged_verification_failed"
+                    }
+                    result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
+                    assert result["ok"] is False
+                    assert result["error"] == "crypto_comparison_unchanged_verification_failed"
+
+
+class TestBlockdevRetryLogic:
+    """Test Issue 14: blockdev retry logic with drive-detach detection."""
+
+    def test_retry_success_after_transient_failure(self):
+        """Test that retry succeeds after initial transient failure."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 2, "blockdev_post_wipe_retry_delay": 1}):
+                        with patch('subprocess.run') as mock_run:
+                            with patch('time.sleep') as mock_sleep:
+                                # First two attempts fail, third succeeds
+                                mock_run.side_effect = [
+                                    MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
+                                    MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
+                                    MagicMock(returncode=0, stdout="1073741824"),
+                                    MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
+                                ]
+                                from crypto_verification import verify_sampled_zero_check
+                                result = verify_sampled_zero_check("/dev/sda")
+                                assert result["ok"] is True
+                                assert mock_sleep.call_count == 2  # Slept between retries
+
+    def test_retry_exhaustion_drive_detached(self):
+        """Test that retry exhaustion with detached drive returns correct error code."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 2, "blockdev_post_wipe_retry_delay": 1}):
+                        with patch('subprocess.run') as mock_run:
+                            with patch('time.sleep') as mock_sleep:
+                                # All attempts fail with detached indicators
+                                mock_run.side_effect = [
+                                    MagicMock(returncode=1, stderr="ioctl error: No such device"),
+                                    MagicMock(returncode=1, stderr="Inappropriate ioctl for device"),
+                                    MagicMock(returncode=1, stderr="No such file or directory"),
+                                ]
+                                from crypto_verification import verify_sampled_zero_check
+                                result = verify_sampled_zero_check("/dev/sda")
+                                assert result["ok"] is False
+                                assert result["error"] == "drive_detached_post_wipe"
+                                assert mock_sleep.call_count == 2
+
+    def test_retry_exhaustion_other_failure(self):
+        """Test that retry exhaustion with non-detached error returns secondary_capacity_check_failed."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 2, "blockdev_post_wipe_retry_delay": 1}):
+                        with patch('subprocess.run') as mock_run:
+                            with patch('time.sleep') as mock_sleep:
+                                # All attempts fail with non-detached error
+                                mock_run.side_effect = [
+                                    MagicMock(returncode=1, stderr="Permission denied"),
+                                    MagicMock(returncode=1, stderr="Permission denied"),
+                                    MagicMock(returncode=1, stderr="Permission denied"),
+                                ]
+                                from crypto_verification import verify_sampled_zero_check
+                                result = verify_sampled_zero_check("/dev/sda")
+                                assert result["ok"] is False
+                                assert result["error"] == "secondary_capacity_check_failed"
+                                assert mock_sleep.call_count == 2
+
+    def test_retry_with_policy_load_failure_uses_defaults(self):
+        """Test that policy load failure uses hardcoded defaults (3 retries, 5s delay)."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification.load_policy', side_effect=Exception("Policy load failed")):
+                        with patch('subprocess.run') as mock_run:
+                            with patch('time.sleep') as mock_sleep:
+                                # First 3 attempts fail, 4th succeeds (default retries=3 means 4 total attempts)
+                                mock_run.side_effect = [
+                                    MagicMock(returncode=1, stderr="Transient error"),
+                                    MagicMock(returncode=1, stderr="Transient error"),
+                                    MagicMock(returncode=1, stderr="Transient error"),
+                                    MagicMock(returncode=0, stdout="1073741824"),
+                                    MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),
+                                ]
+                                from crypto_verification import verify_sampled_zero_check
+                                result = verify_sampled_zero_check("/dev/sda")
+                                assert result["ok"] is True
+                                assert mock_sleep.call_count == 3  # Default 3 retries
+
+    def test_verify_crypto_hash_comparison_uses_retry_logic(self):
+        """Test that verify_crypto_hash_comparison also uses retry logic."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 1, "blockdev_post_wipe_retry_delay": 1}):
+                    with patch('subprocess.run') as mock_run:
+                        with patch('time.sleep') as mock_sleep:
+                            # First attempt fails, second succeeds
+                            mock_run.side_effect = [
+                                MagicMock(returncode=1, stderr="ioctl error"),
+                                MagicMock(returncode=0, stdout="1073741824"),
+                                MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),
+                            ]
+                            from crypto_verification import verify_crypto_hash_comparison
+                            before_state = {"ok": True, "details": {"offsets": [0], "hashes": [hashlib.sha256(b'\x00' * (32*1024*1024)).hexdigest()]}}
+                            result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
+                            assert result["ok"] is True
+                            assert mock_sleep.call_count == 1
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import subprocess
 import time
 import uuid
 import threading
+import logging
 from datetime import datetime, timezone
 
 # Constants
@@ -15,12 +16,15 @@ _job_interrupted = False
 _job_interrupt_lock = threading.Lock()
 
 def _handle_job_signal(signum, frame):
-    """Signal handler for SIGTERM/SIGINT during job operations."""
+    """Signal handler for SIGTERM/SIGINT during job operations.
+    
+    Note: Signal handler registration is centralized in app.py to ensure
+    consistent handling across the application. This function is called
+    when SIGTERM or SIGINT signals are received during job operations.
+    """
     global _job_interrupted
     with _job_interrupt_lock:
         _job_interrupted = True
-    # Advisory #1: Add logger import for signal handler
-    import logging
     signal_logger = logging.getLogger("app")
     signal_logger.warning(f"Job operation interrupted by signal {signum}")
 
