@@ -51,6 +51,33 @@ Repeatable validation plan for backend, frontend, and operational behaviors, upd
   2. Confirm the details modal reports exactly `0` reallocated sectors, and overall health remains unimpaired.
 * **Pass Criteria**: Standard soft ECC adjustments are ignored; only actual physical defects affect the health score.
 
+### Test Case 6: Post-Wipe `blockdev` Retry and Detached-Drive Error Code
+* **Objective**: Verify that a transient post-wipe `blockdev --getsize64` failure is retried before failing, and that a detached drive produces a distinct error code.
+* **Procedure**:
+  1. Configure `blockdev_post_wipe_retries` to `2` and `blockdev_post_wipe_retry_delay` to `1`.
+  2. Mock `subprocess.run` for `blockdev --getsize64` to fail twice with `Inappropriate ioctl for device`, then succeed on the third attempt.
+  3. Verify the sampled zero check succeeds and logs the retry attempts.
+  4. Mock `blockdev` to fail every attempt with `No such device`.
+  5. Verify the returned error is `drive_detached_post_wipe`, not `secondary_capacity_check_failed`.
+* **Pass Criteria**: Retries are exhausted correctly; detached drives are distinguished from other blockdev failures.
+
+### Test Case 7: Overwrite Marker "Written Since Wipe" Diagnosis
+* **Objective**: Confirm that the marker write-tolerance check reports `pristine` after an overwrite, or that the diagnostic logs show the exact SMART diff.
+* **Procedure**:
+  1. Run an overwrite wipe on a test SATA/SAS drive.
+  2. Inspect the marker write logs for the captured `data_written_at_wipe` and post-marker `data_written_raw` values.
+  3. Verify the resulting marker status is `pristine_secure` or `pristine_insecure`.
+  4. If the status is `written_since_wipe`, verify the log shows the diff and the tolerance used.
+* **Pass Criteria**: The marker status is consistent with the SMART counter behavior; if it is not, logs provide enough data to diagnose the unit/granularity issue.
+
+### Test Case 8: Secure Mode Badge Reflects `strict_audit_mode`
+* **Objective**: Verify that the header badge reflects the `strict_audit_mode` policy value, not the `wipe_passphrase` presence.
+* **Procedure**:
+  1. Set `strict_audit_mode=true` and a non-empty `wipe_passphrase`; confirm badge shows "SECURE MODE".
+  2. Set `strict_audit_mode=false` with a non-empty `wipe_passphrase`; confirm badge shows "UNSECURED MODE".
+  3. Verify `/api/status` returns both `passphrase_enabled` and `strict_audit_mode`.
+* **Pass Criteria**: Badge color/text tracks `strict_audit_mode`; passphrase presence only affects marker signing.
+
 ---
 
 ## Protocol-Specific Matrix

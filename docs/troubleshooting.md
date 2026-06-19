@@ -111,6 +111,54 @@ curl -sS http://127.0.0.1:5000/api/erase/jobs/<job_id>
 ### Operational Mitigation
 - The backend now skips physical probes on active `running_devices`, rendering cached values instead. Additionally, the frontend form submission has been decoupled from the polling refresh loop to make success notifications instantaneous.
 
+## Drive Shows "Written Since Wipe" After Overwrite
+
+### Symptoms
+- A drive that was just overwritten with zeroes shows marker status `written_since_wipe` instead of `pristine_*`.
+
+### Checks
+1. Check `data/logs/active/` or `data/logs/failed/` for the job log.
+2. Look for the logged `data_written_at_wipe` (captured before marker write) and the post-marker `data_written_raw` value.
+3. Note the drive interface:
+   - **SATA**: counter usually comes from SMART attribute 241 or ATA device stats
+   - **SAS**: counter is derived from `scsi_error_counter_log` `gigabytes_processed` and converted to sectors, which can introduce rounding
+   - **NVMe**: counter comes from `data_units_written`
+
+### Common causes
+- SMART write counters have coarse granularity; a small marker write or background controller activity can push the reported counter past the 2 MiB SATA/SAS tolerance.
+- The drive firmware may cache SMART data, so the post-marker read returns a pre-wipe value while a later discovery read returns the updated value.
+
+### Common fixes
+- Wait for the next discovery cycle and re-check the marker status.
+- If the issue persists, increase diagnostic logging around the marker write and compare the raw values before changing tolerances.
+
+## Post-Wipe Verification Failed with `drive_detached_post_wipe`
+
+### Symptoms
+- Job fails with error `drive_detached_post_wipe` during verification.
+
+### Meaning
+- The drive temporarily dropped off the bus after the erase completed. The backend retried `blockdev --getsize64` according to `blockdev_post_wipe_retries` and `blockdev_post_wipe_retry_delay` but the device never reappeared.
+
+### Common fixes
+- Reseat the drive or the SAS/SATA cable.
+- Try a different bay/port.
+- If the drive is otherwise healthy, increase `blockdev_post_wipe_retry_delay` to give the controller more time to re-enumerate.
+- If the drive repeatedly drops off the bus after wipes, consider it a hardware failure and recommend physical destruction.
+
+## Secure Mode Badge Does Not Match Strict Audit Setting
+
+### Symptoms
+- The header badge shows "SECURE MODE" even though strict audit is disabled, or vice versa.
+
+### Checks
+1. Open `/api/status` in the browser and confirm the values of `passphrase_enabled` and `strict_audit_mode`.
+2. Verify the badge rendering code in `frontend/auth.js` is using `strict_audit_mode`, not `passphrase_enabled`.
+
+### Common fixes
+- The badge should reflect `strict_audit_mode`. `wipe_passphrase` is only used for marker signing; they are separate concerns.
+- Update `config/policy.json` or use the System Administration panel to change the strict-audit setting.
+
 ## Quick Evidence Bundle for Escalation
 Collect:
 - failing request payload (redacted if needed)

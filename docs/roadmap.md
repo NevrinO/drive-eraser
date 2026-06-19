@@ -4,6 +4,27 @@ This document outlines planned future enhancements and features for the Drive Er
 
 ---
 
+## Live Testing Fixes & Post-Wipe Verification Resilience
+
+**Status**: In Progress
+**Priority**: High
+**Related Plan**: `c:\Users\BStra\.windsurf\plans\live-testing-fixes-53d81a.md`
+
+### Summary
+A coordinated set of fixes and improvements driven by live testing observations. The work covers UX confusion (secure-mode badge, confirmation labels, sanitize button visibility), post-wipe reliability (blockdev retry after transient bus resets, marker write tolerance), and operational policy exposure (admin UI for system configuration).
+
+### Key Deliverables
+- Secure-mode badge reflects `strict_audit_mode` instead of `wipe_passphrase`
+- Post-wipe `blockdev --getsize64` retry policy with distinct `drive_detached_post_wipe` error code
+- System Configuration admin panel exposing station ID, Slack webhook, crypto verification mode, discovery workers, max concurrent wipes, and blockdev retry settings
+- Pre-wipe failure detection / fail-fast health gate
+- Improved overwrite marker diagnostics and deep-dive process review
+
+### Documentation
+- `api-contract.md`, `lifecycle.md`, `test-plan.md`, `troubleshooting.md`, `SOP_technician_guide.md`, `change-log.md`, `CODE_MAP.md`
+
+---
+
 ## Offline Queueing for Air-Gapped Deployments
 
 **Status**: Future Enhancement

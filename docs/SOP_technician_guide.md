@@ -68,7 +68,9 @@ This guide covers the standard process for health checking and securely erasing 
 ## 📚 Getting Help
 
 - **In-App Help:** Click the **Help** button in the header for quick access to documentation and common tasks.
-- **Bay Mapping:** Configure physical bay mappings via the **System Administration** tab (Tab 3) - use "Auto-Detect" or manual assignment.
+- **Bay Mapping & Operational Policies:** Use the **System Administration** tab (Tab 3) to:
+  - Configure physical bay mappings via "Auto-Detect" or manual assignment.
+  - Adjust operational policies such as station ID, Slack webhook, verification mode, concurrent wipe limit, and post-wipe blockdev retry settings.
 - **Full Documentation:** Access detailed guides via the Help modal or directly in the `/docs/` folder.
 
 ---

@@ -28,7 +28,9 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 │   ├── disk_ops.py             # OS drive detection, discovery engine
 │   ├── certificates.py         # Render engine & HMAC-SHA256 signature generator
 │   ├── common.py               # Shared path resolvers, JSON policy loader
+│   ├── crypto_verification.py  # Sampled zero check, before/after hash comparison, crypto probe
 │   ├── database.py             # Schema initialization, PRAGMA alterations, SQLite writes
+│   ├── health_monitor.py       # [Planned] I/O error / stall detection for failing-drive mitigation
 │   ├── notifier.py             # Webhook alerting dispatcher
 │   └── verification.py         # Resilient firmware sanitize status checkers & marker logic
 │                                 # See "NVMe Sanitize Log Reference" section below for SSTAT/SPROG values
@@ -96,6 +98,8 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Direct Command Verification** | `backend/verification.py` | `verify_overwrite()`, `verify_nvme_sanitize()`, `verify_sata_sanitize()`, `verify_sas_block()`, `verify_sata_secure_erase()` |
 | **Command Verification Orchestrator**| `backend/verification.py` | `verification_for_method()`, `run_verification_command()` |
 | **Post-wipe Disk Markers** | `backend/verification.py` | `write_marker_and_verify()`, `build_marker_payload()` |
+| **Sampled Zero / Hash Comparison Verification** | `backend/crypto_verification.py` | `verify_sampled_zero_check()`, `verify_crypto_hash_comparison()`, `verify_crypto_probe()` |
+| **Drive Health / I/O Stall Monitoring** | `backend/health_monitor.py` | [Planned] I/O error monitoring, stall detection, failing-drive blacklist |
 | **Cryptographic Certificates** | `backend/certificates.py` | `build_certificate()`, `build_certificate_html()`, `calculate_certificate_hash()` |
 | **Slack Webhooks / Chat Alerts** | `backend/notifier.py` | `send_slack_notification()` |
 | **Frontend Entry Point** | `frontend/app.js` | Imports all modules, tab switching, initialization |
@@ -123,21 +127,23 @@ When an AI is modifying the job pipeline, trace your changes through this sequen
     │
 3. [job_management.py] Spawns daemon Thread to run `run_erase_job(job_id)`
     │
-4. [job_management.py] Phase 1: `prepare_erase_command` builds CLI invocation
+4. [job_management.py] Phase 1: Optional pre-wipe health gate (SMART / I/O error check) decides whether to proceed or fail fast
     │
-5. [job_management.py] Phase 2: Starts Popen process, monitors Progress Telemetry (e.g. `poll_sata_sanitize_progress`)
+5. [job_management.py] Phase 2: `prepare_erase_command` builds CLI invocation
     │
-6. [job_management.py] Phase 3 (Asynchronous Only): Enters status check loop waiting for firmware transition (e.g. `verify_sata_sanitize` is completed)
+6. [job_management.py] Phase 3: Starts Popen process, monitors Progress Telemetry (e.g. `poll_sata_sanitize_progress`)
     │
-7. [verification.py] `verification_for_method` evaluates hardware logs (hdparm, nvme-cli)
+7. [job_management.py] Phase 4 (Asynchronous Only): Enters status check loop waiting for firmware transition (e.g. `verify_sata_sanitize` is completed)
     │
-8. [verification.py] If verified successfully, `write_marker_and_verify` writes the checksum/HMAC marker block
+8. [verification.py] `verification_for_method` evaluates hardware logs (hdparm, nvme-cli)
     │
-9. [certificates.py] `build_certificate` compiles JSON report and signs audit payload using HMAC-SHA256
+9. [verification.py] If verified successfully, `write_marker_and_verify` writes the checksum/HMAC marker block
     │
-10. [database.py] `persist_job` commits final status and results block to SQLite
+10. [certificates.py] `build_certificate` compiles JSON report and signs audit payload using HMAC-SHA256
     │
-11. [notifier.py] `send_slack_notification` dispatches final webhook payload
+11. [database.py] `persist_job` commits final status and results block to SQLite
+    │
+12. [notifier.py] `send_slack_notification` dispatches final webhook payload
 ```
 
 ---

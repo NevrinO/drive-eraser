@@ -1,5 +1,24 @@
 # Change Log
 
+## v0.27 - Live Testing Fixes & Post-Wipe Verification Resilience (Planned)
+- **UX / Visibility**:
+  - Secure-mode badge now reflects `strict_audit_mode` instead of `passphrase_enabled`
+  - Sanitize Mode OFF state is visually distinct so users do not miss it
+  - Triage comments no longer overflow their rows
+  - Drives wiped without a marker now show "SANITIZED (NO MARKER)" instead of looking unprocessed
+  - Wipe confirmation text uses bay display labels instead of internal IDs
+  - DD/overwrite progress now includes an estimated time remaining
+- **Reliability**:
+  - Post-wipe `blockdev --getsize64` failures are retried with configurable policy (`blockdev_post_wipe_retries`, `blockdev_post_wipe_retry_delay`)
+  - Detached drives after a wipe fail with a distinct `drive_detached_post_wipe` error code
+  - Logo upload debugging improved with clearer logging around the integrity check
+  - Overwrite marker "written since wipe" false positives are diagnosed with better SMART logging
+- **Administration**:
+  - System Configuration panel exposes operational policy settings: station ID, Slack webhook, crypto verification mode, discovery workers, max concurrent wipes, and blockdev retry settings
+  - New policy keys added to `DEFAULT_POLICY` and `POLICY_SCHEMA`
+- **Documentation**:
+  - Updated `api-contract.md`, `lifecycle.md`, `test-plan.md`, `troubleshooting.md`, `SOP_technician_guide.md`, and `change-log.md` to cover the above changes
+
 ## v0.26 - Comprehensive Security Remediation & Hardening
 - **Critical Security Fixes**:
   - Added configuration validation for strict audit mode requiring non-empty wipe passphrase

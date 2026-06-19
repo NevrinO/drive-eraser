@@ -520,6 +520,12 @@ The lifecycle behavior can be configured via `config/policy.json`:
 - `strict_audit_mode`: Requires non-empty wipe_passphrase and enforces verification
 - `prewipe_spot_check`: **Not currently implemented** - Configuration option exists in policy.json but the pre-wipe spot check feature is not yet executed in the wipe workflow
 - `post_erase_marker`: Enables post-erase marker writing
+- `allow_method_override`: Allow technicians to override the recommended erase method
+- `crypto_verification_mode`: `conservative_probe`, `full_verify`, or `disabled`
+- `discovery_max_workers`: Parallel SMART query threads during discovery
+- `max_concurrent_wipes`: Maximum simultaneous erase jobs
+- `blockdev_post_wipe_retries`: Retry attempts for post-wipe `blockdev --getsize64`
+- `blockdev_post_wipe_retry_delay`: Seconds between post-wipe blockdev retries
 - `certificate_retention_days`: How long to keep certificates in database
 - `log_retention_days`: How long to keep operational logs
 
@@ -531,6 +537,7 @@ The lifecycle behavior can be configured via `config/policy.json`:
 - Device temporarily unavailable: Retry with backoff
 - Command timeout: Increase timeout or abort based on severity
 - Intermittent communication: Retry limited number of times
+- `drive_detached_post_wipe`: The drive dropped off the bus after erase; retried according to `blockdev_post_wipe_retries`/`blockdev_post_wipe_retry_delay`. If the device reappears, verification continues; otherwise it fails with this distinct code.
 
 ### Permanent Errors
 - Device failure: Mark as failed, recommend physical destruction

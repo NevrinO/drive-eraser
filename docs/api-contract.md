@@ -197,21 +197,33 @@ Overwrites `/opt/drive-eraser/config/bay_map.json` with the updated dictionary s
 ```
 
 ## GET / POST /api/admin/policy
-Exposes and safely updates system rules (Station ID, Webhook URLs, Pre-wipe check states) and writes changes back to `/config/policy.json`.
+Exposes and safely updates system rules and writes changes back to `/config/policy.json`.
 
-**Note on GET requests:** The backend automatically redacts `"lan_passphrase"` values from the payload to prevent browser-side credential leaking.
+Writable operational fields include:
+- `station_id` — station identifier used in notifications and certificates
+- `slack_webhook_url` — Slack webhook URL for notifications
+- `prewipe_spot_check` — reserved policy toggle (currently not implemented in the wipe workflow)
+- `post_erase_marker` — enable/disable post-erase marker writing
+- `allow_method_override` — allow technicians to override the recommended erase method
+- `crypto_verification_mode` — `conservative_probe`, `full_verify`, or `disabled`
+- `discovery_max_workers` — parallel SMART query threads during discovery
+- `max_concurrent_wipes` — maximum simultaneous erase jobs
+- `blockdev_post_wipe_retries` — retry attempts for post-wipe `blockdev --getsize64`
+- `blockdev_post_wipe_retry_delay` — seconds between post-wipe blockdev retries
+
+**Note on GET requests:** The backend currently redacts `"lan_passphrase"` from the payload. `"wipe_passphrase"` and `"slack_webhook_url"` are included in the response and should be treated as sensitive values by the admin UI.
 
 ## GET /api/status
-Returns system status information including active jobs and system health.
+Returns system status information. Currently exposes the security/audit configuration used by the frontend badge.
 
 ### Success 200
 ```json
 {
-  "status": "running",
-  "active_jobs": 0,
-  "uptime": "5h 5m"
+  "passphrase_enabled": true
 }
 ```
+
+**Note:** `strict_audit_mode` will be added to this response as part of the secure-mode badge fix (Issue 10). The badge will reflect `strict_audit_mode` rather than `passphrase_enabled`.
 
 ## POST /api/erase/jobs/<job_id>/cancel
 Cancels a running or queued erase job.
