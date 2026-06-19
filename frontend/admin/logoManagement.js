@@ -30,10 +30,10 @@ async function loadLogoStatus() {
 
     if (data.has_logo && data.base64) {
       logoPreview.src = `data:image/png;base64,${data.base64}`;
-      logoPreview.style.display = "block";
+      logoPreview.classList.remove("hidden");
       noLogoText.style.display = "none";
     } else {
-      logoPreview.style.display = "none";
+      logoPreview.classList.add("hidden");
       noLogoText.style.display = "block";
     }
   } catch (err) {

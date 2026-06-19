@@ -75,7 +75,8 @@ def get_custom_logo_base64():
         # Validate file integrity by checking hash
         if os.path.exists(hash_path):
             with open(logo_path, "rb") as f:
-                current_hash = hashlib.sha256(f.read()).hexdigest()
+                file_bytes = f.read()
+                current_hash = hashlib.sha256(file_bytes).hexdigest()
             with open(hash_path, "r") as f:
                 stored_hash = f.read().strip()
             if current_hash != stored_hash:

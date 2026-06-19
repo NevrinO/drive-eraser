@@ -234,10 +234,17 @@ def download_support_bundle():
             lsblk_data = json.loads(lsblk_proc.stdout) if lsblk_proc.stdout else {}
             blockdevices = lsblk_data.get("blockdevices", [])
             
+            # Create dedicated folder for smartctl output
+            smartctl_dir = os.path.join(workspace_dir, "smartctl")
+            os.makedirs(smartctl_dir, exist_ok=True)
+            
             # Collect valid disk devices with validation and count limit
             valid_devices = []
             for device in blockdevices:
                 device_name = device.get("name", "")
+                # Skip loop devices (virtual block devices, not physical drives)
+                if device_name.startswith("loop"):
+                    continue
                 # Validate device name against whitelist (lesson #9)
                 if not device_name or not is_valid_device_name(device_name):
                     logger.warning(f"Skipping invalid device name: {device_name}")
@@ -262,7 +269,7 @@ def download_support_bundle():
                     )
                     # Improved filename sanitization with regex
                     safe_name = re.sub(r'[^\w\-]', '_', device_name)
-                    smartctl_file = os.path.join(workspace_dir, f"smartctl-{safe_name}.txt")
+                    smartctl_file = os.path.join(smartctl_dir, f"{safe_name}.txt")
                     with open(smartctl_file, "w") as f:
                         f.write(f"=== SMARTCTL -X OUTPUT FOR {device_path} ===\n")
                         f.write(smartctl_proc.stdout or "")
@@ -480,7 +487,8 @@ def manage_logo():
                     with open(logo_path, "rb") as f:
                         img_bytes = f.read()
                     base64_data = base64.b64encode(img_bytes).decode("utf-8")
-                except Exception:
+                except Exception as e:
+                    logger.warning(f"Logo GET: failed to read/convert logo: {e}")
                     dimensions = None
                     base64_data = None
             return jsonify({"has_logo": has_logo, "dimensions": dimensions, "base64": base64_data}), 200
@@ -528,17 +536,20 @@ def manage_logo():
                     os.remove(temp_path)
                     return jsonify({"error": f"Converted PNG exceeds 1MB limit (was {png_size / 1024:.2f} KB)"}), 400
                 
-                # Atomic rename operation
+                # Calculate hash of the bytes that will be served (the committed PNG file)
+                with open(temp_path, "rb") as f:
+                    file_bytes = f.read()
+                    file_hash = hashlib.sha256(file_bytes).hexdigest()
+                
+                # Atomic rename operation for logo file
                 os.replace(temp_path, logo_path)
                 
-                # Calculate hash of the committed file for integrity validation
-                with open(logo_path, "rb") as f:
-                    file_hash = hashlib.sha256(f.read()).hexdigest()
-                
-                # Store hash alongside the logo file
+                # Write hash file atomically (temp file + rename)
                 hash_path = logo_path + ".sha256"
-                with open(hash_path, "w") as f:
+                hash_temp_path = hash_path + ".tmp"
+                with open(hash_temp_path, "w") as f:
                     f.write(file_hash)
+                os.replace(hash_temp_path, hash_path)
                 
                 logger.info(f"Custom logo uploaded successfully: {logo_path}")
                 return jsonify({"status": "success", "message": "Logo uploaded successfully"}), 200
