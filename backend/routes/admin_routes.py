@@ -18,7 +18,7 @@ from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK
 from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA
-from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK
+from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
 from device_discovery import generate_master_slot_map, validate_pci_address
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
@@ -1062,6 +1062,9 @@ def manage_enclosures():
                     template = template_map[payload["template_id"]]
                     slot_count = template.get("slot_count", 0)
                     hybrid_slots = template.get("hybrid_slots", [])
+                    rows = template.get("rows", 1)
+                    cols = template.get("cols", 1)
+                    traversal_preset = template.get("traversal_preset", "top_left_down_then_across")
 
                     if slot_count <= 0:
                         return jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400
@@ -1070,21 +1073,35 @@ def manage_enclosures():
                     if slot_count > MAX_SLOTS_PER_ENCLOSURE:
                         return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
 
-                    # Generate slots based on template
-                    # Safe numeric conversion with validation (Rule #84)
+                    # Generate slots based on template traversal order
+                    # Safe numeric conversion for starting_slot_number (Rule #84)
                     try:
                         starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
                         if starting_slot < 0 or starting_slot > 9999:
                             return jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400
                     except (ValueError, TypeError):
                         return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
-                    for slot_num in range(slot_count):
-                        slot_key = str(slot_num)
-                        physical_slot = starting_slot + slot_num
+
+                    # Build traversal positions if template has grid layout (rows/cols)
+                    # Otherwise use linear iteration for simple slot_count-only templates
+                    if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
+                        try:
+                            positions = build_traversal_positions(rows, cols, traversal_preset, slot_count)
+                        except ValueError as e:
+                            return jsonify({"error": f"Failed to build traversal positions: {str(e)}"}), 400
+                    else:
+                        # Fallback to linear iteration for templates without grid layout
+                        positions = [(i, 0) for i in range(slot_count)]
+
+                    for slot_index, (row, col) in enumerate(positions):
+                        slot_key = str(slot_index)
+                        # Calculate physical slot number: starting_slot + logical slot index
+                        physical_slot = starting_slot + slot_index
                         slot_role = custom_roles.get(slot_key, template.get("default_role", "wipe"))
                         slot_data = {
                             "physical_slot_number": physical_slot,
-                            "label": custom_labels.get(slot_key, f"Bay {physical_slot}"),
+                            "physical_position": {"row": row, "col": col},
+                            "label": custom_labels.get(slot_key, f"Bay {slot_index}"),
                             "role": slot_role,
                             "locked": slot_role == "os",
                             "mappings": {}
@@ -1098,8 +1115,8 @@ def manage_enclosures():
                             slot_data["mappings"]["sas_sata"] = sas_mapping
 
                         # Auto-detect NVMe mapping for hybrid slots
-                        if slot_num in hybrid_slots and nvme_start_slot is not None:
-                            nvme_offset = hybrid_slots.index(slot_num)
+                        if slot_index in hybrid_slots and nvme_start_slot is not None:
+                            nvme_offset = hybrid_slots.index(slot_index)
                             nvme_slot_num = int(nvme_start_slot) + nvme_offset
                             nvme_mapping = _auto_detect_mapping(
                                 master_map, pci_controller, None, nvme_slot_num, "nvme"

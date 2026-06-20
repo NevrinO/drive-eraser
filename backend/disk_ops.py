@@ -513,6 +513,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
                 return {"error": "Discovery interrupted by signal"}
 
             physical_slot = slot_config.get("physical_slot_number", int(slot_num))
+            physical_position = slot_config.get("physical_position")
             label = slot_config.get("label", f"Slot {slot_num}")
             role = slot_config.get("role", "wipe")
             locked = slot_config.get("locked", False)
@@ -529,7 +530,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
                 "enclosure_id": enclosure_id,
                 "enclosure_name": enclosure_name,
                 "display_number": physical_slot,
-                "physical_position": physical_slot,
+                "physical_position": physical_position,
                 "label": label,
                 "role": role,
                 "locked": locked,

@@ -408,3 +408,7 @@ This prevents unclosed connection warnings that originate from SQLite's connecti
 ### 87. Allowlist Validation for String Enum Values
 - **Rule**: When accepting string values that must match a predefined set of options, validate against an allowlist before use.
 - **Guardrail**: User-provided enum-like values (e.g., role="wipe|os|reserved", status="active|inactive") must be validated against an explicit allowlist. Never assume the value is valid based on frontend select options alone, as API calls can bypass UI constraints. Define the valid values as a constant set and check membership before using the value in logic or persisting to storage. Return a 400 error with the list of valid options for invalid values.
+
+### 88. Fallback Rendering for Position-Based Layouts
+- **Rule**: When implementing position-based rendering (grids, layouts, maps), always provide a fallback section for items with missing or invalid position data.
+- **Guardrail**: If a rendering function filters items based on position validity (e.g., checking `Number.isInteger(pos.row)`), items that fail validation must not be silently dropped. Track these items and render them in a fallback section (e.g., "Unassigned Drives", "Items with Invalid Positions") with a visible header indicating why they are separate. Add console warnings for debugging. This prevents data loss in the UI when legacy data, malformed configurations, or missing metadata cause position validation to fail. The fallback ensures users can still interact with all items even if position mapping is incomplete.

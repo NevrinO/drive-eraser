@@ -113,7 +113,7 @@ const testBayMap = {
     by_path: '/dev/sda',
     by_path_nvme: null,
     display_number: 0,
-    physical_position: 0
+    physical_position: {"row": 0, "col": 0}
   },
   bay1: {
     role: 'target',
@@ -123,7 +123,7 @@ const testBayMap = {
     by_path: '/dev/nvme0n1',
     by_path_nvme: '/dev/nvme0n1',
     display_number: 1,
-    physical_position: 1
+    physical_position: {"row": 1, "col": 0}
   }
 };
 const copiedBayMap = DiscoveryState.deepCopyBayMap(testBayMap);

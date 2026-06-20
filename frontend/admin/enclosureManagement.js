@@ -326,6 +326,56 @@ function renderTemplateSelector() {
   }
 }
 
+// Supported traversal presets (mirrors backend SUPPORTED_TRAVERSALS)
+const SUPPORTED_TRAVERSALS = [
+  "top_left_down_then_across",
+  "bottom_left_up_then_across",
+  "top_left_across_then_down",
+  "bottom_left_across_then_up"
+];
+
+// Build traversal positions (mirrors backend build_traversal_positions function)
+function buildTraversalPositions(rows, cols, traversal, slotCount) {
+  const positions = [];
+  const r = Math.max(1, rows || 1);
+  const c = Math.max(1, cols || 1);
+  // Respect provided slotCount; only fall back to rows * cols if not provided
+  const count = (slotCount !== null && slotCount !== undefined && slotCount > 0) ? slotCount : (r * c);
+
+  if (traversal === "bottom_left_up_then_across") {
+    for (let col = 0; col < c; col++) {
+      for (let row = r - 1; row >= 0; row--) {
+        positions.push({ row, col });
+        if (positions.length >= count) return positions;
+      }
+    }
+  } else if (traversal === "top_left_across_then_down") {
+    for (let row = 0; row < r; row++) {
+      for (let col = 0; col < c; col++) {
+        positions.push({ row, col });
+        if (positions.length >= count) return positions;
+      }
+    }
+  } else if (traversal === "bottom_left_across_then_up") {
+    for (let row = r - 1; row >= 0; row--) {
+      for (let col = 0; col < c; col++) {
+        positions.push({ row, col });
+        if (positions.length >= count) return positions;
+      }
+    }
+  } else {
+    // top_left_down_then_across (default)
+    for (let col = 0; col < c; col++) {
+      for (let row = 0; row < r; row++) {
+        positions.push({ row, col });
+        if (positions.length >= count) return positions;
+      }
+    }
+  }
+
+  return positions;
+}
+
 // Render slot validation (Step 3)
 async function renderSlotValidation() {
   const container = document.getElementById("slotValidationContainer");
@@ -342,9 +392,24 @@ async function renderSlotValidation() {
   // doesn't exist in bay_map.json yet. After saving, drives will be properly discovered.
   const slots = [];
   const startingSlot = wizardData.starting_slot_number ? parseInt(wizardData.starting_slot_number, 10) : 0;
-  for (let i = 0; i < template.slot_count; i++) {
-    const isHybrid = template.hybrid_slots && template.hybrid_slots.includes(i);
-    const physicalSlot = startingSlot + i;
+  const rows = template.rows || 1;
+  const cols = template.cols || 1;
+  const traversal = template.traversal_preset || "top_left_down_then_across";
+
+  // Build traversal positions if template has grid layout
+  // Otherwise use linear iteration for simple slot_count-only templates
+  let positions;
+  if (rows > 0 && cols > 0 && SUPPORTED_TRAVERSALS.includes(traversal)) {
+    positions = buildTraversalPositions(rows, cols, traversal, template.slot_count);
+  } else {
+    // Fallback to linear iteration for templates without grid layout
+    positions = Array.from({ length: template.slot_count }, (_, i) => ({ row: i, col: 0 }));
+  }
+
+  for (let slotIndex = 0; slotIndex < positions.length; slotIndex++) {
+    const { row, col } = positions[slotIndex];
+    const isHybrid = template.hybrid_slots && template.hybrid_slots.includes(slotIndex);
+    const physicalSlot = startingSlot + slotIndex;
 
     // Auto-detect SAS/SATA mapping (mirrors backend _auto_detect_mapping logic)
     let sasMapping = null;
@@ -373,7 +438,7 @@ async function renderSlotValidation() {
     if (isHybrid && wizardData.nvme_starting_slot) {
       const nvmeStartingSlot = parseInt(wizardData.nvme_starting_slot, 10);
       if (!isNaN(nvmeStartingSlot)) {
-        const nvmeOffset = template.hybrid_slots.indexOf(i);
+        const nvmeOffset = template.hybrid_slots.indexOf(slotIndex);
         const nvmeSlotNum = nvmeStartingSlot + nvmeOffset;
         const nvmeEntry = masterSlotMap.find(entry =>
           entry.pci_controller === wizardData.pci_controller &&
@@ -392,7 +457,7 @@ async function renderSlotValidation() {
 
     slots.push({
       physical_slot_number: physicalSlot,
-      label: `Bay ${physicalSlot}`,
+      label: `Bay ${slotIndex}`,
       role: template.default_role || "wipe",
       locked: false,
       mappings: {

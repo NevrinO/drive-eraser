@@ -162,7 +162,11 @@ def build_traversal_positions(rows, cols, traversal, bay_count, skip_positions=N
     positions = []
     rows = max(1, int(rows or 1))
     cols = max(1, int(cols or 1))
-    bay_count = max(1, int(bay_count or (rows * cols)))
+    # Respect provided bay_count; only fall back to rows * cols if not provided
+    if bay_count is None or bay_count == 0:
+        bay_count = rows * cols
+    else:
+        bay_count = int(bay_count)
     
     # Parse skip_positions into a set of (row, col) tuples for fast lookup
     skip_set = set()

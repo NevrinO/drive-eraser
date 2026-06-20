@@ -167,6 +167,7 @@ function renderBaysByEnclosure(drives) {
   });
 
   let gridHtml = "";
+  const allDrivesWithInvalidPositions = [];
 
   // Render each enclosure
   Object.keys(workbenchEnclosures).sort((a, b) => {
@@ -176,6 +177,26 @@ function renderBaysByEnclosure(drives) {
   }).forEach(enclosureId => {
     const enclosure = workbenchEnclosures[enclosureId];
     const enclosureDrives = drivesByEnclosure[enclosureId] || [];
+    const template = enclosure.template || {};
+
+    // Get template dimensions
+    const templateRows = template.rows || 1;
+    const templateCols = template.cols || 1;
+    const skipPositions = template.skip_positions || [];
+    const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
+
+    // Create a map of drives by their physical position
+    const driveByPosition = new Map();
+    const drivesWithInvalidPositions = [];
+    enclosureDrives.forEach(drive => {
+      const pos = drive.physical_position;
+      if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
+        driveByPosition.set(`${pos.row},${pos.col}`, drive);
+      } else {
+        drivesWithInvalidPositions.push(drive);
+        allDrivesWithInvalidPositions.push(drive);
+      }
+    });
 
     gridHtml += `
       <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
@@ -183,19 +204,41 @@ function renderBaysByEnclosure(drives) {
           <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-primary);">${escapeHtml(enclosure.name || enclosureId)}</h3>
           <small style="color: #888;">${enclosureDrives.length} slots</small>
         </div>
-        <div class="enclosure-bays-grid">
+        <div class="enclosure-bays-grid" style="grid-template-columns: repeat(${templateCols}, minmax(0, 1fr));">
     `;
 
-    // Sort drives by physical slot number
-    enclosureDrives.sort((a, b) => {
-      const slotA = a.physical_slot_number || 0;
-      const slotB = b.physical_slot_number || 0;
-      return slotA - slotB;
-    });
+    // Generate grid cells based on template dimensions
+    for (let row = 0; row < templateRows; row++) {
+      for (let col = 0; col < templateCols; col++) {
+        const posKey = `${row},${col}`;
+        const isSkipped = skipSet.has(posKey);
+        const drive = driveByPosition.get(posKey);
 
-    enclosureDrives.forEach(drive => {
-      gridHtml += renderBayCard(drive);
-    });
+        if (isSkipped) {
+          // Render blocked placeholder
+          gridHtml += `
+            <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
+              <div class="bay-banner" style="background: transparent; color: #444;"></div>
+              <div class="bay-header-row">
+                <div class="bay-number" style="color: #444;"></div>
+              </div>
+            </article>
+          `;
+        } else if (drive) {
+          gridHtml += renderBayCard(drive);
+        } else {
+          // Render empty placeholder for grid position with no drive
+          gridHtml += `
+            <article class="bay-card empty" data-bay="empty-${row}-${col}">
+              <div class="bay-banner">EMPTY BAY</div>
+              <div class="bay-header-row">
+                <div class="bay-number">— Empty slot —</div>
+              </div>
+            </article>
+          `;
+        }
+      }
+    }
 
     gridHtml += `
         </div>
@@ -214,6 +257,22 @@ function renderBaysByEnclosure(drives) {
         <div class="enclosure-bays-grid">
     `;
 
+    // Sort unassigned drives by physical position (row, col) to follow traversal pattern
+    unassignedDrives.sort((a, b) => {
+      const aPos = a.physical_position || {};
+      const bPos = b.physical_position || {};
+      const hasAPos = Number.isInteger(aPos.row) && Number.isInteger(aPos.col);
+      const hasBPos = Number.isInteger(bPos.row) && Number.isInteger(bPos.col);
+      if (hasAPos && hasBPos) {
+        if (aPos.row !== bPos.row) return aPos.row - bPos.row;
+        if (aPos.col !== bPos.col) return aPos.col - bPos.col;
+      }
+      // Fallback to physical_slot_number if physical_position is missing
+      const slotA = a.physical_slot_number || 0;
+      const slotB = b.physical_slot_number || 0;
+      return slotA - slotB;
+    });
+
     unassignedDrives.forEach(drive => {
       gridHtml += renderBayCard(drive);
     });
@@ -222,6 +281,57 @@ function renderBaysByEnclosure(drives) {
         </div>
       </div>
     `;
+  }
+
+  // Render drives with invalid positions if any
+  // Filter to exclude: duplicates (MPIO), loops, dvdroms, usbs, and other unwanted device types
+  if (allDrivesWithInvalidPositions.length > 0) {
+    // Deduplicate by serial number to avoid MPIO duplicates
+    const seenSerials = new Set();
+    const filteredDrives = allDrivesWithInvalidPositions.filter(drive => {
+      const serial = drive.serial;
+      if (!serial) return false;
+      if (seenSerials.has(serial)) return false;
+      seenSerials.add(serial);
+
+      // Filter out unwanted device types (loops, dvdroms, usbs)
+      // Only include drives with known interface_type (nvme, sata, sas) and known drive_type (ssd, hdd)
+      const iface = (drive.interface_type || "").toLowerCase();
+      const dtype = (drive.drive_type || "").toLowerCase();
+      const isKnownInterface = ["nvme", "sata", "sas"].includes(iface);
+      const isKnownDriveType = ["ssd", "hdd"].includes(dtype);
+
+      return isKnownInterface && isKnownDriveType;
+    });
+
+    if (filteredDrives.length > 0) {
+      console.warn(`Warning: ${filteredDrives.length} drive(s) have invalid or missing physical_position data and are rendered in fallback section`);
+
+      gridHtml += `
+        <div class="enclosure-section">
+          <div class="enclosure-section-header">
+            <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-warning);">Drives with Invalid Positions</h3>
+            <small style="color: #888;">${filteredDrives.length} drives</small>
+          </div>
+          <div class="enclosure-bays-grid">
+      `;
+
+      // Sort by bay for consistent ordering
+      filteredDrives.sort((a, b) => {
+        const bayA = a.bay || "";
+        const bayB = b.bay || "";
+        return bayA.localeCompare(bayB);
+      });
+
+      filteredDrives.forEach(drive => {
+        gridHtml += renderBayCard(drive);
+      });
+
+      gridHtml += `
+          </div>
+        </div>
+      `;
+    }
   }
 
   baysGrid.innerHTML = gridHtml;
