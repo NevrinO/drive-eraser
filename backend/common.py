@@ -378,26 +378,39 @@ def load_policy(config_dir=None):
         logger.error(f"Failed to load policy configuration: {e}")
         raise ValueError(f"Configuration load failed: {e}")
 
+def validate_strict_audit_requirements(strict_audit_mode, wipe_passphrase):
+    """
+    Validate that strict_audit_mode requirements are met.
+    
+    Args:
+        strict_audit_mode: Boolean indicating if strict audit mode is enabled
+        wipe_passphrase: Current wipe passphrase (may be empty string)
+        
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    if strict_audit_mode:
+        if not wipe_passphrase or not wipe_passphrase.strip():
+            return False, "strict_audit_mode requires a non-empty wipe_passphrase"
+        if len(wipe_passphrase) < 8:
+            return False, "strict_audit_mode requires a wipe_passphrase of at least 8 characters"
+    return True, None
+
 def validate_policy(policy):
     """
     Validate policy configuration for critical security requirements.
     Raises ValueError with descriptive message if validation fails.
     """
     # Critical #6: Validate wipe_passphrase when strict_audit_mode is enabled
-    if policy.get("strict_audit_mode", False):
-        wipe_passphrase = policy.get("wipe_passphrase", "")
-        if not wipe_passphrase or not wipe_passphrase.strip():
-            raise ValueError(
-                "Configuration validation failed: strict_audit_mode is enabled but wipe_passphrase is empty. "
-                "A non-empty wipe_passphrase is required when strict_audit_mode=true. "
-                "Please set a strong passphrase in config/policy.json."
-            )
-        # Minimum strength check: at least 8 characters
-        if len(wipe_passphrase) < 8:
-            raise ValueError(
-                "Configuration validation failed: wipe_passphrase is too weak (minimum 8 characters required). "
-                "Please set a stronger passphrase in config/policy.json."
-            )
+    strict_audit_mode = policy.get("strict_audit_mode", False)
+    wipe_passphrase = policy.get("wipe_passphrase", "")
+    
+    is_valid, error_msg = validate_strict_audit_requirements(strict_audit_mode, wipe_passphrase)
+    if not is_valid:
+        raise ValueError(
+            f"Configuration validation failed: {error_msg}. "
+            "Please set a strong passphrase in config/policy.json."
+        )
 
 def save_policy(policy_data, config_dir=None):
     if config_dir is None:

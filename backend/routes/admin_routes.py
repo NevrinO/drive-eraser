@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK
-from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA
+from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
 from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
 from device_discovery import generate_master_slot_map, validate_pci_address
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
@@ -403,6 +403,8 @@ def admin_policy():
             safe_policy = policy.copy()
             if "lan_passphrase" in safe_policy:
                 safe_policy["lan_passphrase"] = ""
+            if "wipe_passphrase" in safe_policy:
+                safe_policy["wipe_passphrase"] = ""
             return jsonify(safe_policy), 200
         except Exception as e:
             logger.error(f"Error getting policy: {e}")
@@ -412,21 +414,45 @@ def admin_policy():
             payload = request.get_json(silent=True) or {}
             current_policy = load_policy(config_dir)
             
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay"]
+            # Extract new values from payload before validation
+            new_strict_audit_mode = payload.get("strict_audit_mode")
+            new_wipe_pass = str(payload.get("wipe_passphrase") or "").strip()
+            new_lan_pass = str(payload.get("lan_passphrase") or "").strip()
+            
+            # Type validation for boolean fields
+            if new_strict_audit_mode is not None and not isinstance(new_strict_audit_mode, bool):
+                return jsonify({"error": "strict_audit_mode must be a boolean value"}), 400
+            
+            # Validation: strict_audit_mode requires wipe_passphrase of at least 8 characters
+            # Check both the new value from payload and the existing value in current_policy
+            strict_audit_enabled = new_strict_audit_mode if new_strict_audit_mode is not None else current_policy.get("strict_audit_mode", False)
+            if strict_audit_enabled:
+                # Use new passphrase if provided, otherwise check existing passphrase
+                passphrase_to_check = new_wipe_pass if new_wipe_pass else current_policy.get("wipe_passphrase", "")
+                is_valid, error_msg = validate_strict_audit_requirements(strict_audit_enabled, passphrase_to_check)
+                if not is_valid:
+                    return jsonify({"error": error_msg}), 400
+            
+            # Apply mutations after validation passes
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]
                     
-            new_pass = str(payload.get("lan_passphrase") or "").strip()
-            passphrase_changed = False
-            if new_pass:
-                current_policy["lan_passphrase"] = new_pass
-                passphrase_changed = True
+            lan_passphrase_changed = False
+            if new_lan_pass:
+                current_policy["lan_passphrase"] = new_lan_pass
+                lan_passphrase_changed = True
+            
+            wipe_passphrase_changed = False
+            if new_wipe_pass:
+                current_policy["wipe_passphrase"] = new_wipe_pass
+                wipe_passphrase_changed = True
                 
             save_policy(current_policy, config_dir)
             
             # Passphrase change invalidates marker HMAC verification results in drive cache
-            if passphrase_changed:
+            if lan_passphrase_changed or wipe_passphrase_changed:
                 invalidate_drive_cache()
             
             logger.info("Operational policies modified successfully by administrator.")

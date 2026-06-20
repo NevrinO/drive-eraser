@@ -6,6 +6,17 @@ const openSystemConfigBtn = document.getElementById("openSystemConfigBtn");
 const systemConfigClose = document.getElementById("systemConfigClose");
 const systemConfigForm = document.getElementById("systemConfigForm");
 const systemConfigError = document.getElementById("systemConfigError");
+const passphraseConfirmModal = document.getElementById("passphraseConfirmModal");
+const passphraseConfirmYes = document.getElementById("passphraseConfirmYes");
+const passphraseConfirmNo = document.getElementById("passphraseConfirmNo");
+const passphraseConfirmClose = document.getElementById("passphraseConfirmClose");
+const strictAuditConfirmModal = document.getElementById("strictAuditConfirmModal");
+const strictAuditConfirmYes = document.getElementById("strictAuditConfirmYes");
+const strictAuditConfirmNo = document.getElementById("strictAuditConfirmNo");
+const strictAuditConfirmClose = document.getElementById("strictAuditConfirmClose");
+
+let pendingFormData = null;
+let currentStrictAuditMode = false;
 
 async function loadSystemConfig() {
   try {
@@ -42,6 +53,17 @@ async function loadSystemConfig() {
     const blockdevDelayInput = document.getElementById("blockdev_post_wipe_retry_delay");
     if (blockdevDelayInput) {
       blockdevDelayInput.value = policy.blockdev_post_wipe_retry_delay || 5;
+    }
+    
+    const strictAuditModeInput = document.getElementById("strict_audit_mode");
+    if (strictAuditModeInput) {
+      strictAuditModeInput.value = policy.strict_audit_mode ? "true" : "false";
+      currentStrictAuditMode = policy.strict_audit_mode || false;
+    }
+    
+    const wipePassphraseInput = document.getElementById("wipe_passphrase");
+    if (wipePassphraseInput) {
+      wipePassphraseInput.value = ""; // Never populate the passphrase field for security
     }
     
     hideError(systemConfigError);
@@ -159,6 +181,30 @@ function validateForm() {
     }
   }
   
+  // Strict audit mode (boolean)
+  const strictAuditModeInput = document.getElementById("strict_audit_mode");
+  if (strictAuditModeInput) {
+    const value = strictAuditModeInput.value === "true";
+    formData.strict_audit_mode = value;
+  }
+  
+  // Wipe passphrase (optional string, but required if strict mode is enabled)
+  const wipePassphraseInput = document.getElementById("wipe_passphrase");
+  if (wipePassphraseInput) {
+    const value = wipePassphraseInput.value.trim();
+    if (value) {
+      // Only include in payload if user provided a new value
+      formData.wipe_passphrase = value;
+    }
+    // Client-side validation: strict mode requires passphrase of at least 8 characters
+    if (formData.strict_audit_mode && (!value || value.length < 8)) {
+      isValid = false;
+      wipePassphraseInput.style.borderColor = "var(--color-danger)";
+    } else {
+      wipePassphraseInput.style.borderColor = "";
+    }
+  }
+  
   if (!isValid) {
     showError(systemConfigError, "Please enter valid values for all fields.");
     return null;
@@ -187,14 +233,75 @@ document.addEventListener("DOMContentLoaded", () => {
     const formData = validateForm();
     if (!formData) return;
     
-    try {
-      const result = await saveSystemConfig(formData);
-      hideError(systemConfigError);
-      closeModal(systemConfigModal);
-      alert("System configuration saved successfully.");
-    } catch (error) {
-      showError(systemConfigError, `Failed to save system configuration: ${error.message}`);
+    // Check if passphrase is being changed
+    if (formData.wipe_passphrase) {
+      // Show confirmation dialog
+      pendingFormData = formData;
+      openModal(passphraseConfirmModal);
+      return;
     }
+    
+    // Check if strict audit mode is being enabled
+    if (formData.strict_audit_mode && !currentStrictAuditMode) {
+      // Show confirmation dialog
+      pendingFormData = formData;
+      openModal(strictAuditConfirmModal);
+      return;
+    }
+    
+    // No passphrase change or strict mode enablement, proceed directly
+    await submitForm(formData);
   });
+
+  // Passphrase confirmation handlers
+  if (passphraseConfirmYes) {
+    passphraseConfirmYes.addEventListener("click", async () => {
+      closeModal(passphraseConfirmModal);
+      if (pendingFormData) {
+        await submitForm(pendingFormData);
+        pendingFormData = null;
+      }
+    });
+  }
+
+  if (passphraseConfirmNo || passphraseConfirmClose) {
+    const cancelHandler = () => {
+      closeModal(passphraseConfirmModal);
+      pendingFormData = null;
+    };
+    if (passphraseConfirmNo) passphraseConfirmNo.addEventListener("click", cancelHandler);
+    if (passphraseConfirmClose) passphraseConfirmClose.addEventListener("click", cancelHandler);
+  }
+
+  // Strict audit mode confirmation handlers
+  if (strictAuditConfirmYes) {
+    strictAuditConfirmYes.addEventListener("click", async () => {
+      closeModal(strictAuditConfirmModal);
+      if (pendingFormData) {
+        await submitForm(pendingFormData);
+        pendingFormData = null;
+      }
+    });
+  }
+
+  if (strictAuditConfirmNo || strictAuditConfirmClose) {
+    const cancelHandler = () => {
+      closeModal(strictAuditConfirmModal);
+      pendingFormData = null;
+    };
+    if (strictAuditConfirmNo) strictAuditConfirmNo.addEventListener("click", cancelHandler);
+    if (strictAuditConfirmClose) strictAuditConfirmClose.addEventListener("click", cancelHandler);
+  }
 });
+
+async function submitForm(formData) {
+  try {
+    const result = await saveSystemConfig(formData);
+    hideError(systemConfigError);
+    closeModal(systemConfigModal);
+    alert("System configuration saved successfully.");
+  } catch (error) {
+    showError(systemConfigError, `Failed to save system configuration: ${error.message}`);
+  }
+}
 // --- END OF FILE frontend/admin/systemConfig.js ---
