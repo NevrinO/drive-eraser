@@ -17,7 +17,7 @@ class TestAdminRoutes:
     @pytest.fixture
     def test_config_dir(self):
         """Create a temporary directory for test configuration."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             # Create test policy.json
             policy = {
                 "strict_audit_mode": False,
@@ -82,15 +82,10 @@ class TestAdminRoutes:
             yield app
         finally:
             # Clean up database connections before stopping patches
-            import sqlite3
-            import gc
+            from database import close_all_connections
             try:
-                # Force garbage collection to trigger any pending connection cleanup
-                gc.collect()
-                # Force close any open connections to the test database
-                with sqlite3.connect(test_db_path) as conn:
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    conn.execute("PRAGMA optimize")
+                # Close all SQLite connections to prevent ResourceWarning
+                close_all_connections()
             except Exception:
                 pass
             for p in patches:
@@ -330,6 +325,45 @@ class TestAdminRoutes:
         with patch('routes.admin_routes.os.remove', side_effect=FileNotFoundError):
             response = admin_session.delete('/api/admin/logo')
             assert response.status_code == 200
+
+    def test_create_enclosure_uses_layout_templates(self, admin_session):
+        """Regression: enclosure creation must find templates via load_layout_templates and auto-map slots."""
+        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+            mock_load_templates.return_value = ({
+                "test_4bay": {
+                    "id": "test_4bay",
+                    "name": "Test 4-Bay",
+                    "vendor": "Test",
+                    "slot_count": 4,
+                    "default_role": "wipe"
+                }
+            }, False)
+            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+                mock_master.return_value = [
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 0,
+                        "hardware_identifier": "0:0:0",
+                        "expander_sas_address": None
+                    }
+                ]
+                with patch('routes.admin_routes.save_bay_map') as mock_save:
+                    payload = {
+                        "id": "test_enc",
+                        "name": "Test Enclosure",
+                        "template_id": "test_4bay",
+                        "pci_controller": "0000:00:1f.2",
+                        "expander_sas_address": None,
+                        "display_order": 0,
+                        "auto_map_slots": True,
+                        "nvme_start_slot": None
+                    }
+                    response = admin_session.post('/api/admin/enclosures', json=payload)
+                    assert response.status_code == 201, response.data
+                    data = json.loads(response.data)
+                    assert data["enclosure"]["slots"]["0"]["physical_slot_number"] == 0
+                    mock_save.assert_called_once()
 
 
 if __name__ == "__main__":

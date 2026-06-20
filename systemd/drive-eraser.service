@@ -3,6 +3,8 @@ Description=Drive Wipe Station
 Documentation=https://github.com/NevrinO/drive-eraser
 After=network.target
 Wants=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
 
 [Service]
 # Run as dedicated system user
@@ -18,8 +20,6 @@ ExecStart=/opt/drive-eraser/venv/bin/python backend/app.py
 # Restart behavior
 Restart=on-failure
 RestartSec=5s
-StartLimitIntervalSec=60
-StartLimitBurst=3
 TimeoutStopSec=10
 
 # Logging

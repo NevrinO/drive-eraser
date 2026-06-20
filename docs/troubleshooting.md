@@ -179,3 +179,103 @@ Collect:
 - Click the **Help** button in the UI header for in-app documentation access.
 - Access documentation directly from the server's `/opt/drive-eraser/docs/` folder.
 - Restart the service if the `/docs/` route is not responding.
+
+---
+
+## Physical Slot Mapping Issues
+
+### Drives Not Detected in Expected Slots
+### Symptoms
+- Drive shows in wrong physical slot or not detected at all
+- Auto-mapping shows incorrect hardware identifiers
+
+### Checks
+1. Verify enclosure configuration in System Administration panel
+2. Check that PCI controller address matches actual hardware (`lspci | grep -i sas`)
+3. Confirm expander SAS address is correct for multi-expander setups
+4. Inspect master map via `/api/admin/master-slot-map` endpoint
+5. Verify slot type matches physical connection (SAS expander vs direct)
+
+### Common fixes
+- Re-run auto-mapping with correct controller selection
+- Manually override hardware identifiers if auto-detection fails
+- Check sysfs directly: `ls -la /sys/class/sas_phy/` for SAS phy paths
+- For NVMe: `ls -la /sys/bus/pci/slots/` to verify slot numbers
+
+### Hybrid Slot NVMe Mapping Incorrect
+### Symptoms
+- NVMe drives in hybrid bays not detected
+- NVMe hardware identifier sequence is wrong (e.g., 101, 103, 105 instead of 101, 102, 103)
+
+### Checks
+1. Verify template has correct `hybrid_slots` array
+2. Check starting PCIe NVMe slot selected during enclosure creation
+3. Confirm `/sys/bus/pci/slots/` folder numbers match expected sequence
+
+### Common fixes
+- Re-create enclosure with correct starting NVMe slot number
+- Manually edit NVMe hardware identifiers for affected slots
+- Verify physical slot numbering matches chassis labeling
+
+### Multipath Device Shows as Two Separate Drives
+### Symptoms
+- Same physical drive appears twice with different device paths (e.g., /dev/sdb and /dev/sdc)
+- UI shows duplicate entries for single drive
+
+### Checks
+1. Check if drive is dual-ported SAS: `multipath -ll`
+2. Verify `/sys/block/<dev>/holders` contains dm-* entries
+3. Confirm MPIO resolution is working in discovery logs
+
+### Common fixes
+- MPIO resolution is automatic; if not working, check device-mapper-multipath package is installed
+- Verify multipathd service is running: `systemctl status multipathd`
+- Check `/etc/multipath.conf` configuration
+- Restart multipathd: `sudo systemctl restart multipathd`
+
+### Enclosure Creation Fails with Invalid Controller
+### Symptoms
+- Cannot create enclosure, controller selection shows no options
+- API returns error about missing PCI controller
+
+### Checks
+1. Verify master map is populated: `GET /api/admin/master-slot-map`
+2. Check that sysfs directories are accessible
+3. Confirm HBA hardware is detected by OS
+
+### Common fixes
+- Rescan PCI bus: `echo 1 > /sys/bus/pci/rescan`
+- Check HBA driver is loaded: `lsmod | grep <driver_name>`
+- Verify physical HBA is seated properly
+- Restart service if sysfs permissions are incorrect
+
+### Stale Drive Detection After Hot-Swap
+### Symptoms
+- Old drive information persists after hot-swap
+- New drive not detected or shows old drive's serial
+
+### Checks
+1. Verify master map cache is not stale (60-second TTL)
+2. Check if kernel re-enumerated new drive: `lsblk`
+3. Confirm drive is properly seated in bay
+
+### Common fixes
+- Force master map refresh: `GET /api/admin/master-slot-map?force_refresh=true`
+- Wait 60 seconds for cache to expire
+- For SAS drives, trigger SCSI rescan if needed (deferred feature in Phase 4)
+- Re-seat drive and wait for kernel detection
+
+### Multi-Enclosure Collision Detection
+### Symptoms
+- Two enclosures show same drives
+- Slot mapping conflicts between enclosures
+
+### Checks
+1. Verify each enclosure has unique expander SAS address
+2. Confirm PCI controllers are different for each enclosure
+3. Check display order doesn't cause confusion
+
+### Common fixes
+- Ensure expander SAS addresses are correctly identified during enclosure creation
+- Use different PCI controllers for physically separate enclosures
+- Re-configure enclosures with correct hardware bindings

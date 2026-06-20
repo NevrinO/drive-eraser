@@ -22,6 +22,7 @@ DEFAULT_TEMPLATES = {
         "rows": 1,
         "cols": 4,
         "bay_count": 4,
+        "slot_count": 4,
         "traversal_preset": "top_left_down_then_across"
     },
     "dell_r440_10bay": {
@@ -31,6 +32,7 @@ DEFAULT_TEMPLATES = {
         "rows": 2,
         "cols": 5,
         "bay_count": 10,
+        "slot_count": 10,
         "traversal_preset": "top_left_down_then_across"
     }
 }
@@ -63,15 +65,24 @@ def normalize_bay_map_document(document):
     return bays, metadata
 
 
-def compose_bay_map_document(bays, metadata):
+def compose_bay_map_document(bays, metadata, enclosures=None):
     clean_bays = {k: v for k, v in (bays or {}).items() if is_bay_entry(v)}
     clean_meta = metadata if isinstance(metadata, dict) else {}
+    
+    # If no metadata, return bays directly (flat structure)
+    if not clean_meta and not enclosures:
+        return clean_bays
+    
+    result = {}
     if clean_meta:
-        return {
-            "layout_metadata": clean_meta,
-            "bays": clean_bays
-        }
-    return clean_bays
+        result["layout_metadata"] = clean_meta
+    result["bays"] = clean_bays
+    
+    # Preserve enclosures section if provided (prevents data loss when saving bay map)
+    if enclosures and isinstance(enclosures, dict):
+        result["enclosures"] = enclosures
+    
+    return result
 
 
 def load_layout_templates(config_dir):
@@ -118,6 +129,18 @@ def load_layout_templates(config_dir):
                 if isinstance(template, dict):
                     entry = template.copy()
                     entry["id"] = template_id
+                    # Enclosure wizard expects slot_count; derive from legacy fields if missing
+                    if "slot_count" not in entry:
+                        bay_count = entry.get("bay_count")
+                        rows = entry.get("rows")
+                        cols = entry.get("cols")
+                        try:
+                            if bay_count is not None:
+                                entry["slot_count"] = int(bay_count)
+                            elif rows is not None and cols is not None:
+                                entry["slot_count"] = int(rows) * int(cols)
+                        except (ValueError, TypeError):
+                            entry["slot_count"] = 0
                     result[template_id] = entry
             if result:
                 return result, False
@@ -310,14 +333,22 @@ def validate_layout_metadata(layout_metadata, bays, templates):
 
 
 def validate_template(template):
-    """Validate a single template object for structure and constraints."""
+    """Validate a single template object for structure and constraints.
+    
+    Accepts both old-style templates (with rows/cols/bay_count/traversal_preset)
+    and new-style templates (with slot_count only for enclosure use).
+    """
     if not isinstance(template, dict):
         return "Template must be an object"
     
-    required_fields = ["id", "name", "vendor", "rows", "cols", "bay_count", "traversal_preset"]
+    required_fields = ["id", "name"]
     for field in required_fields:
         if field not in template:
             return f"Template missing required field: {field}"
+    
+    # Must have at least one of slot_count or bay_count
+    if "slot_count" not in template and "bay_count" not in template:
+        return "Template must have either slot_count or bay_count"
     
     # Validate types
     if not isinstance(template["id"], str) or not template["id"].strip():
@@ -326,29 +357,45 @@ def validate_template(template):
     if not isinstance(template["name"], str) or not template["name"].strip():
         return "Template name must be a non-empty string"
     
-    if not isinstance(template["vendor"], str) or not template["vendor"].strip():
-        return "Template vendor must be a non-empty string"
+    # Validate vendor if present
+    if "vendor" in template:
+        if not isinstance(template["vendor"], str) or not template["vendor"].strip():
+            return "Template vendor must be a non-empty string"
     
-    try:
-        rows = int(template["rows"])
-        cols = int(template["cols"])
-        bay_count = int(template["bay_count"])
-    except (ValueError, TypeError):
-        return "Template rows, cols, and bay_count must be integers"
+    # Validate slot_count if present
+    if "slot_count" in template:
+        try:
+            slot_count = int(template["slot_count"])
+            if slot_count < 1:
+                return "Template slot_count must be a positive integer"
+        except (ValueError, TypeError):
+            return "Template slot_count must be an integer"
     
-    if rows < 1 or cols < 1 or bay_count < 1:
-        return "Template rows, cols, and bay_count must be positive integers"
+    # Grid validation only when rows/cols/bay_count are all present
+    has_grid = all(k in template for k in ("rows", "cols", "bay_count"))
+    if has_grid:
+        try:
+            rows = int(template["rows"])
+            cols = int(template["cols"])
+            bay_count = int(template["bay_count"])
+        except (ValueError, TypeError):
+            return "Template rows, cols, and bay_count must be integers"
+        
+        if rows < 1 or cols < 1 or bay_count < 1:
+            return "Template rows, cols, and bay_count must be positive integers"
+        
+        if cols > 5:
+            return "Template cols cannot exceed 5 (UI layout constraint)"
+        
+        if bay_count > rows * cols:
+            return f"Template bay_count ({bay_count}) cannot exceed rows * cols ({rows * cols})"
     
-    if cols > 5:
-        return "Template cols cannot exceed 5 (UI layout constraint)"
+    # Validate traversal_preset if present
+    if "traversal_preset" in template:
+        if template["traversal_preset"] not in SUPPORTED_TRAVERSALS:
+            return f"Template traversal_preset must be one of: {', '.join(SUPPORTED_TRAVERSALS)}"
     
-    if bay_count > rows * cols:
-        return f"Template bay_count ({bay_count}) cannot exceed rows * cols ({rows * cols})"
-    
-    if template["traversal_preset"] not in SUPPORTED_TRAVERSALS:
-        return f"Template traversal_preset must be one of: {', '.join(SUPPORTED_TRAVERSALS)}"
-    
-    # Validate skip_positions if present
+    # Validate skip_positions if present (requires grid fields)
     skip_positions = template.get("skip_positions")
     if skip_positions is not None:
         if not isinstance(skip_positions, list):
@@ -356,6 +403,9 @@ def validate_template(template):
         # Enforce size limit to prevent DoS (Lesson #5)
         if len(skip_positions) > 100:
             return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
+        
+        if not has_grid:
+            return "skip_positions requires rows, cols, and bay_count to be defined"
         
         seen_positions = set()
         for skip in skip_positions:

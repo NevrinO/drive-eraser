@@ -367,82 +367,9 @@ setup_config() {
 
      # bay_map.json - only create if missing
     if [ ! -f "$CONFIG_DIR/bay_map.json" ]; then
-        info "Creating default clean-slate bay_map.json..."
-        cat > "$CONFIG_DIR/bay_map.json" << 'EOF'
-{
-  "bay0": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay1": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay2": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay3": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay4": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay5": {
-    "role": "wipe",
-    "locked": false,
-    "type": "sas_sata",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay6": {
-    "role": "wipe",
-    "locked": false,
-    "type": "u2",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay7": {
-    "role": "wipe",
-    "locked": false,
-    "type": "u2",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay8": {
-    "role": "wipe",
-    "locked": false,
-    "type": "u2",
-    "label": "Work Bay",
-    "by_path": null
-  },
-  "bay9": {
-    "role": "wipe",
-    "locked": false,
-    "type": "u2",
-    "label": "Work Bay",
-    "by_path": null
-  }
-}
-EOF
-        success "Clean-slate bay_map.json created."
+        info "Creating default empty bay_map.json..."
+        echo '{}' > "$CONFIG_DIR/bay_map.json"
+        success "Empty bay_map.json created."
     else
         warn "bay_map.json already exists. Skipping (your config is preserved)."
     fi

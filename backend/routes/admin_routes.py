@@ -17,7 +17,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK
-from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path
+from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA
+from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK
+from device_discovery import generate_master_slot_map, validate_pci_address
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
@@ -34,6 +36,31 @@ admin_bp = Blueprint('admin_routes', __name__)
 _SATA_DEVICE_RE = re.compile(r'^[a-z]+[0-9]*\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
+
+# Size limits for DoS prevention (Rule #5)
+MAX_ENCODSURES = 100
+MAX_SLOTS_PER_ENCLOSURE = 1000
+MAX_TEMPLATES = 50
+
+# ID validation pattern (alphanumeric, hyphens, underscores only)
+_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+\Z')
+
+def is_valid_id(id_str: str) -> bool:
+    """Validate ID string against safe character whitelist.
+    
+    Following lessons-learned rule #9: Never accept raw strings without validation.
+    
+    Args:
+        id_str: ID string to validate
+        
+    Returns:
+        True if valid, False otherwise
+    """
+    if not id_str or not isinstance(id_str, str):
+        return False
+    if len(id_str) > 100:  # Reasonable length limit
+        return False
+    return bool(_ID_PATTERN.match(id_str))
 
 def is_valid_device_name(name: str) -> bool:
     r"""Validate device name against strict whitelist to prevent path traversal and injection.
@@ -878,3 +905,818 @@ def kill_all_jobs():
     except Exception as e:
         logger.error(f"Kill all jobs failed: {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ==================== Enclosure Management APIs ====================
+
+@admin_bp.route("/api/admin/enclosures", methods=["GET", "POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_enclosures():
+    """Handle enclosure listing and creation."""
+    config_dir = get_config_dir()
+    
+    if request.method == "GET":
+        try:
+            bay_map = load_bay_map(config_dir)
+            enclosures = bay_map.get("enclosures", {})
+            templates_dict, _ = load_layout_templates(config_dir)
+            templates = list(templates_dict.values())
+            
+            # Return enclosures with their template details merged
+            template_map = templates_dict
+            enclosure_list = []
+            
+            for enc_id, enc_data in enclosures.items():
+                template_id = enc_data.get("template_id")
+                template = template_map.get(template_id, {})
+                
+                enclosure_list.append({
+                    "id": enc_id,
+                    **enc_data,
+                    "template_name": template.get("name", "Unknown"),
+                    "template": template
+                })
+            
+            # Sort by display_order
+            enclosure_list.sort(key=lambda x: x.get("display_order", 0))
+            
+            return jsonify({
+                "enclosures": enclosure_list,
+                "templates": templates
+            }), 200
+        except Exception as e:
+            logger.error(f"Error listing enclosures: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    else:  # POST - Create new enclosure
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            # Validate required fields
+            required_fields = ["id", "name", "template_id", "pci_controller"]
+            for field in required_fields:
+                if field not in payload:
+                    return jsonify({"error": f"Missing required field: {field}"}), 400
+            
+            # Validate enclosure ID format
+            if not is_valid_id(payload["id"]):
+                return jsonify({"error": f"Invalid enclosure ID format: {payload['id']}. Only alphanumeric, hyphens, and underscores allowed"}), 400
+            
+            # Validate PCI address format
+            pci_controller = payload["pci_controller"]
+            if not validate_pci_address(pci_controller):
+                return jsonify({"error": f"Invalid PCI address format: {pci_controller}"}), 400
+            
+            # Validate expander_sas_address if provided
+            expander_sas_address = payload.get("expander_sas_address")
+            if expander_sas_address is not None:
+                if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
+                    return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
+            
+            # Validate PCI controller exists in master map (outside lock to avoid holding lock during expensive operation)
+            master_map = generate_master_slot_map(force_refresh=True)
+            pci_controllers = set(entry["pci_controller"] for entry in master_map)
+            
+            if pci_controller not in pci_controllers:
+                return jsonify({"error": f"PCI controller not found in system: {pci_controller}"}), 400
+            
+            # Load templates from the same source the frontend uses
+            templates_dict, _ = load_layout_templates(config_dir)
+            template_map = templates_dict
+            
+            if payload["template_id"] not in template_map:
+                return jsonify({"error": f"Template not found: {payload['template_id']}"}), 400
+            
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                
+                # Check for duplicate enclosure ID (inside lock to prevent TOCTOU race condition)
+                enclosures = bay_map.get("enclosures", {})
+                if payload["id"] in enclosures:
+                    return jsonify({"error": f"Enclosure ID already exists: {payload['id']}"}), 400
+                
+                # Enforce size limit for DoS prevention (Rule #5)
+                if len(enclosures) >= MAX_ENCODSURES:
+                    return jsonify({"error": f"Maximum number of enclosures ({MAX_ENCODSURES}) reached"}), 400
+                
+                # Build enclosure object
+                enclosure = {
+                    "id": payload["id"],
+                    "name": payload["name"],
+                    "template_id": payload["template_id"],
+                    "pci_controller": pci_controller,
+                    "expander_sas_address": expander_sas_address,
+                    "display_order": payload.get("display_order", len(enclosures)),
+                    "slots": {}
+                }
+                
+                # Validate against schema
+                try:
+                    from jsonschema import validate
+                    validate(instance=enclosure, schema=ENCLOSURE_SCHEMA)
+                except Exception as e:
+                    return jsonify({"error": f"Enclosure validation failed: {str(e)}"}), 400
+                
+                # Auto-generate slots if requested
+                auto_map_slots = payload.get("auto_map_slots", False)
+                nvme_start_slot = payload.get("nvme_start_slot")
+                starting_slot_number = payload.get("starting_slot_number")
+                custom_labels = payload.get("custom_labels", {})
+                custom_roles = payload.get("custom_roles", {})
+
+                # Validate custom_labels and custom_roles (Rule #83)
+                if not isinstance(custom_labels, dict):
+                    return jsonify({"error": "custom_labels must be a dictionary"}), 400
+                if not isinstance(custom_roles, dict):
+                    return jsonify({"error": "custom_roles must be a dictionary"}), 400
+                if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
+                    return jsonify({"error": f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+                if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
+                    return jsonify({"error": f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+
+                # Validate custom label and role keys are strings (type mismatch fix)
+                for slot_num in custom_labels.keys():
+                    if not isinstance(slot_num, str):
+                        return jsonify({"error": f"Custom label key must be a string, got {type(slot_num).__name__}"}), 400
+                for slot_num in custom_roles.keys():
+                    if not isinstance(slot_num, str):
+                        return jsonify({"error": f"Custom role key must be a string, got {type(slot_num).__name__}"}), 400
+
+                # Validate custom label content (Rule #86)
+                for slot_num, label in custom_labels.items():
+                    if not isinstance(label, str):
+                        return jsonify({"error": f"Custom label for slot {slot_num} must be a string"}), 400
+                    if len(label) > 100:
+                        return jsonify({"error": f"Custom label for slot {slot_num} exceeds maximum length (100)"}), 400
+                    if any(ord(c) < 32 for c in label):
+                        return jsonify({"error": f"Custom label for slot {slot_num} contains invalid characters"}), 400
+
+                # Validate custom role values against allowlist (Rule #87)
+                VALID_ROLES = {"wipe", "os", "reserved"}
+                for slot_num, role in custom_roles.items():
+                    if role not in VALID_ROLES:
+                        return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
+
+                if auto_map_slots:
+                    template = template_map[payload["template_id"]]
+                    slot_count = template.get("slot_count", 0)
+                    hybrid_slots = template.get("hybrid_slots", [])
+
+                    if slot_count <= 0:
+                        return jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400
+
+                    # Enforce size limit for slots per enclosure (Rule #5)
+                    if slot_count > MAX_SLOTS_PER_ENCLOSURE:
+                        return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+
+                    # Generate slots based on template
+                    # Safe numeric conversion with validation (Rule #84)
+                    try:
+                        starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
+                        if starting_slot < 0 or starting_slot > 9999:
+                            return jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400
+                    except (ValueError, TypeError):
+                        return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
+                    for slot_num in range(slot_count):
+                        slot_key = str(slot_num)
+                        physical_slot = starting_slot + slot_num
+                        slot_role = custom_roles.get(slot_key, template.get("default_role", "wipe"))
+                        slot_data = {
+                            "physical_slot_number": physical_slot,
+                            "label": custom_labels.get(slot_key, f"Bay {physical_slot}"),
+                            "role": slot_role,
+                            "locked": slot_role == "os",
+                            "mappings": {}
+                        }
+
+                        # Auto-detect SAS/SATA mapping from master map
+                        sas_mapping = _auto_detect_mapping(
+                            master_map, pci_controller, expander_sas_address, physical_slot, "sas"
+                        )
+                        if sas_mapping:
+                            slot_data["mappings"]["sas_sata"] = sas_mapping
+
+                        # Auto-detect NVMe mapping for hybrid slots
+                        if slot_num in hybrid_slots and nvme_start_slot is not None:
+                            nvme_offset = hybrid_slots.index(slot_num)
+                            nvme_slot_num = int(nvme_start_slot) + nvme_offset
+                            nvme_mapping = _auto_detect_mapping(
+                                master_map, pci_controller, None, nvme_slot_num, "nvme"
+                            )
+                            if nvme_mapping:
+                                slot_data["mappings"]["nvme"] = nvme_mapping
+
+                        enclosure["slots"][slot_key] = slot_data
+                
+                # Save to bay_map.json
+                bay_map.setdefault("enclosures", {})[payload["id"]] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Created enclosure: {payload['id']}")
+            return jsonify({"status": "success", "enclosure": enclosure}), 201
+            
+        except Exception as e:
+            logger.error(f"Error creating enclosure: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/enclosures/<enclosure_id>", methods=["GET", "PUT", "DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_enclosure(enclosure_id):
+    """Handle single enclosure operations."""
+    config_dir = get_config_dir()
+    
+    if request.method == "GET":
+        try:
+            bay_map = load_bay_map(config_dir)
+            enclosures = bay_map.get("enclosures", {})
+            
+            if enclosure_id not in enclosures:
+                return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+            
+            enclosure = enclosures[enclosure_id]
+            
+            # Merge template details from the same source the frontend uses
+            templates_dict, _ = load_layout_templates(config_dir)
+            template_id = enclosure.get("template_id")
+            template = templates_dict.get(template_id, {})
+            
+            return jsonify({
+                "id": enclosure_id,
+                **enclosure,
+                "template_name": template.get("name", "Unknown"),
+                "template": template
+            }), 200
+        except Exception as e:
+            logger.error(f"Error getting enclosure: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "PUT":
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            # Validate PCI address if updated (outside lock to avoid holding lock during expensive operation)
+            if "pci_controller" in payload:
+                if not validate_pci_address(payload["pci_controller"]):
+                    return jsonify({"error": f"Invalid PCI address format: {payload['pci_controller']}"}), 400
+                
+                # Validate PCI controller exists (outside lock)
+                master_map = generate_master_slot_map(force_refresh=True)
+                pci_controllers = set(entry["pci_controller"] for entry in master_map)
+                if payload["pci_controller"] not in pci_controllers:
+                    return jsonify({"error": f"PCI controller not found in system: {payload['pci_controller']}"}), 400
+            
+            # Validate expander_sas_address if updated (outside lock)
+            if "expander_sas_address" in payload:
+                expander_sas_address = payload["expander_sas_address"]
+                if expander_sas_address is not None:
+                    if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
+                        return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
+            
+            # Validate custom_labels and custom_roles if provided (Rule #83)
+            custom_labels = payload.get("custom_labels", {})
+            custom_roles = payload.get("custom_roles", {})
+            if not isinstance(custom_labels, dict):
+                return jsonify({"error": "custom_labels must be a dictionary"}), 400
+            if not isinstance(custom_roles, dict):
+                return jsonify({"error": "custom_roles must be a dictionary"}), 400
+            if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
+                return jsonify({"error": f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+            if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
+                return jsonify({"error": f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+            
+            # Validate custom label and role keys are strings (type mismatch fix)
+            for slot_num in custom_labels.keys():
+                if not isinstance(slot_num, str):
+                    return jsonify({"error": f"Custom label key must be a string, got {type(slot_num).__name__}"}), 400
+            for slot_num in custom_roles.keys():
+                if not isinstance(slot_num, str):
+                    return jsonify({"error": f"Custom role key must be a string, got {type(slot_num).__name__}"}), 400
+            
+            # Validate custom label content (Rule #86)
+            for slot_num, label in custom_labels.items():
+                if not isinstance(label, str):
+                    return jsonify({"error": f"Custom label for slot {slot_num} must be a string"}), 400
+                if len(label) > 100:
+                    return jsonify({"error": f"Custom label for slot {slot_num} exceeds maximum length (100)"}), 400
+                if any(ord(c) < 32 for c in label):
+                    return jsonify({"error": f"Custom label for slot {slot_num} contains invalid characters"}), 400
+            
+            # Validate custom role values against allowlist (Rule #87)
+            VALID_ROLES = {"wipe", "os", "reserved"}
+            for slot_num, role in custom_roles.items():
+                if role not in VALID_ROLES:
+                    return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
+            
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                enclosure = enclosures[enclosure_id]
+                slots = enclosure.get("slots", {})
+                
+                # Validate that all provided slot keys exist in the enclosure
+                for slot_key in custom_labels.keys():
+                    if slot_key not in slots:
+                        return jsonify({"error": f"Slot {slot_key} not found in enclosure"}), 400
+                for slot_key in custom_roles.keys():
+                    if slot_key not in slots:
+                        return jsonify({"error": f"Slot {slot_key} not found in enclosure"}), 400
+                
+                # Update allowed fields
+                updatable_fields = ["name", "template_id", "pci_controller", "expander_sas_address", "display_order"]
+                for field in updatable_fields:
+                    if field in payload:
+                        enclosure[field] = payload[field]
+                
+                # Update custom labels and roles on existing slots
+                slots = enclosure.get("slots", {})
+                for slot_key, label in custom_labels.items():
+                    if slot_key in slots:
+                        slots[slot_key]["label"] = label
+                for slot_key, role in custom_roles.items():
+                    if slot_key in slots:
+                        slots[slot_key]["role"] = role
+                        slots[slot_key]["locked"] = role == "os"
+                
+                # Validate template exists if updated (from the same source the frontend uses)
+                if "template_id" in payload:
+                    templates_dict, _ = load_layout_templates(config_dir)
+                    if payload["template_id"] not in templates_dict:
+                        return jsonify({"error": f"Template not found: {payload['template_id']}"}), 400
+                
+                # Validate against schema
+                try:
+                    from jsonschema import validate
+                    validate(instance=enclosure, schema=ENCLOSURE_SCHEMA)
+                except Exception as e:
+                    return jsonify({"error": f"Enclosure validation failed: {str(e)}"}), 400
+                
+                bay_map["enclosures"][enclosure_id] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Updated enclosure: {enclosure_id}")
+            return jsonify({"status": "success", "enclosure": enclosure}), 200
+            
+        except Exception as e:
+            logger.error(f"Error updating enclosure: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "DELETE":
+        try:
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                del bay_map["enclosures"][enclosure_id]
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Deleted enclosure: {enclosure_id}")
+            return jsonify({"status": "success", "message": f"Enclosure {enclosure_id} deleted"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error deleting enclosure: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/enclosures/<enclosure_id>/slots", methods=["POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def add_enclosure_slot(enclosure_id):
+    """Add a slot to an enclosure."""
+    config_dir = get_config_dir()
+    
+    try:
+        payload = request.get_json(silent=True) or {}
+        
+        # Validate required fields
+        if "physical_slot_number" not in payload:
+            return jsonify({"error": "Missing required field: physical_slot_number"}), 400
+        
+        with BAY_MAP_LOCK:
+            bay_map = load_bay_map(config_dir)
+            enclosures = bay_map.get("enclosures", {})
+            
+            if enclosure_id not in enclosures:
+                return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+            
+            enclosure = enclosures[enclosure_id]
+            slot_num = payload["physical_slot_number"]
+            slot_key = str(slot_num)
+            
+            # Check if slot already exists
+            if slot_key in enclosure.get("slots", {}):
+                return jsonify({"error": f"Slot {slot_num} already exists in enclosure"}), 400
+            
+            # Enforce size limit for slots per enclosure (Rule #5)
+            existing_slots = len(enclosure.get("slots", {}))
+            if existing_slots >= MAX_SLOTS_PER_ENCLOSURE:
+                return jsonify({"error": f"Maximum number of slots ({MAX_SLOTS_PER_ENCLOSURE}) reached for enclosure"}), 400
+            
+            # Build slot object
+            slot_data = {
+                "physical_slot_number": slot_num,
+                "label": payload.get("label", f"Bay {slot_num + 1}"),
+                "role": payload.get("role", "wipe"),
+                "locked": payload.get("locked", False),
+                "mappings": payload.get("mappings", {})
+            }
+            
+            # Validate against schema
+            try:
+                from jsonschema import validate
+                validate(instance=slot_data, schema=SLOT_SCHEMA)
+            except Exception as e:
+                return jsonify({"error": f"Slot validation failed: {str(e)}"}), 400
+            
+            enclosure.setdefault("slots", {})[slot_key] = slot_data
+            bay_map["enclosures"][enclosure_id] = enclosure
+            save_bay_map(bay_map, config_dir)
+        
+        logger.info(f"Added slot {slot_num} to enclosure {enclosure_id}")
+        return jsonify({"status": "success", "slot": slot_data}), 201
+        
+    except Exception as e:
+        logger.error(f"Error adding slot to enclosure: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/enclosures/<enclosure_id>/slots/<slot_num>", methods=["PUT", "DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_enclosure_slot(enclosure_id, slot_num):
+    """Handle slot update and deletion."""
+    config_dir = get_config_dir()
+    
+    if request.method == "PUT":
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                enclosure = enclosures[enclosure_id]
+                slots = enclosure.get("slots", {})
+                
+                if slot_num not in slots:
+                    return jsonify({"error": f"Slot {slot_num} not found in enclosure"}), 404
+                
+                slot = slots[slot_num]
+                
+                # Update allowed fields
+                updatable_fields = ["label", "role", "locked", "mappings"]
+                for field in updatable_fields:
+                    if field in payload:
+                        slot[field] = payload[field]
+                
+                # Validate against schema
+                try:
+                    from jsonschema import validate
+                    validate(instance=slot, schema=SLOT_SCHEMA)
+                except Exception as e:
+                    return jsonify({"error": f"Slot validation failed: {str(e)}"}), 400
+                
+                bay_map["enclosures"][enclosure_id] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Updated slot {slot_num} in enclosure {enclosure_id}")
+            return jsonify({"status": "success", "slot": slot}), 200
+            
+        except Exception as e:
+            logger.error(f"Error updating slot: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "DELETE":
+        try:
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                enclosure = enclosures[enclosure_id]
+                slots = enclosure.get("slots", {})
+                
+                if slot_num not in slots:
+                    return jsonify({"error": f"Slot {slot_num} not found in enclosure"}), 404
+                
+                del enclosure["slots"][slot_num]
+                bay_map["enclosures"][enclosure_id] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Deleted slot {slot_num} from enclosure {enclosure_id}")
+            return jsonify({"status": "success", "message": f"Slot {slot_num} deleted"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error deleting slot: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/enclosures/<enclosure_id>/slots/<slot_num>/mappings/<mapping_type>", methods=["PUT", "DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_slot_mapping(enclosure_id, slot_num, mapping_type):
+    """Handle slot mapping update and deletion."""
+    config_dir = get_config_dir()
+    
+    if mapping_type not in ["sas_sata", "nvme"]:
+        return jsonify({"error": f"Invalid mapping type: {mapping_type}"}), 400
+    
+    if request.method == "PUT":
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                enclosure = enclosures[enclosure_id]
+                slots = enclosure.get("slots", {})
+                
+                if slot_num not in slots:
+                    return jsonify({"error": f"Slot {slot_num} not found in enclosure"}), 404
+                
+                slot = slots[slot_num]
+                mappings = slot.setdefault("mappings", {})
+                
+                # Build mapping object
+                mapping_data = {
+                    "slot_type": payload.get("slot_type"),
+                    "hardware_identifier": payload.get("hardware_identifier"),
+                    "auto_detected": payload.get("auto_detected", False)
+                }
+                
+                # Validate required fields
+                if not mapping_data["slot_type"] or not mapping_data["hardware_identifier"]:
+                    return jsonify({"error": "Missing required fields: slot_type, hardware_identifier"}), 400
+                
+                # Validate against schema
+                try:
+                    from jsonschema import validate
+                    validate(instance=mapping_data, schema=SLOT_MAPPING_SCHEMA)
+                except Exception as e:
+                    return jsonify({"error": f"Mapping validation failed: {str(e)}"}), 400
+                
+                mappings[mapping_type] = mapping_data
+                bay_map["enclosures"][enclosure_id] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Updated {mapping_type} mapping for slot {slot_num} in enclosure {enclosure_id}")
+            return jsonify({"status": "success", "mapping": mapping_data}), 200
+            
+        except Exception as e:
+            logger.error(f"Error updating slot mapping: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "DELETE":
+        try:
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                
+                if enclosure_id not in enclosures:
+                    return jsonify({"error": f"Enclosure not found: {enclosure_id}"}), 404
+                
+                enclosure = enclosures[enclosure_id]
+                slots = enclosure.get("slots", {})
+                
+                if slot_num not in slots:
+                    return jsonify({"error": f"Slot {slot_num} not found in enclosure"}), 404
+                
+                slot = slots[slot_num]
+                mappings = slot.get("mappings", {})
+                
+                if mapping_type not in mappings:
+                    return jsonify({"error": f"Mapping {mapping_type} not found for slot"}), 404
+                
+                del mappings[mapping_type]
+                bay_map["enclosures"][enclosure_id] = enclosure
+                save_bay_map(bay_map, config_dir)
+            
+            logger.info(f"Deleted {mapping_type} mapping for slot {slot_num} in enclosure {enclosure_id}")
+            return jsonify({"status": "success", "message": f"Mapping {mapping_type} deleted"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error deleting slot mapping: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/templates", methods=["GET", "POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_templates():
+    """Handle template listing and creation."""
+    config_dir = get_config_dir()
+    
+    if request.method == "GET":
+        try:
+            templates_dict, _ = load_layout_templates(config_dir)
+            templates = list(templates_dict.values())
+            return jsonify({"templates": templates}), 200
+        except Exception as e:
+            logger.error(f"Error listing templates: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    else:  # POST - Create new template
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            # Validate required fields
+            required_fields = ["id", "name", "slot_count"]
+            for field in required_fields:
+                if field not in payload:
+                    return jsonify({"error": f"Missing required field: {field}"}), 400
+            
+            # Validate template ID format
+            if not is_valid_id(payload["id"]):
+                return jsonify({"error": f"Invalid template ID format: {payload['id']}. Only alphanumeric, hyphens, and underscores allowed"}), 400
+            
+            # Validate against schema
+            try:
+                from jsonschema import validate
+                validate(instance=payload, schema=TEMPLATE_SCHEMA)
+            except Exception as e:
+                return jsonify({"error": f"Template validation failed: {str(e)}"}), 400
+            
+            with TEMPLATES_LOCK:
+                templates_dict, _ = load_layout_templates(config_dir)
+                
+                # Enforce size limit for DoS prevention (Rule #5)
+                if len(templates_dict) >= MAX_TEMPLATES:
+                    return jsonify({"error": f"Maximum number of templates ({MAX_TEMPLATES}) reached"}), 400
+                
+                # Check for duplicate template ID
+                if payload["id"] in templates_dict:
+                    return jsonify({"error": f"Template ID already exists: {payload['id']}"}), 400
+                
+                templates_dict[payload["id"]] = payload
+                save_layout_templates(templates_dict, config_dir)
+            
+            logger.info(f"Created template: {payload['id']}")
+            return jsonify({"status": "success", "template": payload}), 201
+            
+        except Exception as e:
+            logger.error(f"Error creating template: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/templates/<template_id>", methods=["PUT", "DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def manage_template(template_id):
+    """Handle template update and deletion."""
+    config_dir = get_config_dir()
+    
+    if request.method == "PUT":
+        try:
+            payload = request.get_json(silent=True) or {}
+            
+            with TEMPLATES_LOCK:
+                templates_dict, _ = load_layout_templates(config_dir)
+                
+                if template_id not in templates_dict:
+                    return jsonify({"error": f"Template not found: {template_id}"}), 404
+                
+                template = templates_dict[template_id]
+                
+                # Update allowed fields
+                updatable_fields = ["name", "vendor", "slot_count", "hybrid_slots", "traversal_preset", "default_role"]
+                for field in updatable_fields:
+                    if field in payload:
+                        template[field] = payload[field]
+                
+                # Validate against schema
+                try:
+                    from jsonschema import validate
+                    validate(instance=template, schema=TEMPLATE_SCHEMA)
+                except Exception as e:
+                    return jsonify({"error": f"Template validation failed: {str(e)}"}), 400
+                
+                templates_dict[template_id] = template
+                save_layout_templates(templates_dict, config_dir)
+            
+            logger.info(f"Updated template: {template_id}")
+            return jsonify({"status": "success", "template": template}), 200
+            
+        except Exception as e:
+            logger.error(f"Error updating template: {e}")
+            return jsonify({"error": str(e)}), 500
+    
+    elif request.method == "DELETE":
+        try:
+            # Check if template is in use by any enclosure (read from bay_map.json)
+            with BAY_MAP_LOCK:
+                bay_map = load_bay_map(config_dir)
+                enclosures = bay_map.get("enclosures", {})
+                for enc_id, enc_data in enclosures.items():
+                    if enc_data.get("template_id") == template_id:
+                        return jsonify({"error": f"Template is in use by enclosure: {enc_id}"}), 400
+            
+            # Delete from layout_templates.json
+            with TEMPLATES_LOCK:
+                templates_dict, _ = load_layout_templates(config_dir)
+                
+                if template_id not in templates_dict:
+                    return jsonify({"error": f"Template not found: {template_id}"}), 404
+                
+                del templates_dict[template_id]
+                save_layout_templates(templates_dict, config_dir)
+            
+            logger.info(f"Deleted template: {template_id}")
+            return jsonify({"status": "success", "message": f"Template {template_id} deleted"}), 200
+            
+        except Exception as e:
+            logger.error(f"Error deleting template: {e}")
+            return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/master-slot-map", methods=["GET"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def get_master_slot_map():
+    """Return the master slot map (hardware topology)."""
+    try:
+        force_refresh = request.args.get("force_refresh", "false").lower() == "true"
+        master_map = generate_master_slot_map(force_refresh=force_refresh)
+        
+        # Group by PCI controller for easier display
+        grouped = {}
+        for entry in master_map:
+            pci = entry["pci_controller"]
+            if pci not in grouped:
+                grouped[pci] = []
+            grouped[pci].append(entry)
+        
+        return jsonify({
+            "master_map": master_map,
+            "grouped_by_controller": grouped
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting master slot map: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _auto_detect_mapping(master_map, pci_controller, expander_sas_address, slot_num, interface_type):
+    """Auto-detect hardware identifier from master map for a given slot.
+    
+    Args:
+        master_map: Master slot map from generate_master_slot_map()
+        pci_controller: PCI address of the controller
+        expander_sas_address: SAS expander address (null for direct/NVMe)
+        slot_num: Physical slot number
+        interface_type: "sas" or "nvme"
+        
+    Returns:
+        Mapping dictionary or None if not found
+    """
+    for entry in master_map:
+        if (entry["pci_controller"] == pci_controller and
+            entry["physical_slot_number"] == slot_num):
+            
+            # Match SAS devices (both expander and direct)
+            if interface_type == "sas":
+                # Match entries with SAS slot types (sas_expander, sas_direct, motherboard_sata)
+                if entry["slot_type"] in ("sas_expander", "sas_direct", "motherboard_sata"):
+                    # For expander connections, verify expander address matches
+                    if entry["slot_type"] == "sas_expander":
+                        if entry["expander_sas_address"] == expander_sas_address:
+                            return {
+                                "slot_type": entry["slot_type"],
+                                "hardware_identifier": entry["hardware_identifier"],
+                                "auto_detected": True
+                            }
+                    # For direct/motherboard connections, expander_sas_address should be None
+                    else:
+                        if expander_sas_address is None:
+                            return {
+                                "slot_type": entry["slot_type"],
+                                "hardware_identifier": entry["hardware_identifier"],
+                                "auto_detected": True
+                            }
+            
+            # Match NVMe slots (no expander)
+            elif interface_type == "nvme":
+                if entry["slot_type"] == "pcie_nvme" and entry["expander_sas_address"] is None:
+                    return {
+                        "slot_type": entry["slot_type"],
+                        "hardware_identifier": entry["hardware_identifier"],
+                        "auto_detected": True
+                    }
+    
+    return None

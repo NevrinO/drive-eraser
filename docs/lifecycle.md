@@ -531,6 +531,75 @@ The lifecycle behavior can be configured via `config/policy.json`:
 
 ---
 
+## Physical Slot Mapping Configuration
+
+The drive discovery and bay mapping system uses an enclosure-based physical slot architecture configured via `config/bay_map.json`:
+
+### Schema Structure
+
+**Templates**: Define physical layout independent of hardware
+- `id`: Template identifier (e.g., "dell_r440_10bay")
+- `name`: Human-readable template name
+- `vendor`: Hardware vendor
+- `slot_count`: Total number of physical slots
+- `hybrid_slots`: Array of physical slot numbers that support multiple interface types
+- `traversal_preset`: Slot traversal order for workbench display
+- `default_role`: Default role for slots (wipe, os, reserved)
+
+**Enclosures**: Physical chassis/backplanes with hardware bindings
+- `id`: Enclosure identifier
+- `name`: Human-readable enclosure name
+- `template_id`: Reference to template definition
+- `pci_controller`: PCI address of HBA/controller (e.g., "0000:af:00.0")
+- `expander_sas_address`: SAS address of expander (null for direct AHCI/NVMe)
+- `display_order`: Display order in UI
+- `slots`: Physical slot mappings
+  - `physical_slot_number`: 0-indexed slot number from hardware
+  - `label`: Custom display label (e.g., "Bay 1")
+  - `role`: Slot role (wipe, os, reserved)
+  - `locked`: Whether slot is locked from modification
+  - `mappings`: Interface type mappings
+    - `sas_sata`: {slot_type, hardware_identifier, auto_detected}
+    - `nvme`: {slot_type, hardware_identifier, auto_detected}
+
+### Supported Slot Types
+
+1. **sas_expander**: HBA + SAS expander topology (`phy-X:Y:Z`)
+2. **sas_direct**: Direct HBA connection (`phy-X:Y`)
+3. **motherboard_sata**: Onboard AHCI ports (`ataX`)
+4. **pcie_nvme**: U.2/U.3 hotplug bays (PCIe slots from `/sys/bus/pci/slots/`)
+
+### Master Slot Map
+
+The system automatically generates a master slot map by scanning sysfs:
+- PCI controller addresses
+- Slot types (SAS expander, SAS direct, motherboard SATA, PCIe NVMe)
+- Expander SAS addresses (for collision prevention in multi-expander setups)
+- Physical slot numbers
+- Hardware identifiers (phy paths, PCIe slot numbers)
+
+This map is cached for 60 seconds to reduce sysfs overhead while keeping drive presence detection real-time for hot-swapping.
+
+### MPIO (Multipath I/O) Resolution
+
+When a drive is dual-ported under MPIO, the system automatically resolves both paths to a single Device Mapper node:
+- Checks `/sys/block/<dev>/holders` for dm-* entries
+- Maps to `/dev/mapper/mpathX` or `/dev/dm-X` as the unified device path
+- Presents a single device to the UI and wipe operations
+
+### Setup Instructions
+
+1. **Initial Setup**: Use the System Administration panel to create enclosures
+2. **Controller Selection**: Select PCI controller and expander SAS address from master map
+3. **Template Selection**: Choose a template matching your physical chassis
+4. **Auto-Mapping**: System auto-detects slot mappings (0→0, 1→1, etc.)
+5. **Hybrid Configuration**: For hybrid templates, select starting PCIe NVMe slot for auto-incrementing
+6. **Verification**: Review auto-detected mappings against actual drive presence
+7. **Manual Override**: Correct any incorrect mappings before saving
+8. **Multi-Enclosure**: Repeat for additional enclosures as needed
+
+---
+
 ## Error Handling
 
 ### Transient Errors

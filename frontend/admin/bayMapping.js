@@ -118,25 +118,6 @@ async function loadBayMappingConfig() {
       };
     });
 
-    if (Object.keys(localBayMapCopy).length === 0) {
-      currentDrives.forEach(drive => {
-        let localType = drive.type;
-        if (!localType) {
-            localType = (drive.interface_type === "nvme") ? "u2" : "sas_sata";
-        }
-
-        localBayMapCopy[drive.bay] = {
-          role: drive.role,
-          locked: drive.locked,
-          label: drive.label,
-          type: localType,
-          by_path: drive.configured_by_path || "",
-          by_path_nvme: drive.configured_by_path_nvme || "",
-          display_number: drive.display_number || "",
-          physical_position: drive.physical_position || null
-        };
-      });
-    }
 
     const sortedBayKeys = Object.keys(localBayMapCopy).sort((a, b) => {
       const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
@@ -243,6 +224,11 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
             </div>
         </div>
 
+        <div class="form-group" style="margin-bottom: 8px;">
+            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Label</label>
+            <input id="label-${bayId}" class="bay-label-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.label || "")}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+        </div>
+
         <div class="form-group" style="margin-bottom: 8px; display: grid; grid-template-columns: 180px 1fr 1fr; gap: 8px; align-items: end;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Number</label>
             <input id="display-number-${bayId}" class="display-number-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
@@ -251,7 +237,7 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
               Manual Override
             </label>
         </div>
-        
+
         <div class="form-group" style="margin-bottom: 8px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Drive Interface Type</label>
             <select id="type-${bayId}" class="bay-type-selector" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
@@ -279,6 +265,11 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
 
     const nvmeSelect = container.querySelector(`#path-nvme-${bayId}`);
     populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme);
+
+    const labelInput = container.querySelector(`#label-${bayId}`);
+    labelInput.addEventListener("input", () => {
+      showUnsavedChangesIndicator();
+    });
 
     const overrideToggle = container.querySelector(`#override-number-${bayId}`);
     const displayInput = container.querySelector(`#display-number-${bayId}`);
@@ -451,13 +442,15 @@ async function saveBayMappingConfiguration() {
             customOverrides[bayId] = { display_number: displayNumber };
         }
 
+        const labelInput = row.querySelector('.bay-label-input');
+        const labelValue = (labelInput?.value || "").trim();
         const defaultLabel = 'Work Bay';
 
         updatedBayMap[bayId] = {
             "role": localBayMapCopy[bayId]?.role || "wipe",
             "locked": localBayMapCopy[bayId]?.locked || false,
             "type": type,
-            "label": localBayMapCopy[bayId]?.label || defaultLabel,
+            "label": labelValue || localBayMapCopy[bayId]?.label || defaultLabel,
             "by_path": primaryPath,
             "by_path_nvme": nvmePath,
             "display_number": displayNumber || null,
@@ -517,11 +510,6 @@ function bindDeleteBayButtons() {
   document.querySelectorAll(".btn-delete-bay").forEach(button => {
     button.addEventListener("click", (event) => {
       const bayId = event.target.getAttribute("data-delete-bay-id");
-      
-      if (Object.keys(localBayMapCopy).length <= 1) {
-        alert("Delete Blocked: A minimum threshold of 1 active bay configuration is required.");
-        return;
-      }
 
       const drive = currentDrives.find(d => d.bay === bayId);
       if (drive && (String(drive.status).toUpperCase() === "RUNNING" || String(drive.status).toUpperCase() === "QUEUED")) {

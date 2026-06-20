@@ -549,10 +549,10 @@ class TestValidateTemplate:
         template = {
             "id": "test",
             "name": "Test"
-            # Missing vendor, rows, cols, bay_count, traversal_preset
+            # Missing slot_count or bay_count
         }
         error = validate_template(template)
-        assert "missing required field" in error
+        assert "slot_count or bay_count" in error
 
     def test_empty_string_field(self):
         """Test empty string fields are rejected."""

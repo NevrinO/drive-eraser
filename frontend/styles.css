@@ -257,6 +257,11 @@ body {
   border-style: dashed;
 }
 
+.bay-card.locked {
+  background: #2d1f3d;
+  border-color: var(--color-purple);
+}
+
 .bay-card.blocked {
   background: transparent;
   border: 1px dashed var(--color-surface-3);
@@ -298,6 +303,7 @@ body {
 .bay-card.completed .bay-banner { background: var(--color-success); color: var(--color-white); }
 .bay-card.failed .bay-banner { background: var(--color-danger); color: var(--color-white); }
 .bay-card.running .bay-banner { background: var(--color-primary); color: var(--color-white); }
+.bay-card.locked .bay-banner { background: var(--color-purple); color: var(--color-white); }
 
 .bay-header-row {
   display: flex;
@@ -1387,6 +1393,121 @@ input:focus, select:focus {
 
 .py-3 {
   padding: 12px;
+}
+
+/* Enclosure Management Styles */
+.enclosure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.enclosure-card {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+}
+
+.enclosure-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.enclosure-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.enclosure-title strong {
+  font-size: 1rem;
+  color: var(--color-primary);
+}
+
+.enclosure-title small {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.enclosure-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.enclosure-details {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  font-size: 0.8rem;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.radio-option:hover {
+  background: var(--color-surface-1);
+}
+
+.radio-option input[type="radio"] {
+  margin: 0;
+}
+
+.slot-validation-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.slot-validation-table th,
+.slot-validation-table td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.slot-validation-table th {
+  background: var(--color-surface-3);
+  font-weight: bold;
+}
+
+.slot-validation-table tr:hover {
+  background: var(--color-surface-3);
+}
+
+/* Enclosure Section Styles for Workbench */
+.enclosure-section {
+  margin-bottom: 24px;
+  contain: layout;
+}
+
+.enclosure-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.enclosure-bays-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  contain: layout;
 }
 
 /* Accessibility: Reduced Motion */

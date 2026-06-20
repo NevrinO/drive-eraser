@@ -37,6 +37,11 @@ _DISCOVERY_CACHE = {'data': None, 'timestamp': 0}
 _DISCOVERY_CACHE_TTL = 60  # seconds
 _DISCOVERY_CACHE_LOCK = threading.Lock()
 
+# Cache for master slot map (hardware topology) to avoid redundant sysfs scans
+_MASTER_SLOT_CACHE = {'data': None, 'timestamp': 0}
+_MASTER_SLOT_CACHE_TTL = 60  # seconds
+_MASTER_SLOT_CACHE_LOCK = threading.Lock()
+
 def validate_device_path(device: str) -> bool:
     r"""Validate device path against strict whitelist to prevent path traversal and injection.
     
@@ -733,6 +738,249 @@ def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
         'expander_id': expander_id,
         'phy_count': total_phy_count
     }
+
+
+def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
+    """Generate master slot map by scanning sysfs for all physical slot lanes.
+
+    This function scans the hardware topology to build an inventory of all physical
+    slot lanes on the system. It does NOT store active block device associations -
+    only the static hardware mapping (PCI controller + slot type + slot number).
+
+    Args:
+        force_refresh: If True, bypass cache and force a fresh scan
+
+    Returns:
+        List of slot lane dictionaries with keys:
+        - pci_controller: PCI address (e.g., '0000:af:00.0')
+        - slot_type: One of 'sas_expander', 'sas_direct', 'motherboard_sata', 'pcie_nvme'
+        - expander_sas_address: SAS expander address (null for direct AHCI/NVMe)
+        - physical_slot_number: 0-indexed slot number from hardware
+        - hardware_identifier: Hardware identifier (e.g., 'phy-0:0:0' or '101')
+    """
+    # Check cache first if not forcing refresh
+    if not force_refresh:
+        with _MASTER_SLOT_CACHE_LOCK:
+            now = time.time()
+            if _MASTER_SLOT_CACHE['data'] is not None and (now - _MASTER_SLOT_CACHE['timestamp']) < _MASTER_SLOT_CACHE_TTL:
+                return _MASTER_SLOT_CACHE['data']
+
+    master_map = []
+    MAX_TOTAL_SLOTS = 1000  # Rule #5: enforce size limits for DoS prevention
+
+    # Scan SAS expander topology from /dev/disk/by-path
+    by_path_base = "/dev/disk/by-path"
+    if os.path.exists(by_path_base):
+        try:
+            by_path_entries = os.listdir(by_path_base)
+            # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
+            sas_expander_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-sas-exp(0x[0-9a-fA-F]+)-phy(\d+)-')
+
+            for entry in by_path_entries:
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+
+                match = sas_expander_pattern.match(entry)
+                if match:
+                    pci_addr = match.group(1)
+                    expander_id = match.group(2)
+                    phy_num = int(match.group(3))
+
+                    # Validate PCI address for defense-in-depth (lesson #9)
+                    if not validate_pci_address(pci_addr):
+                        logging.debug(f"Invalid PCI address in SAS expander entry: {pci_addr}")
+                        continue
+
+                    master_map.append({
+                        'pci_controller': pci_addr,
+                        'slot_type': 'sas_expander',
+                        'expander_sas_address': expander_id,
+                        'physical_slot_number': phy_num,
+                        'hardware_identifier': f'phy-0:0:{phy_num}'
+                    })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning by-path for SAS expanders: {e}")
+
+    # Scan PCIe NVMe slots from /sys/bus/pci/slots/
+    pci_slots_base = "/sys/bus/pci/slots"
+    if os.path.exists(pci_slots_base):
+        try:
+            slot_entries = os.listdir(pci_slots_base)
+            for slot_entry in slot_entries:
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+
+                slot_path = os.path.join(pci_slots_base, slot_entry)
+                if not os.path.isdir(slot_path):
+                    continue
+
+                # Extract PCI address from the slot's address file
+                address_file = os.path.join(slot_path, 'address')
+                if not os.path.exists(address_file):
+                    continue
+
+                try:
+                    with open(address_file, 'r') as f:
+                        pci_addr = f.read().strip()
+                except (OSError, IOError):
+                    continue
+
+                # Validate PCI address format
+                if not validate_pci_address(pci_addr):
+                    logging.debug(f"Invalid PCI address in slot {slot_entry}: {pci_addr}")
+                    continue
+
+                # Use the slot_entry as the hardware_identifier (matches folder name in /sys/bus/pci/slots/)
+                master_map.append({
+                    'pci_controller': pci_addr,
+                    'slot_type': 'pcie_nvme',
+                    'expander_sas_address': None,
+                    'physical_slot_number': int(slot_entry) if slot_entry.isdigit() else 0,
+                    'hardware_identifier': slot_entry
+                })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning PCI slots for NVMe: {e}")
+
+    # Scan SAS direct-attached topology (no expander)
+    # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+    if os.path.exists(by_path_base):
+        try:
+            by_path_entries = os.listdir(by_path_base)
+            # Pattern for direct-attached SAS: pci-{pci_addr}-scsi-{host}:0:{slot}:{lun}
+            # Use \Z for strict end-of-string (lesson #12) and flexible LUN (\d+) for multi-LUN devices
+            sas_direct_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-scsi-(\d+):0:(\d+):\d+\Z')
+
+            for entry in by_path_entries:
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+
+                match = sas_direct_pattern.match(entry)
+                if match:
+                    pci_addr = match.group(1)
+                    host_num = int(match.group(2))
+                    slot_num = int(match.group(3))
+
+                    # Check if this is already covered by SAS expander detection
+                    # (avoid duplicates when expander is present)
+                    is_duplicate = False
+                    for existing in master_map:
+                        if (existing['pci_controller'] == pci_addr and
+                            existing['slot_type'] == 'sas_expander' and
+                            existing['physical_slot_number'] == slot_num):
+                            is_duplicate = True
+                            break
+
+                    if not is_duplicate:
+                        # Validate PCI address for defense-in-depth (lesson #9)
+                        if not validate_pci_address(pci_addr):
+                            logging.debug(f"Invalid PCI address in SAS direct entry: {pci_addr}")
+                            continue
+
+                        master_map.append({
+                            'pci_controller': pci_addr,
+                            'slot_type': 'sas_direct',
+                            'expander_sas_address': None,
+                            'physical_slot_number': slot_num,
+                            'hardware_identifier': f'phy-{host_num}:0:{slot_num}'
+                        })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning by-path for SAS direct: {e}")
+
+    # Scan motherboard SATA ports (ATA)
+    # Pattern: pci-{pci_addr}-ata-{ata_num}
+    if os.path.exists(by_path_base):
+        try:
+            by_path_entries = os.listdir(by_path_base)
+            # Pattern for motherboard SATA: pci-{pci_addr}-ata-{ata_num}
+            # Use \Z for strict end-of-string (lesson #12)
+            sata_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-ata-(\d+)\Z')
+
+            for entry in by_path_entries:
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+
+                match = sata_pattern.match(entry)
+                if match:
+                    pci_addr = match.group(1)
+                    ata_num = int(match.group(2))
+
+                    # Validate PCI address for defense-in-depth (lesson #9)
+                    if not validate_pci_address(pci_addr):
+                        logging.debug(f"Invalid PCI address in SATA entry: {pci_addr}")
+                        continue
+
+                    master_map.append({
+                        'pci_controller': pci_addr,
+                        'slot_type': 'motherboard_sata',
+                        'expander_sas_address': None,
+                        'physical_slot_number': ata_num,
+                        'hardware_identifier': f'ata{ata_num}'
+                    })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning by-path for SATA: {e}")
+
+    # Update cache with results
+    with _MASTER_SLOT_CACHE_LOCK:
+        _MASTER_SLOT_CACHE['data'] = master_map
+        _MASTER_SLOT_CACHE['timestamp'] = time.time()
+
+    logging.info(f"Generated master slot map with {len(master_map)} slot lanes")
+    return master_map
+
+
+def invalidate_master_slot_cache():
+    """Invalidate the master slot map cache to force a fresh scan on next call.
+    
+    This should be called when hardware topology changes (e.g., bay_map.json modifications
+    or physical hardware changes) to ensure the next discovery uses fresh hardware data.
+    """
+    with _MASTER_SLOT_CACHE_LOCK:
+        _MASTER_SLOT_CACHE['data'] = None
+        _MASTER_SLOT_CACHE['timestamp'] = 0
+    logging.info("Master slot map cache invalidated")
+
+
+def resolve_multipath_parent(dev_name: str) -> str:
+    """Check if a raw device is a slave of a multipath device and return the DM node.
+
+    If the device is dual-ported under MPIO, returns the Device Mapper node
+    (e.g., '/dev/mapper/mpatha' or '/dev/dm-X'). Otherwise returns the original path.
+
+    Args:
+        dev_name: Device name (e.g., 'sdb', 'sdc')
+
+    Returns:
+        Device path string (either /dev/mapper/mpathX, /dev/dm-X, or /dev/{dev_name})
+    """
+    if not dev_name or not isinstance(dev_name, str):
+        return f"/dev/{dev_name}" if dev_name else "/dev/unknown"
+
+    # Check if device is already a device mapper node
+    if dev_name.startswith('dm-') or dev_name.startswith('mapper/'):
+        return f"/dev/{dev_name}" if not dev_name.startswith('/') else dev_name
+
+    holders_dir = f"/sys/block/{dev_name}/holders"
+    if os.path.isdir(holders_dir):
+        try:
+            holders = os.listdir(holders_dir)
+            dm_entries = [h for h in holders if h.startswith("dm-")]
+            if dm_entries:
+                dm_name = dm_entries[0]
+                mapper_dir = "/dev/mapper"
+                if os.path.isdir(mapper_dir):
+                    for mapper_link in os.listdir(mapper_dir):
+                        real_mapper_path = os.path.realpath(os.path.join(mapper_dir, mapper_link))
+                        if real_mapper_path.endswith(dm_name):
+                            return f"/dev/mapper/{mapper_link}"
+                return f"/dev/{dm_name}"
+        except (OSError, IOError):
+            pass
+
+    return f"/dev/{dev_name}"
 
 
 def get_scsi_host_slot_projections() -> List[Dict]:

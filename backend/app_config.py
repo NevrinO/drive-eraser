@@ -3,6 +3,7 @@ from flask import Flask
 from flask_cors import CORS
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_socketio import SocketIO
 import sys
 import os
 import re
@@ -70,6 +71,9 @@ setup_application_logging()
 logger = logging.getLogger("app")
 
 app = Flask(__name__)
+
+# Initialize SocketIO for real-time WebSocket communication
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # High #11: Initialize Flask-Limiter for rate limiting
 # NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.

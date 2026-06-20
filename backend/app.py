@@ -3,7 +3,7 @@
 # This file imports and registers all modular components
 
 import signal
-from app_config import app, logger, get_config_dir, load_policy
+from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
 
 # Register route blueprints (deferred to break circular imports)
@@ -39,6 +39,7 @@ def security_gate():
 from database import init_wipe_db
 from common import validate_policy
 import api_routes  # Import all route handlers
+import udev_listener  # Event-driven discovery with pyudev
 
 # Critical #1: Centralized signal handler to prevent handler overwrites
 # Import all modules with signal interruption flags
@@ -57,6 +58,7 @@ def _centralized_signal_handler(signum, frame):
     bulk_cert._handle_bulk_cert_signal(signum, frame)
     crypto_verification._handle_verification_signal(signum, frame)
     disk_ops._handle_discovery_signal(signum, frame)
+    udev_listener.stop_udev_listener()
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")
@@ -80,7 +82,14 @@ def add_security_headers(response):
 # Initialize database on module import (required for WSGI deployments)
 init_wipe_db()
 
-if __name__ == "__main__":
+# Set WebSocket manager for udev event listener
+udev_listener.set_websocket_manager(socketio)
+
+# Start udev event listener for real-time device discovery
+udev_listener.start_udev_listener()
+
+def main():
+    """Run the Drive Eraser Flask-SocketIO server."""
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
     
@@ -94,5 +103,10 @@ if __name__ == "__main__":
     bind_address = policy.get("bind_address", "127.0.0.1")
     port = int(policy.get("port", 5000))
     logger.info(f"Drive Wipe Station starting on {bind_address}:{port} (config_dir={config_dir})")
-    app.run(host=bind_address, port=port, debug=False)
+    # allow_unsafe_werkzeug=True is required for the built-in Werkzeug server in production mode
+    socketio.run(app, host=bind_address, port=port, debug=False, allow_unsafe_werkzeug=True)
+
+
+if __name__ == "__main__":
+    main()
 # --- END OF FILE backend/app.py ---

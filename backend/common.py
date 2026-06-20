@@ -3,7 +3,7 @@ import os
 import json
 import time
 import logging
-from threading import Lock
+from threading import Lock, RLock
 from jsonschema import validate, ValidationError
 
 # Constants
@@ -13,8 +13,10 @@ SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certifi
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# Lock for bay_map.json to prevent concurrent modifications (rule #2)
-BAY_MAP_LOCK = Lock()
+# Lock for bay_map.json to prevent concurrent modifications (rule #2).
+# Use RLock because callers (e.g., admin_routes) hold this lock across the
+# load-modify-save sequence while load_bay_map() also acquires it internally.
+BAY_MAP_LOCK = RLock()
 
 # High #13: Device-level lock to prevent concurrent operations on same device
 DEVICE_LOCKS = {}  # device_path -> Lock
@@ -105,6 +107,136 @@ POLICY_SCHEMA = {
         },
     },
     "additionalProperties": True,  # Allow unknown keys but log warnings
+}
+
+# JSON schema for template configuration (physical layout definitions)
+TEMPLATE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string"},
+        "vendor": {"type": "string"},
+        "slot_count": {"type": "integer", "minimum": 1, "maximum": 1000},
+        "hybrid_slots": {
+            "type": "array",
+            "items": {"type": "integer", "minimum": 0},
+        },
+        "traversal_preset": {
+            "type": "string",
+            "enum": ["top_left_down_then_across", "bottom_left_up_then_across", "top_left_across_then_down", "bottom_left_across_then_up"]
+        },
+        "rows": {"type": "integer", "minimum": 1, "maximum": 16},
+        "cols": {"type": "integer", "minimum": 1, "maximum": 5},
+        "bay_count": {"type": "integer", "minimum": 1, "maximum": 128},
+        "skip_positions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "row": {"type": "integer", "minimum": 0},
+                    "col": {"type": "integer", "minimum": 0}
+                },
+                "required": ["row", "col"],
+                "additionalProperties": False,
+            },
+            "maxItems": 100,
+        },
+        "default_role": {
+            "type": "string",
+            "enum": ["wipe", "os", "reserved"]
+        },
+    },
+    "required": ["id", "name", "slot_count"],
+    "additionalProperties": False,
+}
+
+# JSON schema for slot mapping (per interface type)
+SLOT_MAPPING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "slot_type": {
+            "type": "string",
+            "enum": ["sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"]
+        },
+        "hardware_identifier": {"type": "string"},
+        "auto_detected": {"type": "boolean"},
+        "pci_controller": {"type": "string"},
+        "expander_sas_address": {"type": ["string", "null"]},
+    },
+    "required": ["slot_type", "hardware_identifier"],
+    "additionalProperties": False,
+}
+
+# JSON schema for slot configuration
+SLOT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "physical_slot_number": {"type": "integer", "minimum": 0},
+        "label": {"type": "string"},
+        "role": {
+            "type": "string",
+            "enum": ["wipe", "os", "reserved"]
+        },
+        "locked": {"type": "boolean"},
+        "mappings": {
+            "type": "object",
+            "properties": {
+                "sas_sata": SLOT_MAPPING_SCHEMA,
+                "nvme": SLOT_MAPPING_SCHEMA,
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["physical_slot_number"],
+    "additionalProperties": False,
+}
+
+# JSON schema for enclosure configuration
+ENCLOSURE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "id": {"type": "string"},
+        "name": {"type": "string", "minLength": 2},
+        "template_id": {"type": "string"},
+        "pci_controller": {
+            "type": "string",
+            "pattern": r"^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]\Z"
+        },
+        "expander_sas_address": {
+            "type": ["string", "null"],
+            "pattern": r"^0x[0-9a-fA-F]+\Z"
+        },
+        "display_order": {"type": "integer", "minimum": 0},
+        "slots": {
+            "type": "object",
+            "patternProperties": {
+                r"^\d+$": SLOT_SCHEMA
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["id", "name", "template_id", "pci_controller"],
+    "additionalProperties": False,
+}
+
+# JSON schema for new enclosure-based bay_map.json
+BAY_MAP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "templates": {
+            "type": "array",
+            "items": TEMPLATE_SCHEMA,
+        },
+        "enclosures": {
+            "type": "object",
+            "patternProperties": {
+                r".+": ENCLOSURE_SCHEMA
+            },
+            "additionalProperties": False,
+        },
+    },
+    "required": ["enclosures"],
+    "additionalProperties": False,
 }
 
 def get_data_dir():

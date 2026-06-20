@@ -35,7 +35,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 │   └── verification.py         # Resilient firmware sanitize status checkers & marker logic
 │                                 # See "NVMe Sanitize Log Reference" section below for SSTAT/SPROG values
 ├── config/                     # Static operational profiles
-│   ├── bay_map.json            # Mapping of physical bays to dev-by-path values
+│   ├── bay_map.json            # Enclosure-based physical slot mapping (templates, enclosures, slot mappings)
 │   └── policy.json             # System rule configurations, methods priority, passphrase
 ├── data/                       # Persistent runtime assets (Ignored by Git except .gitkeep)
 │   ├── wipes.db                # SQLite database (stores all jobs, results, certificates)
@@ -93,7 +93,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Command Resolution & Utilities** | `backend/disk_utils.py` | `resolve_command_path()`, `run_command()`, `execute_erase_method()`, `read_marker_status()` |
 | **SMART Data Parsing** | `backend/smart_parsing.py` | `get_smart_data()`, `classify_interface_from_smart()`, `calculate_drive_health_score()`, `get_drive_recommendation()` |
 | **Drive Capability Detection** | `backend/disk_capabilities.py` | `detect_drive_capabilities()`, `detect_sata_capabilities()`, `detect_nvme_capabilities()`, `detect_sas_capabilities()` |
-| **OS Drive Detection & Discovery** | `backend/disk_ops.py` | `get_os_parent_device()`, `get_os_by_path()`, `discover_drives()` |
+| **OS Drive Detection & Discovery** | `backend/disk_ops.py` | `get_os_parent_device()`, `get_os_by_path()`, `discover_drives()`, `generate_master_slot_map()`, `resolve_multipath_parent()` |
 | **CLI Progress Telemetry (Pollers)** | `backend/job_management.py` | `poll_nvme_sanitize_progress()`, `poll_sata_sanitize_progress()`, `poll_sas_sanitize_progress()` |
 | **Common Directory Paths** | `backend/common.py` | `get_data_dir()`, `get_db_path()`, `get_cert_dir()`, `get_config_dir()` |
 | **Policy JSON Loader** | `backend/common.py` | `load_policy()` |
@@ -111,7 +111,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Drive Management** | `frontend/driveManagement.js` | `loadDrives()`, `renderBays()`, `pollActiveWipes()`, `toggleBaySelection()` |
 | **Audit Ledger** | `frontend/auditLedger.js` | `loadHistoryIndex()`, `renderAuditLedger()`, `renderExpandedAuditRow()` |
 | **Admin Utilities** | `frontend/admin/adminUtilities.js` | Shared admin helpers, modal management, common admin functions |
-| **Bay Mapping** | `frontend/admin/bayMapping.js` | `loadBayMappingConfig()`, `saveBayMappingConfiguration()`, `renderBayMappingUI()` |
+| **Bay Mapping** | `frontend/admin/bayMapping.js` | `loadBayMappingConfig()`, `saveBayMappingConfiguration()`, `renderBayMappingUI()`, enclosure management, slot mapping editor |
 | **Discovery Modal UI** | `frontend/admin/discoveryModal.js` | `openDiscoveryModal()`, `renderControllers()`, `renderDevices()` |
 | **Discovery Mapping** | `frontend/admin/discoveryMapping.js` | `applyPatternMapping()`, `applyManualMapping()`, `generateMappingPreview()` |
 | **Discovery Validation** | `frontend/admin/discoveryValidation.js` | `validateMapping()`, `validateDevicePath()`, `validatePciAddress()` |
@@ -127,7 +127,7 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 When an AI is modifying the job pipeline, trace your changes through this sequence:
 
 ```text
-1. [UI Dashboard] User clicks "Execute Sanitization" 
+1. [UI Dashboard] User clicks "Execute Sanitization"
     │
 2. [api_routes.py] POST /api/erase/start ────> validates inputs against `validate_single_bay` and `create_erase_job`
     │
@@ -154,6 +154,30 @@ When an AI is modifying the job pipeline, trace your changes through this sequen
 
 ---
 
+## 3.1 Data Flow: Physical Slot Discovery
+
+When an AI is modifying the discovery system, trace your changes through this sequence:
+
+```text
+1. [disk_ops.py] `generate_master_slot_map(force_refresh=False)` scans sysfs
+    │
+2. [disk_ops.py] Parses SAS phy links, saves HBA addresses and expander WWNs
+    │
+3. [disk_ops.py] Reads `/sys/bus/pci/slots/` for PCIe NVMe mapping
+    │
+4. [disk_ops.py] Caches topology mappings for 60 seconds with thread-safe lock
+    │
+5. [disk_ops.py] `discover_drives()` resolves logical drive paths from physical slot mappings
+    │
+6. [disk_ops.py] `resolve_multipath_parent()` consolidates dual-port paths to single `/dev/mapper/mpathX`
+    │
+7. [api_routes.py] GET /api/drives returns enclosure-grouped drive inventory
+    │
+8. [frontend/admin/bayMapping.js] Enclosure management UI uses master map for auto-detection
+```
+
+---
+
 ## 4. Module Dependency Graph
 
 ```
@@ -174,6 +198,11 @@ backend/app.py (entry point)
 │   ├── disk_utils.py
 │   ├── smart_parsing.py
 │   └── layout_templates.py
+├── routes/
+│   ├── admin_routes.py       # Enclosure CRUD, slot mapping APIs
+│   ├── bay_mapping_routes.py  # Bay mapping configuration endpoints
+│   ├── discovery_routes.py    # Hardware discovery and master map endpoints
+│   └── certificate_routes.py  # Certificate generation and retrieval
 └── disk_ops.py
     ├── disk_utils.py
     ├── smart_parsing.py

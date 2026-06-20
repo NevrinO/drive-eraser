@@ -230,3 +230,37 @@ def load_job(job_id):
         "certificate": safe_json_load(row["certificate_json"], "certificate_json"),
         "job_type": row["job_type"],
     }
+
+
+def close_all_connections():
+    """Close all SQLite connections to prevent ResourceWarning in tests.
+    
+    This function iterates through all objects in the sqlite3 module's connection
+    cache and closes any connections to the current database path. This is primarily
+    intended for test cleanup to avoid ResourceWarning about unclosed connections.
+    """
+    try:
+        db_path = get_db_path()
+        # Close all connections to the test database
+        for conn in list(sqlite3.connections.values()):
+            try:
+                if conn and not conn.closed:
+                    # Check if this connection is to our database
+                    if hasattr(conn, 'execute'):
+                        cursor = conn.execute("PRAGMA database_list")
+                        databases = cursor.fetchall()
+                        for db in databases:
+                            if db_path in db[2] or db[2] == db_path:
+                                # Run WAL checkpoint to release file locks on Windows before closing
+                                try:
+                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                                except Exception:
+                                    pass
+                                conn.close()
+                                break
+            except Exception:
+                # Ignore errors during cleanup
+                pass
+    except Exception:
+        # Ignore errors if get_db_path or connection iteration fails
+        pass

@@ -16,7 +16,7 @@ class TestDiscoveryRoutes:
     @pytest.fixture
     def test_config_dir(self):
         """Create a temporary directory for test configuration."""
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             policy = {
                 "strict_audit_mode": False,
                 "wipe_passphrase": "test-wipe-pass",
@@ -73,15 +73,20 @@ class TestDiscoveryRoutes:
             yield app
         finally:
             # Clean up database connections before stopping patches
-            import sqlite3
-            import gc
+            from database import close_all_connections
+            import logging
             try:
-                # Force garbage collection to trigger any pending connection cleanup
-                gc.collect()
-                # Force close any open connections to the test database
-                with sqlite3.connect(test_db_path) as conn:
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    conn.execute("PRAGMA optimize")
+                # Close all SQLite connections to prevent ResourceWarning
+                close_all_connections()
+                # Close log file handlers to prevent Windows file locking issues
+                root_logger = logging.getLogger()
+                for handler in list(root_logger.handlers):
+                    if isinstance(handler, logging.FileHandler):
+                        try:
+                            handler.close()
+                            root_logger.removeHandler(handler)
+                        except Exception:
+                            pass
             except Exception:
                 pass
             for p in patches:

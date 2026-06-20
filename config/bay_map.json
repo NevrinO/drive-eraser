@@ -6,30 +6,35 @@
   },
   "bays": {
     "bay0": {
-      "role": "os",
-      "locked": true,
-      "label": "OS Drive (Slot 0)",
-      "by_path": "REPLACE_ME_WITH_OS_PATH"
+      "role": "wipe",
+      "locked": false,
+      "type": "sas_sata",
+      "label": "Work Bay A (Slot 0)",
+      "by_path": "REPLACE_ME_WITH_BAY0_PATH",
+      "display_number": "0"
     },
     "bay1": {
-      "role": "reserved",
+      "role": "os",
       "locked": true,
-      "label": "Empty Slot (Slot 1)",
-      "by_path": ""
+      "label": "OS Drive (Slot 1)",
+      "by_path": "REPLACE_ME_WITH_OS_PATH",
+      "display_number": "1"
     },
     "bay2": {
       "role": "wipe",
       "locked": false,
       "type": "sas_sata",
       "label": "Work Bay A (Slot 2)",
-      "by_path": "REPLACE_ME_WITH_BAY2_PATH"
+      "by_path": "REPLACE_ME_WITH_BAY2_PATH",
+      "display_number": "2"
     },
     "bay3": {
       "role": "wipe",
       "locked": false,
       "type": "sas_sata",
       "label": "Work Bay B (Slot 3)",
-      "by_path": "REPLACE_ME_WITH_BAY3_PATH"
+      "by_path": "REPLACE_ME_WITH_BAY3_PATH",
+      "display_number": "3"
     }
   }
 }

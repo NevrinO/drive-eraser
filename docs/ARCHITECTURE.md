@@ -53,15 +53,18 @@
   3. known path fallbacks
   4. `which` fallback
 
-## Drive Discovery Mapping
+## Drive Discovery Mapping (Physical Slot Architecture)
 - Linux does not reliably provide a human-safe physical bay mapping by default
-- Use `/dev/disk/by-path/` plus explicit configuration in `config/bay_map.json`
-- Mapping is machine-specific and should be edited locally per server
-- Discovery should accept flexible mapping input forms for resilience:
-  - full `/dev/disk/by-path/...`
-  - bare by-path entry name
-  - direct `/dev/...` path with reverse resolution
-- Discovery payload should expose mapping and command diagnostics for operator troubleshooting
+- **New Architecture**: Replaced static by-path mapping with enclosure-based physical slot mapping
+- **Master Slot Map**: System scans sysfs to build a hardware inventory of all physical slot lanes (PCI controller, slot type, expander SAS address, physical slot number, hardware identifier)
+- **Enclosures**: Physical chassis/backplanes are first-class entities with templates, PCI controllers, and optional expander SAS addresses to prevent multi-HBA collisions
+- **Hybrid Slots**: Physical slots can support multiple interface types (e.g., SAS/SATA + NVMe in the same bay)
+- **MPIO Resolution**: Multipath devices are automatically resolved to their parent Device Mapper node (e.g., `/dev/mapper/mpathX`) during discovery
+- **Real-Time Resolution**: Drive presence is detected in real-time, bypassing the cached hardware topology map to handle hot-swapping
+- **Configuration**: Enclosures and slot mappings are stored in `config/bay_map.json` with the new enclosure-based schema
+- **Auto-Mapping**: When creating enclosures, the system auto-detects mappings from the master map (0→0, 1→1, etc.) and allows manual correction
+- **NVMe Auto-Incrementing**: For hybrid templates, the system automatically increments PCIe slot numbers for NVMe mappings starting from a user-selected base slot
+- **Discovery payload** exposes mapping and command diagnostics for operator troubleshooting
 - Discovery payload includes a normalized SMART essentials object (`smart`) per bay for frontend detail rendering
 - Protected bays remain explicitly modeled in config
 
@@ -227,11 +230,14 @@
 - Local physical access is considered fully trusted. Direct TTY browser connections (originating on localhost `127.0.0.1` or `::1`) bypass all authentication gates.
 - Remote network connections (originating over the LAN) require a secure token. This is handled via a signed HTTP-Only session cookie (`admin_session`) matched against the passcode defined in `/config/policy.json`.
 
-## Interactive Bay Mapping & Memory-Safe Staging
-- Technicians must be able to scale the station dynamically (bays capped at a minimum of 1 and maximum of 128).
-- Naming of new bays must follow an auto-incremented pattern (`bay0`, `bay1`, ..., `bayX`) to prevent dictionary key conflicts.
-- **Staging Rule:** To prevent active background UI refresh pollers from wiping client-side edits during long async network operations, all adding, deleting, and drop-down mapping must happen strictly in-memory in the browser first. Changes are only committed to `/config/bay_map.json` when the technician explicitly clicks "Save Mapping Configuration".
-- A bay cannot be deleted if a sanitization job is currently running or queued on it.
+## Interactive Enclosure & Slot Mapping
+- **Enclosure-Based Configuration**: Technicians configure physical enclosures (chassis/backplanes) with templates, PCI controllers, and expander SAS addresses
+- **Template System**: Templates define physical layout (slot count, hybrid slots, traversal order) independent of hardware
+- **Auto-Mapping Workflow**: User selects template and PCI controller, system auto-maps slots (0→0, 1→1, etc.), then allows manual correction
+- **Hybrid Slot Support**: Physical slots that accept U.2 are backward compatible with SATA/SAS. The schema supports multiple interface type mappings per physical slot (e.g., `mappings.sas_sata` and `mappings.nvme`)
+- **Multi-Enclosure Support**: Multiple enclosures can be configured independently with their own templates, controllers, and display order
+- **Memory-Safe Staging**: To prevent active background UI refresh pollers from wiping client-side edits during long async network operations, all adding, deleting, and mapping changes happen strictly in-memory in the browser first. Changes are only committed to `/config/bay_map.json` when the technician explicitly clicks "Save Mapping Configuration".
+- **Slot Deletion Protection**: A slot cannot be deleted if a sanitization job is currently running or queued on it.
 
 ## Workbench Display Layout
 - To ensure optimal viewing on standard 1080p and touch-screen monitors, the Workbench Tab bay layout is constrained to exactly **4 columns per row** maximum, with excess cards spilling down to subsequent rows.

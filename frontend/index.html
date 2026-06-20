@@ -193,7 +193,19 @@
           <div id="logoStatus" class="test-result-label hidden"></div>
         </div>
 
-        <!-- Zone E: Interactive Bay Mapping -->
+        <!-- Zone E: Enclosure Management -->
+        <div class="admin-card grid-span-2">
+          <div class="card-header-row flex-row-between mb-3">
+            <div class="card-title mb-0">Enclosure Management</div>
+            <button type="button" id="addEnclosureBtn" class="btn btn--primary btn-sm">+ Add Enclosure</button>
+          </div>
+          <p class="admin-desc">Manage physical enclosures, backplanes, and slot mappings.</p>
+          <div id="enclosureList" class="enclosure-list" style="margin-top: 12px; flex: 1; overflow-y: auto; min-height: 0;">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Zone F: Interactive Bay Mapping -->
         <div class="admin-card grid-span-2">
           <div class="card-header-row flex-row-between mb-3">
             <div class="card-title mb-0">Interactive Physical Bay Mapping</div>
@@ -619,6 +631,48 @@
     </div>
   </div>
 
+  <!-- ENCLOSURE WIZARD MODAL -->
+  <div id="enclosureWizardModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="enclosureWizardTitle" style="max-width: 900px;">
+      <header class="modal-header">
+        <h3 id="enclosureWizardTitle">Add New Enclosure</h3>
+        <button type="button" id="enclosureWizardClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <!-- Step 1: Controller Selection -->
+        <div id="wizardStep1">
+          <h4 class="modal-section-header">Step 1 of 3: Controller Selection</h4>
+          <div id="controllerSelectorContainer">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Step 2: Template Selection -->
+        <div id="wizardStep2" class="hidden">
+          <h4 class="modal-section-header">Step 2 of 3: Layout & Template Selection</h4>
+          <div id="templateSelectorContainer">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <!-- Step 3: Slot Validation -->
+        <div id="wizardStep3" class="hidden">
+          <h4 class="modal-section-header">Step 3 of 3: Verification</h4>
+          <div id="slotValidationContainer">
+            <!-- Populated dynamically -->
+          </div>
+        </div>
+
+        <div class="flex-row gap-3 mt-4">
+          <button type="button" id="wizardPrevBtn" class="btn btn--secondary" style="flex: 1;">&lt; Back</button>
+          <button type="button" id="wizardNextBtn" class="btn btn--primary" style="flex: 1;">Next Step &gt;</button>
+          <button type="button" id="wizardSaveBtn" class="btn btn--primary" style="flex: 1;">Save Enclosure</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- DISCOVERY MODAL -->
   <div id="discoveryModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
@@ -772,6 +826,7 @@
   <script src="/modals.js" defer></script>
   <script src="/auditLedger.js" defer></script>
   <script src="/admin/adminUtilities.js" defer></script>
+  <script src="/admin/enclosureManagement.js" defer></script>
   <script src="/admin/bayMapping.js" defer></script>
   <script src="/admin/logoManagement.js" defer></script>
   <script src="/admin/templateManagement.js" defer></script>

@@ -407,7 +407,9 @@ def apply_slot_mapping():
             
             # Save updated bay map copy (atomic operation to avoid TOCTOU)
             try:
-                save_bay_map(compose_bay_map_document(bay_map_copy, layout_metadata), config_dir)
+                # Preserve existing enclosures section to prevent data loss
+                enclosures = bay_map.get("enclosures") if isinstance(bay_map, dict) else None
+                save_bay_map(compose_bay_map_document(bay_map_copy, layout_metadata, enclosures), config_dir)
                 # Only update in-memory state after successful save
                 bay_map = bay_map_copy
             except Exception as e:

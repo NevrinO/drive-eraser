@@ -125,3 +125,19 @@ class TestMainEntry:
         
         assert bind_address == "0.0.0.0"
         assert port == 8080
+
+    @patch('app.load_policy')
+    @patch('app.validate_policy')
+    @patch('app.socketio')
+    def test_main_passes_allow_unsafe_werkzeug(
+        self, mock_socketio, mock_validate_policy, mock_load_policy
+    ):
+        """Regression test: main() must allow Werkzeug in production mode."""
+        mock_load_policy.return_value = {"bind_address": "0.0.0.0", "port": 5000}
+
+        from app import main
+        main()
+
+        mock_socketio.run.assert_called_once()
+        _, kwargs = mock_socketio.run.call_args
+        assert kwargs.get('allow_unsafe_werkzeug') is True

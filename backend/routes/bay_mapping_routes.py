@@ -8,6 +8,7 @@ from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
 from routes.admin_routes import require_admin_auth
 from disk_ops import get_os_by_path, invalidate_drive_cache
+from device_discovery import invalidate_master_slot_cache
 from smart_parsing import get_smart_data
 
 bay_mapping_bp = Blueprint('bay_mapping_routes', __name__)
@@ -25,7 +26,8 @@ def get_admin_bay_map():
         except Exception:
             bay_map_doc = {}
         bays, metadata = normalize_bay_map_document(bay_map_doc)
-        return jsonify(compose_bay_map_document(bays, metadata)), 200
+        enclosures = bay_map_doc.get("enclosures") if isinstance(bay_map_doc, dict) else None
+        return jsonify(compose_bay_map_document(bays, metadata, enclosures)), 200
     except Exception as e:
         logger.error(f"Error getting bay map: {e}")
         return jsonify({"error": str(e)}), 500
@@ -279,9 +281,23 @@ def auto_detect_bays():
                 }
                 updates_count += 1
 
-        save_bay_map(compose_bay_map_document(bay_map, layout_metadata), config_dir)
+        # Preserve existing enclosures section to prevent data loss when saving bay map
+        # Use BAY_MAP_LOCK to ensure atomic read-modify-write (Lesson #2)
+        with BAY_MAP_LOCK:
+            existing_bay_map = {}
+            try:
+                bay_map_path = os.path.join(config_dir, "bay_map.json")
+                with open(bay_map_path, "r", encoding="utf-8") as f:
+                    existing_bay_map = json.load(f)
+            except Exception:
+                pass
+            
+            enclosures = existing_bay_map.get("enclosures") if isinstance(existing_bay_map, dict) else None
+            save_bay_map(compose_bay_map_document(bay_map, layout_metadata, enclosures), config_dir)
         # Bay mapping changed: drop cached drive data so the next discovery re-resolves everything
         invalidate_drive_cache()
+        # Also invalidate master slot map cache to refresh hardware topology
+        invalidate_master_slot_cache()
         
         logger.info(f"Auto-detect bays updated {updates_count} map elements out of {len(discovered_slots)} total discovered enclosures.")
         return jsonify({
@@ -310,8 +326,6 @@ def update_bay_map():
 
         templates, _ = load_layout_templates(config_dir)
         bays, layout_metadata = normalize_bay_map_document(payload)
-        if not bays:
-            return jsonify({"error": "At least one bay configuration is required."}), 400
 
         for bay_id, conf in bays.items():
             if not isinstance(conf, dict):
@@ -321,9 +335,24 @@ def update_bay_map():
         if validation_error:
             return jsonify({"error": validation_error}), 400
 
-        save_bay_map(compose_bay_map_document(bays, layout_metadata), config_dir)
+        # Preserve existing enclosures section to prevent data loss when saving bay map
+        # Use BAY_MAP_LOCK to ensure atomic read-modify-write (Lesson #2)
+        with BAY_MAP_LOCK:
+            existing_bay_map = {}
+            try:
+                bay_map_path = os.path.join(config_dir, "bay_map.json")
+                with open(bay_map_path, "r", encoding="utf-8") as f:
+                    existing_bay_map = json.load(f)
+            except Exception:
+                pass
+            
+            enclosures = existing_bay_map.get("enclosures") if isinstance(existing_bay_map, dict) else None
+
+            save_bay_map(compose_bay_map_document(bays, layout_metadata, enclosures), config_dir)
         # Bay mapping changed: drop cached drive data so the next discovery re-resolves everything
         invalidate_drive_cache()
+        # Also invalidate master slot map cache to refresh hardware topology
+        invalidate_master_slot_cache()
 
         logger.info("Enclosure bay map edited manually by administrator.")
         return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200

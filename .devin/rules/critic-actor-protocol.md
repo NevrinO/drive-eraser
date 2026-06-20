@@ -63,4 +63,5 @@ This workspace uses a dual-agent workflow consisting of a **Coding Agent** (this
      - ## What They Got Right
      - ## Actionable Next Steps for the Coding Agent
   3. **Update Long-Term Memory**: Extract the *root causes* of the mistakes and append them as generalized, project-wide rules inside `.devin/rules/lessons-learned.md`. Do not overwrite the whole file; append new lessons to the end.
-  4. **Only Agent with Write Permissions**: You are the only agent authorized to write to `.devin/rules/lessons-learned.md`.
+  4. **CRITICAL APPEND-ONLY RULE**: When adding new lessons to lessons-learned.md, you MUST append them to the END of the file. NEVER insert lessons in the middle or renumber existing lessons. The file has a File Maintenance Rule at the top that explicitly states this. Inserting in the middle requires renumbering all subsequent rules and creates maintenance burden. Always read the file to find the last rule number, then append with the next sequential number.
+  5. **Only Agent with Write Permissions**: You are the only agent authorized to write to `.devin/rules/lessons-learned.md`.

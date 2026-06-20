@@ -4,6 +4,7 @@
 import os
 import copy
 import json
+import re
 import time
 import logging
 import subprocess
@@ -14,7 +15,7 @@ from common import get_config_dir, load_policy
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
 from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
 from disk_capabilities import detect_drive_capabilities
-from device_discovery import get_controller_for_device, scan_pci_controllers
+from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map, resolve_multipath_parent
 
 # Performance: per-device cache for expensive drive data (SMART, capabilities, marker).
 # Presence detection (by-path resolution) is intentionally NOT cached so drive
@@ -243,6 +244,159 @@ def _get_cached_drive_payload(cache_key):
             return entry['data']
     return None
 
+def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map):
+    """Resolve active device path from enclosure slot configuration using master map.
+
+    Args:
+        slot_config: Slot configuration dict with mappings
+        pci_controller: PCI controller address for the enclosure
+        master_map: Master slot map from generate_master_slot_map()
+
+    Returns:
+        Tuple of (resolved_device_path, interface_type) or (None, None) if not found
+    """
+    if not slot_config or not isinstance(slot_config, dict):
+        return None, None
+
+    mappings = slot_config.get('mappings', {})
+    if not mappings:
+        return None, None
+
+    # Try each interface type mapping in priority order
+    for interface_key, mapping in mappings.items():
+        if not mapping or not isinstance(mapping, dict):
+            continue
+
+        slot_type = mapping.get('slot_type')
+        hw_identifier = mapping.get('hardware_identifier')
+        physical_slot = slot_config.get('physical_slot_number')
+
+        if not slot_type or not hw_identifier:
+            continue
+
+        # Look up in master map by (pci_controller, slot_type, physical_slot_number)
+        for lane in master_map:
+            if (lane.get('pci_controller') == pci_controller and
+                lane.get('slot_type') == slot_type and
+                lane.get('physical_slot_number') == physical_slot):
+                # Found matching lane, now resolve the actual device
+                # For SAS expander: check /dev/disk/by-path for phy-based symlinks
+                # For NVMe: check /sys/block for nvme devices
+                # For SATA: check /dev/disk/by-path for ata-based symlinks
+
+                dev_path = _resolve_device_from_hardware_identifier(
+                    pci_controller, slot_type, hw_identifier, physical_slot
+                )
+
+                if dev_path:
+                    # Apply MPIO resolution
+                    dev_name = os.path.basename(dev_path)
+                    resolved_path = resolve_multipath_parent(dev_name)
+                    return resolved_path, interface_key
+
+    return None, None
+
+
+def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_identifier, physical_slot):
+    """Resolve actual device path from hardware identifier.
+
+    Args:
+        pci_controller: PCI controller address
+        slot_type: Slot type (sas_expander, sas_direct, motherboard_sata, pcie_nvme)
+        hw_identifier: Hardware identifier (e.g., 'phy-0:0:0', '101', 'ata1')
+        physical_slot: Physical slot number
+
+    Returns:
+        Device path string or None if not found
+    """
+    by_path_dir = '/dev/disk/by-path/'
+    if not os.path.exists(by_path_dir):
+        return None
+
+    try:
+        by_path_entries = os.listdir(by_path_dir)
+    except (OSError, IOError):
+        return None
+
+    if slot_type == 'sas_expander':
+        # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
+        pattern = f"pci-{pci_controller}-sas-exp"
+        for entry in by_path_entries:
+            if entry.startswith(pattern) and f"-phy{physical_slot}-" in entry:
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    return os.path.realpath(full_path)
+
+    elif slot_type == 'sas_direct':
+        # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+        pattern = f"pci-{pci_controller}-scsi-"
+        for entry in by_path_entries:
+            if entry.startswith(pattern) and f":0:{physical_slot}:0" in entry:
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    return os.path.realpath(full_path)
+
+    elif slot_type == 'motherboard_sata':
+        # Pattern: pci-{pci_addr}-ata{ata_num}
+        pattern = f"pci-{pci_controller}-ata"
+        for entry in by_path_entries:
+            if entry.startswith(pattern) and entry.endswith(f"-ata{physical_slot}"):
+                full_path = os.path.join(by_path_dir, entry)
+                if os.path.islink(full_path):
+                    return os.path.realpath(full_path)
+
+    elif slot_type == 'pcie_nvme':
+        # For NVMe, match PCI address between device and slot
+        # Hardware identifier is the slot folder name (e.g., '101') in /sys/bus/pci/slots/
+        # Each slot has an 'address' file containing the PCI address
+        pci_slots_base = "/sys/bus/pci/slots"
+        slot_address_file = os.path.join(pci_slots_base, hw_identifier, 'address')
+        
+        # Read the expected PCI address from the slot's address file
+        expected_pci_addr = None
+        if os.path.exists(slot_address_file):
+            try:
+                with open(slot_address_file, 'r') as f:
+                    expected_pci_addr = f.read().strip()
+            except (OSError, IOError):
+                pass
+        
+        if not expected_pci_addr:
+            return None
+        
+        # Scan NVMe devices and match PCI address
+        block_dir = '/sys/class/block'
+        if os.path.exists(block_dir):
+            try:
+                for dev_name in os.listdir(block_dir):
+                    if dev_name.startswith('nvme'):
+                        # Get the device's sysfs path
+                        sys_path = f"/sys/class/block/{dev_name}"
+                        if not os.path.exists(sys_path):
+                            continue
+                        
+                        real_path = os.path.realpath(sys_path)
+                        
+                        # Traverse up to find the PCI device directory
+                        # Path structure: /sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/nvme/nvme0/nvme0n1
+                        # We need to find the PCI device directory (e.g., 0000:01:00.0)
+                        path_parts = real_path.split('/')
+                        device_pci_addr = None
+                        
+                        for i, part in enumerate(path_parts):
+                            # PCI device addresses match pattern: xxxx:xx:xx.x
+                            if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
+                                device_pci_addr = part
+                                break
+                        
+                        if device_pci_addr and device_pci_addr == expected_pci_addr:
+                            return f"/dev/{dev_name}"
+            except (OSError, IOError):
+                pass
+
+    return None
+
+
 def _collect_pending_serial(pending, passphrase):
     """Serial fallback collection used when the thread pool fails."""
     for item in pending:
@@ -301,6 +455,165 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     if _check_discovery_interrupted():
         return {"error": "Discovery interrupted by signal"}
 
+    # Detect if using new enclosure-based schema or legacy by-path schema
+    is_enclosure_schema = isinstance(bay_map_doc, dict) and "enclosures" in bay_map_doc
+
+    if is_enclosure_schema:
+        return _discover_drives_enclosure(bay_map_doc, running_devices)
+    else:
+        return _discover_drives_legacy(bay_map_doc, running_devices)
+
+
+def _discover_drives_enclosure(bay_map_doc, running_devices):
+    """Discover drives using new enclosure-based physical slot mapping."""
+    enclosures = bay_map_doc.get("enclosures", {})
+
+    # Generate master slot map (cached, 60-second TTL)
+    master_map = generate_master_slot_map(force_refresh=False)
+
+    # Build by-path lookup for legacy compatibility
+    path_to_dev = {}
+    by_path_dir = '/dev/disk/by-path/'
+    if os.path.exists(by_path_dir):
+        for entry in os.listdir(by_path_dir):
+            full_path = os.path.join(by_path_dir, entry)
+            if os.path.islink(full_path):
+                path_to_dev[entry] = os.path.realpath(full_path)
+
+    results, passphrase = [], None
+    try:
+        passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
+    except Exception:
+        pass
+
+    os_dev_node, os_by_path = _get_os_by_path_cached()
+
+    # Phase 5: single cached PCI scan shared by every bay in this discovery pass
+    controllers = scan_pci_controllers(use_cache=True)
+
+    pending = []
+
+    # Iterate through enclosures in display_order
+    enclosure_list = sorted(enclosures.values(), key=lambda e: e.get("display_order", 0))
+
+    for enclosure in enclosure_list:
+        # Medium #34: Check for interruption in each enclosure iteration
+        if _check_discovery_interrupted():
+            return {"error": "Discovery interrupted by signal"}
+
+        enclosure_id = enclosure.get("id")
+        enclosure_name = enclosure.get("name")
+        pci_controller = enclosure.get("pci_controller")
+        template_id = enclosure.get("template_id")
+        slots = enclosure.get("slots", {})
+
+        for slot_num, slot_config in slots.items():
+            # Medium #34: Check for interruption in each slot iteration
+            if _check_discovery_interrupted():
+                return {"error": "Discovery interrupted by signal"}
+
+            physical_slot = slot_config.get("physical_slot_number", int(slot_num))
+            label = slot_config.get("label", f"Slot {slot_num}")
+            role = slot_config.get("role", "wipe")
+            locked = slot_config.get("locked", False)
+
+            # Resolve device from enclosure slot using master map
+            dev_node, interface_type = _resolve_device_from_enclosure_slot(
+                slot_config, pci_controller, master_map
+            )
+
+            bay_id = f"{enclosure_id}_slot_{slot_num}"
+
+            bay_info = {
+                "bay": bay_id,
+                "enclosure_id": enclosure_id,
+                "enclosure_name": enclosure_name,
+                "display_number": physical_slot,
+                "physical_position": physical_slot,
+                "label": label,
+                "role": role,
+                "locked": locked,
+                "configured_by_path": None,
+                "resolved_by_path": None,
+                "configured_by_path_nvme": None,
+                "resolved_by_path_nvme": None,
+                "type": interface_type or "sas_sata",
+                "present": False,
+                "device": None,
+                "serial": None,
+                "model": None,
+                "status": "EMPTY",
+                "interface_type": interface_type or "unknown",
+                "drive_type": "unknown",
+                "capacity_str": "-",
+                "marker": {"ok": False, "status": "none", "error": None, "details": {}},
+                "recommendation": {"status": "UNKNOWN", "comment": "-"},
+                "health_score": 100,
+                "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True},
+                "supported_methods": ["overwrite"],
+                "smart": {},
+                "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}},
+                "controller": None
+            }
+
+            if dev_node:
+                bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
+                bay_info["device"] = dev_node
+                bay_info["present"] = True
+
+                # Get controller information for the device
+                controller_info = get_controller_for_device(dev_node, controllers=controllers)
+                bay_info["controller"] = controller_info
+
+                is_os_drive = False
+                if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
+                    is_os_drive = True
+
+                if os_by_path and os.path.basename(dev_node) == os.path.basename(os_by_path):
+                    is_os_drive = True
+
+                # Respect config role if already set to "os", otherwise use detection
+                if is_os_drive or bay_info.get("role") == "os":
+                    bay_info["role"] = "os"
+                    bay_info["locked"] = True
+
+                if running_devices and dev_node in running_devices:
+                    bay_info.update({
+                        "status": "RUNNING",
+                        "interface_type": detect_interface_type(dev_node, dev_node, interface_type, None),
+                        "capacity_str": "Sanitizing..."
+                    })
+                    results.append(bay_info)
+                    continue
+
+                # Cache key uses device path to uniquely identify physical drive
+                cache_key = (dev_node, dev_node)
+                cached_payload = _get_cached_drive_payload(cache_key)
+                if cached_payload is not None:
+                    _apply_drive_payload(bay_info, cached_payload, is_os_drive)
+                else:
+                    pending.append((bay_info, is_os_drive, cache_key, dev_node, dev_node, dev_node, interface_type))
+            else:
+                bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "no_device_in_slot"}
+
+            results.append(bay_info)
+
+    if pending:
+        # Medium #34: Check for interruption before launching expensive collection
+        if _check_discovery_interrupted():
+            return {"error": "Discovery interrupted by signal"}
+        # Phases 2-4: parallel SMART + capability + marker collection with serial fallback
+        try:
+            _collect_pending_parallel(pending, passphrase)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
+            _collect_pending_serial(pending, passphrase)
+
+    return results
+
+
+def _discover_drives_legacy(bay_map_doc, running_devices):
+    """Discover drives using legacy by-path mapping (backward compatibility)."""
     if isinstance(bay_map_doc, dict) and isinstance(bay_map_doc.get("bays"), dict):
         bay_map = bay_map_doc.get("bays", {})
     else:
@@ -332,41 +645,41 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             return {"error": "Discovery interrupted by signal"}
         target_path = config.get('by_path')
         target_path_nvme = config.get('by_path_nvme')
-        
+
         bay_info = {
             "bay": bay_id,
             "display_number": config.get("display_number"),
             "physical_position": config.get("physical_position"),
             "label": config.get('label', bay_id),
-            "role": config.get('role', 'wipe'), 
+            "role": config.get('role', 'wipe'),
             "locked": config.get('locked', False),
-            "configured_by_path": target_path, 
+            "configured_by_path": target_path,
             "resolved_by_path": None,
-            "configured_by_path_nvme": target_path_nvme, 
+            "configured_by_path_nvme": target_path_nvme,
             "resolved_by_path_nvme": None,
             "type": config.get("type", "sas_sata"),  # Ensure type remains explicitly mapped
-            "present": False, 
-            "device": None, 
-            "serial": None, 
-            "model": None, 
+            "present": False,
+            "device": None,
+            "serial": None,
+            "model": None,
             "status": "EMPTY",
-            "interface_type": "unknown", 
+            "interface_type": "unknown",
             "drive_type": "unknown",
-            "capacity_str": "-", 
-            "marker": {"ok": False, "status": "none", "error": None, "details": {}}, 
-            "recommendation": {"status": "UNKNOWN", "comment": "-"}, 
+            "capacity_str": "-",
+            "marker": {"ok": False, "status": "none", "error": None, "details": {}},
+            "recommendation": {"status": "UNKNOWN", "comment": "-"},
             "health_score": 100,
-            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}, 
+            "capabilities": {"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True},
             "supported_methods": ["overwrite"],
-            "smart": {}, 
+            "smart": {},
             "diagnostics": {"mapping": {"ok": False, "reason": "not_mapped"}, "commands": {}},
             "controller": None
         }
-        
+
         # 1. Primary SATA/SAS path check
         matched_by_path, dev_node = resolve_bay_device(target_path, path_to_dev)
         matched_by_path_nvme = None
-        
+
         # 2. Tri-Mode Fallback: If no SATA/SAS is found, resolve the NVMe motherboard port
         if not dev_node and target_path_nvme:
             matched_by_path_nvme, dev_node = resolve_bay_device(target_path_nvme, path_to_dev)
@@ -378,7 +691,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
         if dev_node:
             bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
-            
+
             # Get controller information for the device (shared PCI scan, no per-drive rescans)
             controller_info = get_controller_for_device(dev_node, controllers=controllers)
             bay_info["controller"] = controller_info
@@ -386,14 +699,15 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
             is_os_drive = False
             if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
                 is_os_drive = True
-            
+
             resolved_active_path = matched_by_path_nvme if matched_by_path_nvme else matched_by_path
             configured_active_path = target_path_nvme if matched_by_path_nvme else target_path
-            
+
             if os_by_path and (resolved_active_path == os_by_path or configured_active_path == os_by_path or os.path.basename(resolved_active_path or "") == os.path.basename(os_by_path)):
                 is_os_drive = True
 
-            if is_os_drive:
+            # Respect config role if already set to "os", otherwise use detection
+            if is_os_drive or bay_info.get("role") == "os":
                 bay_info["role"] = "os"
                 bay_info["locked"] = True
 
