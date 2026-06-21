@@ -16,18 +16,18 @@ def get_triage_thresholds():
         policy = load_policy(config_dir)
         thresholds = policy.get("triage_thresholds", {})
         return {
-            "ssd_new_poh_threshold": thresholds.get("ssd_new_poh_threshold", 500),
-            "ssd_high_poh_threshold": thresholds.get("ssd_high_poh_threshold", 40000),
-            "hdd_new_poh_threshold": thresholds.get("hdd_new_poh_threshold", 500),
+            "ssd_new_poh_threshold": thresholds.get("ssd_new_poh_threshold", 720),
+            "ssd_high_poh_threshold": thresholds.get("ssd_high_poh_threshold", 43800),
+            "hdd_new_poh_threshold": thresholds.get("hdd_new_poh_threshold", 720),
             "hdd_high_poh_threshold": thresholds.get("hdd_high_poh_threshold", 40000),
             "health_score_destroy_threshold": thresholds.get("health_score_destroy_threshold", 30),
-            "health_score_scratch_threshold": thresholds.get("health_score_scratch_threshold", 60),
+            "health_score_scratch_threshold": thresholds.get("health_score_scratch_threshold", 50),
             "ssd_remaining_life_destroy_threshold": thresholds.get("ssd_remaining_life_destroy_threshold", 10),
-            "ssd_remaining_life_scratch_threshold": thresholds.get("ssd_remaining_life_scratch_threshold", 60),
+            "ssd_remaining_life_scratch_threshold": thresholds.get("ssd_remaining_life_scratch_threshold", 50),
             "ssd_remaining_life_good_threshold": thresholds.get("ssd_remaining_life_good_threshold", 80),
             "ssd_new_fdw_threshold": thresholds.get("ssd_new_fdw_threshold", 0.06),
-            "hdd_new_fdw_threshold": thresholds.get("hdd_new_fdw_threshold", 1.0),
-            "hdd_heavy_fdw_threshold": thresholds.get("hdd_heavy_fdw_threshold", 150),
+            "hdd_new_fdw_threshold": thresholds.get("hdd_new_fdw_threshold", 2.0),
+            "hdd_heavy_fdw_threshold": thresholds.get("hdd_heavy_fdw_threshold", 200),
             "realloc_raw_new_threshold": thresholds.get("realloc_raw_new_threshold", 0),
             "pending_sectors_destroy_threshold": thresholds.get("pending_sectors_destroy_threshold", 10),
             "pending_sectors_scratch_threshold": thresholds.get("pending_sectors_scratch_threshold", 10)
@@ -35,18 +35,18 @@ def get_triage_thresholds():
     except Exception:
         # Fallback to defaults if policy loading fails
         return {
-            "ssd_new_poh_threshold": 500,
-            "ssd_high_poh_threshold": 40000,
-            "hdd_new_poh_threshold": 500,
+            "ssd_new_poh_threshold": 720,
+            "ssd_high_poh_threshold": 43800,
+            "hdd_new_poh_threshold": 720,
             "hdd_high_poh_threshold": 40000,
             "health_score_destroy_threshold": 30,
-            "health_score_scratch_threshold": 60,
+            "health_score_scratch_threshold": 50,
             "ssd_remaining_life_destroy_threshold": 10,
-            "ssd_remaining_life_scratch_threshold": 60,
+            "ssd_remaining_life_scratch_threshold": 50,
             "ssd_remaining_life_good_threshold": 80,
             "ssd_new_fdw_threshold": 0.06,
-            "hdd_new_fdw_threshold": 1.0,
-            "hdd_heavy_fdw_threshold": 150,
+            "hdd_new_fdw_threshold": 2.0,
+            "hdd_heavy_fdw_threshold": 200,
             "realloc_raw_new_threshold": 0,
             "pending_sectors_destroy_threshold": 10,
             "pending_sectors_scratch_threshold": 10
@@ -267,8 +267,11 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     if is_ssd and wear is not None:
         wear_val = safe_int(wear, 0)
         base_score = max(0, 100 - wear_val) if iface in {"nvme", "sas"} else wear_val
-        if poh > 40000:
-            base_score = max(10, base_score - min(20, max(0, (poh - 40000) / 40000 * 20)))
+        thresholds = get_triage_thresholds()
+        ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
+        if poh > ssd_high_poh_thresh:
+            poh_penalty = min(20, 20 * ((poh - ssd_high_poh_thresh) / (ssd_high_poh_thresh * 2 - ssd_high_poh_thresh)) ** 2)
+            base_score = max(10, base_score - poh_penalty)
     else:
         poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
         written_bytes = smart_data.get("data_written_bytes")
@@ -303,7 +306,7 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
             nvme_media_penalty = min(80, safe_int(nvme_log.get("media_errors"), 0) * 20)
         except Exception: pass
 
-    score = max(0, base_score - realloc_penalty - pending_penalty - nvme_media_penalty - (10 if errs > 50 else 0))
+    score = max(0, base_score - realloc_penalty - pending_penalty - nvme_media_penalty)
     failed_override = str(smart_data.get("status") or "UNKNOWN").upper() == "FAILED"
     if raw_json:
         try:
@@ -377,7 +380,7 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
         hdd_heavy_fdw_thresh = thresholds["hdd_heavy_fdw_threshold"]
         realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
         
-        if poh >= hdd_high_poh_thresh: return {"status": "SCRATCH", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
+        if poh >= hdd_high_poh_thresh: return {"status": "USED_HEAVY", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
         if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
         return {"status": "USED_HEAVY" if fdw >= hdd_heavy_fdw_thresh else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= hdd_heavy_fdw_thresh else "Used but has clean write history and moderate runtime."}
 # --- END OF FILE backend/smart_parsing.py ---

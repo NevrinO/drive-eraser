@@ -29,36 +29,46 @@ class TestSSDWearBaseline:
         assert health == 89, f"Expected health 89, got {health}"
 
     def test_ssd_health_with_extreme_poh_penalty(self):
-        """Test that extreme POH applies progressive penalty (max 20% at 80,000 hours)."""
-        from smart_parsing import calculate_drive_health_score
+        """Test that extreme POH applies quadratic penalty (max 20% at 2x threshold)."""
+        from smart_parsing import calculate_drive_health_score, get_triage_thresholds
 
-        # Mock SSD with 89% life remaining but 80,000 POH
+        thresholds = get_triage_thresholds()
+        ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
+        max_poh = ssd_high_poh_thresh * 2  # 87600 with default threshold
+
+        # Mock SSD with 89% life remaining but at max POH
         smart_data = {
             "wear_level": 11,
-            "power_on_hours": 80000,
+            "power_on_hours": max_poh,
             "status": "PASSED"
         }
 
         health = calculate_drive_health_score("nvme", smart_data, None)
 
-        # Base health 89, penalty for POH > 40000: max 20% = 69 minimum
+        # Base health 89, penalty for POH > threshold: max 20% = 69 minimum
         assert health >= 69, f"Expected health >= 69, got {health}"
         assert health <= 89, f"Expected health <= 89, got {health}"
 
-    def test_ssd_health_hard_floor(self):
-        """Test that SSD health has a hard floor of 10%."""
-        from smart_parsing import calculate_drive_health_score
+    def test_ssd_health_quadratic_poh_at_midpoint(self):
+        """Test that quadratic POH penalty is lower at midpoint (1.5x threshold)."""
+        from smart_parsing import calculate_drive_health_score, get_triage_thresholds
 
-        # Mock SSD with extreme wear and POH
+        thresholds = get_triage_thresholds()
+        ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
+        midpoint_poh = ssd_high_poh_thresh * 1.5  # 65700 with default threshold
+
+        # Mock SSD with 89% life remaining at midpoint POH
         smart_data = {
-            "wear_level": 95,
-            "power_on_hours": 100000,
+            "wear_level": 11,
+            "power_on_hours": midpoint_poh,
             "status": "PASSED"
         }
 
         health = calculate_drive_health_score("nvme", smart_data, None)
 
-        assert health >= 10, f"Expected health >= 10 (hard floor), got {health}"
+        # Base health 89, quadratic penalty at 50% position = 5 points = 84
+        assert health >= 83, f"Expected health >= 83, got {health}"
+        assert health <= 89, f"Expected health <= 89, got {health}"
 
 
 class TestHDDMechanicalAging:
@@ -77,24 +87,24 @@ class TestHDDMechanicalAging:
 
         health = calculate_drive_health_score("sata", smart_data, None)
 
-        # POH penalty: (30000-20000)/40000*30 = 7.5, FDW penalty: (5/150)*30 = 1
-        # Base: 100 - 7.5 - 1 = 91.5, min 40
+        # POH penalty: (30000-20000)/40000*30 = 7.5, FDW penalty: (5/200)*30 = 0.75
+        # Base: 100 - 7.5 - 0.75 = 91.75, min 40
         assert health >= 90, f"Expected health >= 90, got {health}"
 
     def test_hdd_health_low_poh_high_fdw(self):
-        """Test HDD with 30,000 POH and high FDW (>= 150) has ~62% health."""
+        """Test HDD with 30,000 POH and high FDW (>= 200) has ~62% health."""
         from smart_parsing import calculate_drive_health_score
 
         smart_data = {
             "power_on_hours": 30000,
-            "data_written_raw": 150,  # High FDW
+            "data_written_raw": 200,  # High FDW
             "capacity_bytes": 1000000000000,  # 1TB
             "status": "PASSED"
         }
 
         health = calculate_drive_health_score("sata", smart_data, None)
 
-        # POH penalty: 7.5, FDW penalty: (150/150)*30 = 30
+        # POH penalty: 7.5, FDW penalty: (200/200)*30 = 30
         # Base: 100 - 7.5 - 30 = 62.5
         assert health >= 60, f"Expected health >= 60, got {health}"
 
@@ -163,23 +173,23 @@ class TestByteAccurateTrafficScaling:
 class TestSASGListIntegrity:
     """Test Case 5: SAS G-List Integrity Check."""
 
-    def test_sas_soft_ecc_ignored(self):
-        """Test SAS with soft ECC errors but 0 G-list has no penalty."""
+    def test_sas_interface_errors_ignored(self):
+        """Test SAS with interface errors but 0 G-list has no penalty (interface errors removed)."""
         from smart_parsing import calculate_drive_health_score
 
         smart_data = {
-            "interface_errors": 100,  # Soft ECC errors
+            "interface_errors": 100,  # Interface errors (no longer penalized)
             "reallocated_sectors": 0,  # No G-list entries
             "status": "PASSED"
         }
 
         health = calculate_drive_health_score("sas", smart_data, None)
 
-        # Interface errors > 50 only penalize by 10, not from reallocated sectors
-        assert health >= 90, f"Expected health >= 90, got {health}"
+        # Interface errors no longer penalized
+        assert health >= 95, f"Expected health >= 95, got {health}"
 
-    def test_sas_health_unimpaired_by_soft_ecc(self):
-        """Test SAS health remains high with soft ECC but no G-list."""
+    def test_sas_health_unimpaired_by_interface_errors(self):
+        """Test SAS health remains high with interface errors but no G-list."""
         from smart_parsing import calculate_drive_health_score
 
         smart_data = {
@@ -190,8 +200,8 @@ class TestSASGListIntegrity:
 
         health = calculate_drive_health_score("sas", smart_data, None)
 
-        # No reallocated sectors, only interface error penalty
-        assert health >= 90, f"Expected health >= 90 (no penalty), got {health}"
+        # No reallocated sectors, interface errors no longer penalized
+        assert health >= 95, f"Expected health >= 95, got {health}"
 
 
 class TestProtocolMethodMatrix:
@@ -324,7 +334,7 @@ class TestDriveRecommendation:
         from smart_parsing import get_drive_recommendation
 
         smart = {
-            "power_on_hours": 100,
+            "power_on_hours": 500,
             "data_written_bytes": 1000000,
             "capacity_bytes": 1000000000000,
             "reallocated_sectors": 0,
@@ -371,8 +381,8 @@ class TestDriveRecommendation:
         result = get_drive_recommendation("nvme", smart, health_score=50)
         assert result["status"] == "SCRATCH"
 
-    def test_recommendation_scratch_hdd_high_poh(self):
-        """Test SCRATCH recommendation for HDD with high POH."""
+    def test_recommendation_used_heavy_hdd_high_poh(self):
+        """Test USED_HEAVY recommendation for HDD with high POH (changed from SCRATCH)."""
         from smart_parsing import get_drive_recommendation
 
         smart = {
@@ -383,7 +393,7 @@ class TestDriveRecommendation:
             "status": "PASSED"
         }
         result = get_drive_recommendation("sata", smart, health_score=70)
-        assert result["status"] == "SCRATCH"
+        assert result["status"] == "USED_HEAVY"
 
     def test_recommendation_used_good_ssd(self):
         """Test USED_GOOD recommendation for healthy SSD."""
@@ -473,7 +483,7 @@ class TestTriageThresholds:
         with patch('smart_parsing.load_policy', side_effect=Exception("Test error")):
             thresholds = get_triage_thresholds()
             assert "ssd_new_poh_threshold" in thresholds
-            assert thresholds["ssd_new_poh_threshold"] == 500
+            assert thresholds["ssd_new_poh_threshold"] == 720
 
     def test_custom_thresholds_from_policy(self):
         """Test that custom thresholds from policy are used."""
