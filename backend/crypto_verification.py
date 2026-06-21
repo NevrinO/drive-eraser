@@ -90,6 +90,61 @@ def _run_blockdev_getsize64(device, retries=3, retry_delay=5):
     
     return {"capacity": None, "error": error_code, "details": last_stderr}
 
+def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_delay=5):
+    """
+    Run dd read operation with retry logic for post-wipe transient failures.
+    
+    Feature C: After an overwrite, drives may temporarily drop off the bus, causing
+    dd reads to fail. This helper retries with delays and distinguishes between
+    "drive detached" and "read failed" errors.
+    
+    Args:
+        dd_cmd: Path to dd command
+        device: Device path (e.g., /dev/sda)
+        bs: Block size for dd
+        skip: Skip blocks for dd
+        count: Count for dd
+        retries: Number of retry attempts (default 3, total attempts = retries + 1)
+        retry_delay: Delay in seconds between retries (default 5)
+    
+    Returns:
+        On success: {"data": bytes, "error": None}
+        On failure: {"data": None, "error": str, "details": str}
+            error is "drive_detached_post_wipe" if device appears detached,
+            or "secondary_sampled_read_failed" for other failures
+    """
+    logger = logging.getLogger("app")
+    attempts = retries + 1
+    last_stderr = ""
+    
+    for attempt in range(attempts):
+        dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={bs}", f"skip={skip}", f"count={count}", "status=none"]
+        result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
+        
+        if result.returncode == 0:
+            logger.debug(f"dd read succeeded on attempt {attempt + 1}/{attempts} for {device}")
+            return {"data": result.stdout, "error": None}
+        else:
+            last_stderr = result.stderr.decode('utf-8', errors='replace') if result.stderr else ""
+            logger.warning(f"dd read failed on attempt {attempt + 1}/{attempts} for {device}: exit={result.returncode}, stderr={last_stderr}")
+        
+        # Sleep before retry, but not after the last attempt
+        if attempt < attempts - 1:
+            time.sleep(retry_delay)
+    
+    # All attempts failed - determine error type based on stderr
+    detached_indicators = ["No such device", "No such file or directory", "Input/output error", "Transport endpoint is not connected"]
+    is_detached = any(indicator.lower() in last_stderr.lower() for indicator in detached_indicators)
+    
+    if is_detached:
+        error_code = "drive_detached_post_wipe"
+        logger.error(f"Device {device} appears detached after {attempts} dd read attempts: {last_stderr}")
+    else:
+        error_code = "secondary_sampled_read_failed"
+        logger.error(f"dd read failed after {attempts} attempts for {device}: {last_stderr}")
+    
+    return {"data": None, "error": error_code, "details": last_stderr}
+
 def resolve_verify_command_path(command_name):
     """
     Resolve the path to a verification command using the centralized resolver.
@@ -186,11 +241,12 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
             skip_blocks = offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-            dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={actual_bs}", f"skip={skip_blocks}", "count=1", "status=none"]
-            result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
-            if result.returncode != 0:
-                return {"ok": False, "error": "secondary_sampled_read_failed", "details": f"dd read failed at offset {offset}: {result.stderr.decode('utf-8', errors='replace')}"}
-            data = result.stdout
+            
+            # Feature C: Use retry logic for dd reads
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            if dd_result["error"]:
+                return {"ok": False, "error": dd_result["error"], "details": f"dd read failed at offset {offset}: {dd_result['details']}"}
+            data = dd_result["data"]
             total_verified_bytes += len(data)
 
             # Highly optimized C-level block evaluation in Python
@@ -245,6 +301,16 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
         if _check_interrupted():
             return {"ok": False, "error": "verification_interrupted", "details": "Operation interrupted by signal"}
 
+        # Feature C: Load policy for retry configuration with hardcoded fallback
+        try:
+            policy = load_policy()
+            retries = policy.get("blockdev_post_wipe_retries", 3)
+            retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
+        except Exception:
+            logger.warning("Failed to load policy, using default retry values")
+            retries = 3
+            retry_delay = 5
+
         # Get capacity using blockdev
         blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
         result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
@@ -295,11 +361,12 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
             skip_blocks = offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-            dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={actual_bs}", f"skip={skip_blocks}", "count=1", "status=none"]
-            result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
-            if result.returncode != 0:
-                return {"ok": False, "error": "capture_read_failed", "details": f"dd read failed at offset {offset}: {result.stderr.decode('utf-8', errors='replace')}"}
-            data = result.stdout
+            
+            # Feature C: Use retry logic for dd reads
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            if dd_result["error"]:
+                return {"ok": False, "error": "capture_read_failed", "details": f"dd read failed at offset {offset}: {dd_result['details']}", "is_detached": dd_result["error"] == "drive_detached_post_wipe"}
+            data = dd_result["data"]
             total_captured_bytes += len(data)
             hashes.append(hashlib.sha256(data).hexdigest())
 
@@ -374,38 +441,25 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     any_changed = False
     unchanged_indices = []
 
-    # Retry with delays for drives needing time to become readable
-    max_retries = 5
-    retry_delays = [2, 4, 8, 15, 30]
-
     for idx, offset in enumerate(offsets):
-        last_exception = None
-        for attempt in range(max_retries):
-            try:
-                # Use capacity-aware read size for end-of-drive chunks
-                skip_blocks = offset // chunk_size_bytes
-                read_size = min(chunk_size_bytes, capacity - offset)
-                actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-                dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={actual_bs}", f"skip={skip_blocks}", "count=1", "status=none"]
-                result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
-                if result.returncode != 0:
-                    raise Exception(f"dd read failed (exit code {result.returncode}): {result.stderr.decode('utf-8', errors='replace')}")
-                data = result.stdout
-                total_verified_bytes += len(data)
-                after_hash = hashlib.sha256(data).hexdigest()
-                after_hashes.append(after_hash)
+        # Use capacity-aware read size for end-of-drive chunks
+        skip_blocks = offset // chunk_size_bytes
+        read_size = min(chunk_size_bytes, capacity - offset)
+        actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+        
+        # Feature C: Use retry logic for dd reads
+        dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+        if dd_result["error"]:
+            return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": dd_result['error'], "retries_attempted": retries + 1, "stderr": dd_result['details']}}
+        data = dd_result["data"]
+        total_verified_bytes += len(data)
+        after_hash = hashlib.sha256(data).hexdigest()
+        after_hashes.append(after_hash)
 
-                if after_hash == before_hashes[idx]:
-                    unchanged_indices.append(idx)
-                else:
-                    any_changed = True
-                break
-            except Exception as e:
-                last_exception = e
-                if attempt < max_retries - 1:
-                    time.sleep(retry_delays[attempt])
-                else:
-                    return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": str(last_exception), "retries_attempted": max_retries}}
+        if after_hash == before_hashes[idx]:
+            unchanged_indices.append(idx)
+        else:
+            any_changed = True
 
     if any_changed:
         # Some chunks changed - verify unchanged chunks are all zero (partial wipe detection)
@@ -414,44 +468,35 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             first_nonzero_offset = None
             for idx in unchanged_indices:
                 offset = offsets[idx]
-                last_exception = None
-                for attempt in range(max_retries):
-                    try:
-                        skip_blocks = offset // chunk_size_bytes
-                        read_size = min(chunk_size_bytes, capacity - offset)
-                        actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-                        dd_check_cmd = ["sudo", dd_cmd, f"if={device}", f"bs={actual_bs}", f"skip={skip_blocks}", "count=1", "status=none"]
-                        result = subprocess.run(dd_check_cmd, capture_output=True, shell=False)
-                        if result.returncode != 0:
-                            raise Exception(f"dd read failed (exit code {result.returncode}): {result.stderr.decode('utf-8', errors='replace')}")
-                        data = result.stdout
-                        if data and data != b'\x00' * len(data):
-                            unchanged_nonzero_found = True
-                            first_nonzero_offset = offset
-                            break
-                        break  # Success - chunk is zero, move to next
-                    except Exception as e:
-                        last_exception = e
-                        if attempt < max_retries - 1:
-                            time.sleep(retry_delays[attempt])
-                        else:
-                            return {
-                                "ok": False,
-                                "status": "verification_error",
-                                "error": "crypto_comparison_unchanged_verification_failed",
-                                "details": {
-                                    "offset": offset,
-                                    "exception": str(last_exception),
-                                    "retries_attempted": max_retries,
-                                    "total_verified_bytes": total_verified_bytes,
-                                    "chunks_checked": len(offsets),
-                                    "chunk_size_bytes": chunk_size_bytes,
-                                    "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
-                                    "unchanged_indices": unchanged_indices,
-                                    "before_hashes": before_hashes,
-                                    "after_hashes": after_hashes
-                                }
-                            }
+                skip_blocks = offset // chunk_size_bytes
+                read_size = min(chunk_size_bytes, capacity - offset)
+                actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+                
+                # Feature C: Use retry logic for dd reads
+                dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+                if dd_result["error"]:
+                    return {
+                        "ok": False,
+                        "status": "verification_error",
+                        "error": "crypto_comparison_unchanged_verification_failed",
+                        "details": {
+                            "offset": offset,
+                            "exception": dd_result['error'],
+                            "retries_attempted": retries + 1,
+                            "stderr": dd_result['details'],
+                            "total_verified_bytes": total_verified_bytes,
+                            "chunks_checked": len(offsets),
+                            "chunk_size_bytes": chunk_size_bytes,
+                            "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
+                            "unchanged_indices": unchanged_indices,
+                            "before_hashes": before_hashes,
+                            "after_hashes": after_hashes
+                        }
+                    }
+                data = dd_result["data"]
+                if data and data != b'\x00' * len(data):
+                    unchanged_nonzero_found = True
+                    first_nonzero_offset = offset
             
             if unchanged_nonzero_found:
                 # Partial wipe - some chunks changed, some didn't and aren't zero
@@ -513,10 +558,13 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             skip_blocks = first_offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - first_offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-            dd_check_cmd = ["sudo", dd_cmd, f"if={device}", f"bs={actual_bs}", f"skip={skip_blocks}", "count=1", "status=none"]
-            result = subprocess.run(dd_check_cmd, capture_output=True, shell=False)
-            if result.returncode == 0:
-                data = result.stdout
+            
+            # Feature C: Use retry logic for dd reads
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            if dd_result["error"]:
+                pass  # If read fails, proceed to unchanged data check below
+            else:
+                data = dd_result["data"]
                 if data:
                     is_all_zeros = data == b'\x00' * len(data)
                     if is_all_zeros:

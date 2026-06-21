@@ -37,5 +37,7 @@
   },
   "certificate_retention_days": 365,
   "max_logo_size_mb": 1,
-  "max_bulk_cert_batch_size": 100
+  "max_bulk_cert_batch_size": 100,
+  "blockdev_post_wipe_retries": 3,
+  "blockdev_post_wipe_retry_delay": 5
 }

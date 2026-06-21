@@ -59,6 +59,80 @@ class TestSignalHandling:
         assert _check_interrupted() is True
 
 
+class TestRunDdReadWithRetry:
+    """Test dd read retry helper function (Feature C)."""
+
+    def test_dd_read_success_on_first_attempt(self):
+        """Test that successful dd read on first attempt works."""
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=b'\x00' * 1024)
+            from crypto_verification import _run_dd_read_with_retry
+            result = _run_dd_read_with_retry('/usr/bin/dd', '/dev/sda', 1024, 0, 1, retries=2, retry_delay=1)
+            assert result["data"] == b'\x00' * 1024
+            assert result["error"] is None
+            assert mock_run.call_count == 1
+
+    def test_dd_read_retry_success_after_transient_failure(self):
+        """Test that dd read retry succeeds after transient failure."""
+        with patch('subprocess.run') as mock_run:
+            with patch('time.sleep') as mock_sleep:
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stderr=b"dd read error"),
+                    MagicMock(returncode=1, stderr=b"dd read error"),
+                    MagicMock(returncode=0, stdout=b'\x00' * 1024),
+                ]
+                from crypto_verification import _run_dd_read_with_retry
+                result = _run_dd_read_with_retry('/usr/bin/dd', '/dev/sda', 1024, 0, 1, retries=2, retry_delay=1)
+                assert result["data"] == b'\x00' * 1024
+                assert result["error"] is None
+                assert mock_run.call_count == 3
+                assert mock_sleep.call_count == 2
+
+    def test_dd_read_retry_exhaustion_detached_drive(self):
+        """Test that dd read retry exhaustion with detached drive returns correct error."""
+        with patch('subprocess.run') as mock_run:
+            with patch('time.sleep') as mock_sleep:
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stderr=b"No such device"),
+                    MagicMock(returncode=1, stderr=b"No such device"),
+                    MagicMock(returncode=1, stderr=b"No such device"),
+                ]
+                from crypto_verification import _run_dd_read_with_retry
+                result = _run_dd_read_with_retry('/usr/bin/dd', '/dev/sda', 1024, 0, 1, retries=2, retry_delay=1)
+                assert result["data"] is None
+                assert result["error"] == "drive_detached_post_wipe"
+                assert mock_run.call_count == 3
+                assert mock_sleep.call_count == 2
+
+    def test_dd_read_retry_exhaustion_generic_failure(self):
+        """Test that dd read retry exhaustion with generic failure returns correct error."""
+        with patch('subprocess.run') as mock_run:
+            with patch('time.sleep') as mock_sleep:
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stderr=b"generic read error"),
+                    MagicMock(returncode=1, stderr=b"generic read error"),
+                    MagicMock(returncode=1, stderr=b"generic read error"),
+                ]
+                from crypto_verification import _run_dd_read_with_retry
+                result = _run_dd_read_with_retry('/usr/bin/dd', '/dev/sda', 1024, 0, 1, retries=2, retry_delay=1)
+                assert result["data"] is None
+                assert result["error"] == "secondary_sampled_read_failed"
+                assert mock_run.call_count == 3
+                assert mock_sleep.call_count == 2
+
+    def test_dd_read_retry_transport_endpoint_error(self):
+        """Test that transport endpoint error is detected as detached drive."""
+        with patch('subprocess.run') as mock_run:
+            with patch('time.sleep') as mock_sleep:
+                mock_run.side_effect = [
+                    MagicMock(returncode=1, stderr=b"Transport endpoint is not connected"),
+                ]
+                from crypto_verification import _run_dd_read_with_retry
+                result = _run_dd_read_with_retry('/usr/bin/dd', '/dev/sda', 1024, 0, 1, retries=0, retry_delay=1)
+                assert result["data"] is None
+                assert result["error"] == "drive_detached_post_wipe"
+
+
 class TestVerifySampledZeroCheck:
     """Test sampled zero check verification."""
 
@@ -148,21 +222,22 @@ class TestVerifySampledZeroCheck:
                         assert "offset" in result["details"]
 
     def test_dd_read_failure(self):
-        """Test that dd read failure is handled."""
+        """Test that dd read failure is handled with retry logic (retries=0 configuration)."""
         with patch('crypto_verification.validate_device_path', return_value=True):
             with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
-                    with patch('subprocess.run') as mock_run:
-                        mock_run.side_effect = [
-                            MagicMock(returncode=0, stdout="1073741824"),
-                            MagicMock(returncode=1, stderr=b"dd read error"),
-                        ]
-                        from crypto_verification import verify_sampled_zero_check
-                        result = verify_sampled_zero_check("/dev/sda")
-                        assert result["ok"] is False
-                        assert result["error"] == "secondary_sampled_read_failed"
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 0, "blockdev_post_wipe_retry_delay": 0}):
+                        with patch('subprocess.run') as mock_run:
+                            mock_run.side_effect = [
+                                MagicMock(returncode=0, stdout="1073741824"),
+                                MagicMock(returncode=1, stderr=b"dd read error"),
+                            ]
+                            from crypto_verification import verify_sampled_zero_check
+                            result = verify_sampled_zero_check("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "secondary_sampled_read_failed"
 
     def test_interrupted_during_reads(self):
         """Test that interruption during reads is handled."""
@@ -291,21 +366,42 @@ class TestCaptureBeforeState:
                             assert result["error"] == "verification_interrupted"
 
     def test_dd_read_failure_during_capture(self):
-        """Test that dd read failure during capture is handled."""
+        """Test that dd read failure during capture is handled with retry logic."""
         with patch('crypto_verification.validate_device_path', return_value=True):
             with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
-                    with patch('subprocess.run') as mock_run:
-                        mock_run.side_effect = [
-                            MagicMock(returncode=0, stdout="1073741824"),
-                            MagicMock(returncode=1, stderr=b"dd read error"),
-                        ]
-                        from crypto_verification import capture_before_state
-                        result = capture_before_state("/dev/sda")
-                        assert result["ok"] is False
-                        assert result["error"] == "capture_read_failed"
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 0, "blockdev_post_wipe_retry_delay": 0}):
+                        with patch('subprocess.run') as mock_run:
+                            mock_run.side_effect = [
+                                MagicMock(returncode=0, stdout="1073741824"),
+                                MagicMock(returncode=1, stderr=b"dd read error"),
+                            ]
+                            from crypto_verification import capture_before_state
+                            result = capture_before_state("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "capture_read_failed"
+                            assert result["is_detached"] is False
+
+    def test_dd_read_failure_during_capture_detached(self):
+        """Test that drive detachment is detected during capture with is_detached=True."""
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 0, "blockdev_post_wipe_retry_delay": 0}):
+                        with patch('subprocess.run') as mock_run:
+                            mock_run.side_effect = [
+                                MagicMock(returncode=0, stdout="1073741824"),
+                                MagicMock(returncode=1, stderr=b"No such device"),
+                            ]
+                            from crypto_verification import capture_before_state
+                            result = capture_before_state("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "capture_read_failed"
+                            assert result["is_detached"] is True
 
 
 class TestVerifyCryptoProbe:
