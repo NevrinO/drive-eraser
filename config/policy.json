@@ -33,7 +33,13 @@
     "hdd_heavy_fdw_threshold": 200,
     "realloc_raw_new_threshold": 0,
     "pending_sectors_destroy_threshold": 10,
-    "pending_sectors_scratch_threshold": 10
+    "pending_sectors_scratch_threshold": 10,
+    "sas_grown_defect_fail_threshold": 10000,
+    "sas_grown_defect_scratch_threshold": 100,
+    "sas_nme_advisory_threshold": 1000000,
+    "sas_nme_penalty_threshold": 100000000,
+    "sas_sticky_lba_threshold": 3,
+    "sas_high_poh_threshold": 50000
   },
   "certificate_retention_days": 365,
   "max_logo_size_mb": 1,

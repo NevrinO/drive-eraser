@@ -1,0 +1,38 @@
+{
+  "model_name": "ST4000NM0023",
+  "serial_number": "UNCORRECTABLE",
+  "vendor": "SEAGATE",
+  "firmware_version": "0003",
+  "user_capacity": {
+    "bytes": 4000000000000
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "rotation_rate": 7200,
+  "power_on_time": {
+    "hours": 15000
+  },
+  "scsi_grown_defect_list": 10,
+  "scsi_non_medium_error_count": 500000,
+  "scsi_error_counter_log": {
+    "read": {
+      "total_uncorrectable_errors": 15
+    },
+    "write": {
+      "total_uncorrectable_errors": 1
+    },
+    "verify": {
+      "total_uncorrectable_errors": 2
+    }
+  },
+  "scsi_background_scan_log": {
+    "status": {
+      "string": "completed"
+    },
+    "table": []
+  },
+  "device": {
+    "protocol": "SCSI"
+  }
+}

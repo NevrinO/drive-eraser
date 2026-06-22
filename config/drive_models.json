@@ -1,0 +1,20 @@
+{
+  "drive_models": {
+    "SEAGATE,ST4000NM0023,0003": {
+      "vendor": "SEAGATE",
+      "product": "ST4000NM0023",
+      "revision": "0003",
+      "trip_temperature": 60,
+      "nme_normal_range_max": 100000000,
+      "notes": "Seagate Constellation ES.3 4TB SAS - Revision 0003 baseline thresholds"
+    },
+    "SEAGATE,ST4000NM0023,D007": {
+      "vendor": "SEAGATE",
+      "product": "ST4000NM0023",
+      "revision": "D007",
+      "trip_temperature": 60,
+      "nme_normal_range_max": 100000000,
+      "notes": "Seagate Constellation ES.3 4TB SAS - Revision D007 baseline thresholds"
+    }
+  }
+}

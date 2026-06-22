@@ -1,0 +1,49 @@
+{
+  "model_name": "INTEL SSDSC2KB480G8",
+  "serial_number": "CVFT12345678",
+  "firmware_version": "MDV101",
+  "user_capacity": {
+    "bytes": 480103981312
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "rotation_rate": 0,
+  "power_on_time": {
+    "hours": 20000
+  },
+  "ata_smart_attributes": {
+    "table": [
+      {
+        "id": 5,
+        "name": "Reallocated_Sector_Ct",
+        "value": 93,
+        "thresh": 10,
+        "raw": {
+          "value": 8
+        }
+      },
+      {
+        "id": 177,
+        "name": "Wear_Leveling_Count",
+        "value": 7,
+        "thresh": 0,
+        "raw": {
+          "value": 93
+        }
+      },
+      {
+        "id": 233,
+        "name": "Media_Wearout_Indicator",
+        "value": 7,
+        "thresh": 0,
+        "raw": {
+          "value": 93
+        }
+      }
+    ]
+  },
+  "device": {
+    "protocol": "ATA"
+  }
+}

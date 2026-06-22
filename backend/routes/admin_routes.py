@@ -14,9 +14,10 @@ import urllib.request
 import re
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from threading import Lock
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
-from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK
+from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK, SMART_TEST_LOCKS, SMART_TEST_LOCKS_LOCK
 from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
 from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
 from device_discovery import generate_master_slot_map, validate_pci_address
@@ -27,13 +28,40 @@ from disk_ops import invalidate_drive_cache
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
+from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS, SMART_TEST_GRACE_PERIOD_SECONDS
 from job_management import poll_nvme_sanitize_progress, poll_sata_sanitize_progress, poll_sas_sanitize_progress, get_device_sectors_written
+
+
+def should_update_test_status(started_at, grace_period_seconds=SMART_TEST_GRACE_PERIOD_SECONDS):
+    """Check if enough time has passed to trust drive status.
+    
+    The drive's self-test log may not update immediately after starting a test,
+    so we need a grace period to avoid false completion/failure detection.
+    
+    Args:
+        started_at: ISO format timestamp string of when the test started
+        grace_period_seconds: Minimum seconds to wait before trusting drive status
+        
+    Returns:
+        True if enough time has passed or if started_at is missing/invalid, False otherwise
+    """
+    if not started_at:
+        return True
+    try:
+        start_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+        if elapsed < grace_period_seconds:
+            return False
+    except Exception as e:
+        logger.warning(f"Failed to parse started_at timestamp: {e}")
+    return True
 
 admin_bp = Blueprint('admin_routes', __name__)
 
 # Device name validation patterns following lesson #9 and #15
 # Use \Z (not $) for strict end-of-string anchor to prevent "/dev/sda\n" bypass
-_SATA_DEVICE_RE = re.compile(r'^[a-z]+[0-9]*\Z')
+# Lesson #91: Use specific patterns matching actual system naming conventions
+_SATA_DEVICE_RE = re.compile(r'^sd[a-z][0-9]*\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 
@@ -495,7 +523,13 @@ def admin_triage_config():
                 "hdd_heavy_fdw_threshold": (float, 0.0, 1000.0),
                 "realloc_raw_new_threshold": (int, 0, 1000),
                 "pending_sectors_destroy_threshold": (int, 0, 1000),
-                "pending_sectors_scratch_threshold": (int, 0, 1000)
+                "pending_sectors_scratch_threshold": (int, 0, 1000),
+                "sas_grown_defect_fail_threshold": (int, 0, 100000),
+                "sas_grown_defect_scratch_threshold": (int, 0, 10000),
+                "sas_nme_advisory_threshold": (int, 0, 100000000),
+                "sas_nme_penalty_threshold": (int, 0, 1000000000),
+                "sas_sticky_lba_threshold": (int, 0, 10),
+                "sas_high_poh_threshold": (int, 0, 100000)
             }
             
             # Load existing thresholds and merge new values into them
@@ -1712,6 +1746,586 @@ def get_master_slot_map():
         }), 200
     except Exception as e:
         logger.error(f"Error getting master slot map: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/drives/<device>/smart-export")
+@limiter.limit("30 per minute")
+def export_smart_data(device):
+    """Export raw SMART data for a specific device as a JSON file.
+    
+    Phase 6 Feature E: Per-Drive Raw SMART Export
+    
+    Note: This endpoint returns full, untruncated SMART data for export purposes.
+    For size-limited data suitable for UI display, use the smart-details endpoint.
+    """
+    try:
+        # Validate device name (lesson #9)
+        if not is_valid_device_name(device):
+            return jsonify({"error": "Invalid device name"}), 400
+        
+        # Build device path
+        device_path = f"/dev/{device}"
+        
+        # Check if device is currently being wiped (safety guardrail)
+        with ERASE_JOBS_LOCK:
+            for job in ERASE_JOBS.values():
+                if job.get("status") in {"running", "queued"}:
+                    req = job.get("request", {})
+                    if req.get("device") == device_path:
+                        return jsonify({"error": "Cannot export SMART data while wipe is in progress"}), 409
+        
+        # Import smart_parsing to get SMART data
+        from smart_parsing import get_smart_data
+        
+        # Get SMART data as dictionary
+        smart_data = get_smart_data(device_path)
+        
+        if not smart_data or not smart_data.get("serial"):
+            return jsonify({"error": "Failed to retrieve SMART data"}), 500
+        
+        # Enforce maximum export size (lesson #9) - 10MB limit to prevent abuse
+        export_json = json.dumps(smart_data, indent=2)
+        export_size = len(export_json.encode('utf-8'))
+        MAX_EXPORT_SIZE = 10 * 1024 * 1024  # 10MB
+        if export_size > MAX_EXPORT_SIZE:
+            logger.warning(f"SMART export for {device} exceeded size limit: {export_size} bytes")
+            return jsonify({"error": f"SMART data too large for export ({export_size} bytes > {MAX_EXPORT_SIZE} bytes limit)"}), 413
+        
+        # Extract serial for filename
+        serial = smart_data.get("serial", "unknown")
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"smartctl-{serial}-{timestamp}.json"
+        
+        # Return as JSON file download
+        return send_file(
+            io.BytesIO(export_json.encode('utf-8')),
+            mimetype="application/json",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        logger.error(f"SMART export failed for {device}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/drive-models")
+@require_admin_auth
+@limiter.limit("30 per minute")
+def get_drive_models():
+    """Get drive model risk profiles from drive_models.json.
+    
+    Phase 6 Feature F: Model Risk Profile
+    """
+    try:
+        config_dir = get_config_dir()
+        drive_models_path = os.path.join(config_dir, "drive_models.json")
+        
+        if not os.path.exists(drive_models_path):
+            return jsonify({"drive_models": {}, "message": "No drive models configured"}), 200
+        
+        with open(drive_models_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        return jsonify(data), 200
+    except Exception as e:
+        logger.error(f"Error loading drive models: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/drives/<device>/smart-details")
+@limiter.limit("30 per minute")
+def get_smart_details(device):
+    """Get deep-dive SMART data for a specific device.
+    
+    Phase 7 Feature G: Deep-dive SMART viewer
+    Returns structured attributes, error logs, self-test logs, and protocol-specific logs.
+    """
+    try:
+        # Validate device name (lesson #9)
+        if not is_valid_device_name(device):
+            return jsonify({"error": "Invalid device name"}), 400
+        
+        # Build device path
+        device_path = f"/dev/{device}"
+        
+        # Import smart_parsing to get SMART data
+        from smart_parsing import get_smart_data
+        from database import get_smart_test_history
+        
+        # Get SMART data as dictionary
+        smart_data = get_smart_data(device_path)
+        
+        if not smart_data or not smart_data.get("raw"):
+            return jsonify({"error": "Failed to retrieve SMART data"}), 500
+        
+        # Parse the raw JSON output
+        try:
+            raw_json = json.loads(smart_data["raw"])
+        except json.JSONDecodeError:
+            return jsonify({"error": "Failed to parse SMART data"}), 500
+        
+        # Get database audit history for this device
+        try:
+            audit_history = get_smart_test_history(device=device_path, limit=10)
+        except Exception as e:
+            logger.warning(f"Failed to get SMART test history for {device}: {e}")
+            audit_history = []
+        
+        # Extract structured data with size limits (lesson #9: DoS prevention)
+        result = {
+            "attributes": [],
+            "error_logs": None,
+            "self_test_logs": [],
+            "device_statistics": [],
+            "sas_specific": None,
+            "nvme_specific": None,
+            "truncated": False
+        }
+        
+        # Size limits for DoS prevention
+        MAX_ATTRIBUTES = 100
+        MAX_SELF_TEST_LOGS = 50
+        MAX_DEVICE_STATISTICS_PAGES = 10
+        MAX_JSON_SIZE_BYTES = 100000  # 100KB limit for nested JSON objects
+        
+        # ATA attributes table (limited to MAX_ATTRIBUTES)
+        ata_attrs = raw_json.get("ata_smart_attributes", {}).get("table", [])
+        for attr in ata_attrs[:MAX_ATTRIBUTES]:
+            result["attributes"].append({
+                "id": attr.get("id"),
+                "name": attr.get("name"),
+                "value": attr.get("value"),
+                "worst": attr.get("worst"),
+                "thresh": attr.get("thresh"),
+                "raw": attr.get("raw", {}).get("value"),
+                "flags": attr.get("flags")
+            })
+        if len(ata_attrs) > MAX_ATTRIBUTES:
+            result["truncated"] = True
+        
+        # Error logs (size-limited)
+        if "ata_smart_error_log" in raw_json:
+            error_log_json = json.dumps(raw_json["ata_smart_error_log"])
+            if len(error_log_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
+                result["error_logs"] = raw_json["ata_smart_error_log"]
+            else:
+                result["error_logs"] = {"truncated": True, "reason": "exceeded_size_limit"}
+                result["truncated"] = True
+        
+        # Self-test logs (limited to MAX_SELF_TEST_LOGS)
+        # SMART self-test log hours use 16-bit counters (max 65,535).
+        # For drives with >65,535 power-on hours, log hours will have rolled over.
+        # We use database history and current POH to determine correct hours.
+        # If ambiguous (no history, low hours on high-hour drive), flag for calibration test.
+        current_poh = smart_data.get("power_on_hours")
+        serial = smart_data.get("serial")
+        
+        # Get historical POH from database for this serial
+        historical_poh = None
+        if serial:
+            try:
+                from database import get_historical_poh_for_serial
+                historical_poh = get_historical_poh_for_serial(serial)
+            except Exception as e:
+                logger.warning(f"Failed to get historical POH for {serial}: {e}")
+        
+        # Handle ATA/SATA self-test logs
+        if "ata_smart_self_test_log" in raw_json:
+            ata_self_test_log = raw_json["ata_smart_self_test_log"]
+            # smartctl JSON nests the table under "standard" (for -l selftest) or "extended" (for -x/-l xselftest)
+            self_test_table = (ata_self_test_log.get("standard", {}).get("table", [])
+                               or ata_self_test_log.get("extended", {}).get("table", [])
+                               or ata_self_test_log.get("table", []))
+            logger.debug(f"Device {device}: Found {len(self_test_table)} ATA self-test log entries")
+            for idx, test in enumerate(self_test_table[:MAX_SELF_TEST_LOGS]):
+                log_hours = test.get("hours") or test.get("lifetime_hours")
+                corrected_hours = log_hours
+                rollover_corrected = False
+                ambiguous = False
+                
+                if current_poh and log_hours is not None:
+                    if current_poh < SMART_SELF_TEST_LOG_MAX_HOURS:
+                        # No rollover possible
+                        corrected_hours = log_hours
+                    else:
+                        # POH > 65,535 - rollover has occurred
+                        # Only correct if we have historical evidence that drive was already over 65,535
+                        # when we started tracking it (proves this is our system's data)
+                        if historical_poh and historical_poh > SMART_SELF_TEST_LOG_MAX_HOURS:
+                            # We know from database that drive was already over 65,535 when we first saw it
+                            # Calculate rollovers based on current POH (use 65536 for accurate boundary)
+                            rollover_count = int(current_poh // SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY)
+                            corrected_hours = log_hours + (rollover_count * SMART_SELF_TEST_LOG_MAX_HOURS)
+                            rollover_corrected = True
+                            # Flag ambiguous if near rollover boundary (within 1000 hours)
+                            # or if log hours differ significantly from expected corrected hours
+                            if current_poh > SMART_SELF_TEST_LOG_MAX_HOURS and (abs(current_poh % SMART_SELF_TEST_LOG_MAX_HOURS) < SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS or abs(current_poh - corrected_hours) > SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS):
+                                ambiguous = True
+                        else:
+                            # No database history or drive was under 65,535 when we first saw it
+                            # Don't correct - these may be from another system or before rollover
+                            corrected_hours = log_hours
+                
+                # Handle remaining field: convert string "null" to actual None
+                remaining_raw = test.get("status", {}).get("remaining_percent", test.get("status", {}).get("remaining"))
+                remaining = None if remaining_raw == "null" or remaining_raw is None else remaining_raw
+
+                result["self_test_logs"].append({
+                    "type": test.get("type", {}).get("string"),
+                    "status": test.get("status", {}).get("string"),
+                    "passed": test.get("status", {}).get("passed"),
+                    "remaining": remaining,
+                    "lba": test.get("lba"),
+                    "hours": log_hours,
+                    "corrected_hours": corrected_hours,
+                    "rollover_corrected": rollover_corrected,
+                    "ambiguous": ambiguous,
+                    "log_index": idx
+                })
+            if len(self_test_table) > MAX_SELF_TEST_LOGS:
+                result["truncated"] = True
+        
+        # Handle NVMe self-test logs
+        elif "nvme_self_test_log" in raw_json:
+            nvme_results = raw_json["nvme_self_test_log"].get("results", [])
+            logger.debug(f"Device {device}: Found {len(nvme_results)} NVMe self-test log entries")
+            for idx, test in enumerate(nvme_results[:MAX_SELF_TEST_LOGS]):
+                result["self_test_logs"].append({
+                    "type": test.get("self_test_num", "unknown"),
+                    "status": test.get("result", {}).get("string", "unknown"),
+                    "remaining": 0,
+                    "lba": None,
+                    "hours": None,
+                    "corrected_hours": None,
+                    "rollover_corrected": False,
+                    "ambiguous": False,
+                    "log_index": idx
+                })
+            if len(nvme_results) > MAX_SELF_TEST_LOGS:
+                result["truncated"] = True
+        
+        # Handle SCSI/SAS self-test logs (via SCSI Informational Exceptions)
+        elif "scsi_ie" in raw_json:
+            scsi_ie = raw_json["scsi_ie"]
+            scsi_string = scsi_ie.get("string", "unknown")
+            logger.debug(f"Device {device}: Found SCSI IE log: {scsi_string}")
+            
+            # SAS doesn't have a traditional self-test log like ATA, but we can show the IE status
+            result["self_test_logs"].append({
+                "type": "scsi_ie",
+                "status": scsi_string,
+                "remaining": 0,
+                "lba": None,
+                "hours": None,
+                "corrected_hours": None,
+                "rollover_corrected": False,
+                "ambiguous": False,
+                "log_index": 0
+            })
+        else:
+            logger.debug(f"Device {device}: No self-test log found in SMART data (checked ata_smart_self_test_log, nvme_self_test_log, scsi_ie)")
+        
+        # Include current POH for context
+        result["current_power_on_hours"] = current_poh
+        
+        # Include database audit history
+        result["audit_history"] = audit_history
+        
+        # Device statistics (GP Log 0x04, limited to MAX_DEVICE_STATISTICS_PAGES)
+        if "ata_device_statistics" in raw_json:
+            pages = raw_json["ata_device_statistics"].get("pages", [])
+            if pages and isinstance(pages, list):
+                for page in pages[:MAX_DEVICE_STATISTICS_PAGES]:
+                    page_data = {
+                        "number": page.get("number"),
+                        "table": []
+                    }
+                    page_table = page.get("table", [])
+                    if page_table and isinstance(page_table, list):
+                        for item in page_table:
+                            page_data["table"].append({
+                                "name": item.get("name"),
+                                "value": item.get("value"),
+                                "offset": item.get("offset")
+                            })
+                    result["device_statistics"].append(page_data)
+                if len(pages) > MAX_DEVICE_STATISTICS_PAGES:
+                    result["truncated"] = True
+        
+        # SAS-specific logs (size-limited)
+        if "scsi_grown_defect_list" in raw_json or "scsi_error_counter_log" in raw_json:
+            sas_data = {
+                "grown_defect_list": raw_json.get("scsi_grown_defect_list"),
+                "background_scan_log": raw_json.get("scsi_background_scan_log"),
+                "error_counter_log": raw_json.get("scsi_error_counter_log"),
+                "non_medium_errors": raw_json.get("scsi_non_medium_error_count")
+            }
+            sas_json = json.dumps(sas_data)
+            if len(sas_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
+                result["sas_specific"] = sas_data
+            else:
+                result["sas_specific"] = {"truncated": True, "reason": "exceeded_size_limit"}
+                result["truncated"] = True
+        
+        # NVMe-specific logs (size-limited)
+        if "nvme_smart_health_information_log" in raw_json:
+            nvme_data = {
+                "health_log": raw_json.get("nvme_smart_health_information_log"),
+                "error_log": raw_json.get("nvme_error_log")
+            }
+            nvme_json = json.dumps(nvme_data)
+            if len(nvme_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
+                result["nvme_specific"] = nvme_data
+            else:
+                result["nvme_specific"] = {"truncated": True, "reason": "exceeded_size_limit"}
+                result["truncated"] = True
+        
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"SMART details failed for {device}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@admin_bp.route("/api/admin/drives/<device>/smart-test", methods=["POST"])
+@require_admin_auth
+@limiter.limit("10 per minute")
+def run_smart_test_endpoint(device):
+    """Run a SMART self-test on a device.
+    
+    Phase 7 Feature G: SMART test runner
+    """
+    lock_acquired = False
+    try:
+        # Validate device name (lesson #9)
+        if not is_valid_device_name(device):
+            return jsonify({"error": "Invalid device name"}), 400
+        
+        # Build device path
+        device_path = f"/dev/{device}"
+        
+        # Check if device exists before proceeding
+        if not os.path.exists(device_path):
+            return jsonify({"error": f"Device {device_path} does not exist"}), 404
+        
+        # Check if device is currently being wiped (safety guardrail)
+        with ERASE_JOBS_LOCK:
+            for job in ERASE_JOBS.values():
+                if job.get("status") in {"running", "queued"}:
+                    req = job.get("request", {})
+                    if req.get("device") == device_path:
+                        return jsonify({"error": "Cannot run SMART test while wipe is in progress"}), 409
+        
+        # Lesson #92: Atomic check-then-act for SMART test allocation
+        # Use device-specific lock to prevent concurrent test starts
+        with SMART_TEST_LOCKS_LOCK:
+            if device_path not in SMART_TEST_LOCKS:
+                SMART_TEST_LOCKS[device_path] = Lock()
+        
+        # Acquire device-specific lock (non-blocking to avoid deadlocks)
+        device_lock = SMART_TEST_LOCKS[device_path]
+        if not device_lock.acquire(blocking=False):
+            return jsonify({"error": "A SMART test is already in progress on this device"}), 409
+        
+        lock_acquired = True  # Set immediately after successful acquire
+        # Check if a SMART test is already running on this device (server-side guardrail)
+        # NOTE: This database check is safe for single-process deployment (current setup with Werkzeug).
+        # For multi-worker deployment (e.g., Gunicorn with gevent), this should be replaced with:
+        # - Distributed locks (Redis) for cross-process mutual exclusion, OR
+        # - Atomic database operations (unique constraint on device+status with transaction), OR
+        # - Stick to single-worker deployment (w=1 in Gunicorn)
+        # The in-memory SMART_TEST_LOCKS provide primary protection within a single process.
+        try:
+            from database import get_smart_test_history
+            recent_tests = get_smart_test_history(device=device_path, limit=5)
+            for test in recent_tests:
+                if test.get("status") in {"started", "in_progress"}:
+                    return jsonify({"error": "A SMART test is already in progress on this device"}), 409
+        except Exception as e:
+            logger.warning(f"Failed to check for concurrent SMART tests on {device}: {e}")
+            # Proceed anyway - this is a safety check, not a hard requirement
+        
+        # Phase 7.4: Safety checks - block tests on OS/locked drives and dual-port secondary paths
+        # Check if device is the OS drive
+        os_dev_node = None
+        try:
+            # Check common OS device paths
+            for os_path in ["/dev/sda", "/dev/nvme0n1"]:
+                if os.path.exists(os_path):
+                    try:
+                        if os.path.realpath(device_path) == os.path.realpath(os_path):
+                            logger.warning(f"SMART test rejected for {device}: device is OS drive")
+                            return jsonify({"error": "Cannot run SMART test on OS drive"}), 403
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Failed to check OS drive status for {device}: {e}")
+        
+        # Check if device is mounted (indicates it's in use)
+        try:
+            lsblk_proc = subprocess.run(["lsblk", "-J", "-o", "NAME,MOUNTPOINT"], capture_output=True, text=True, timeout=10, shell=False)
+            if lsblk_proc.returncode == 0:
+                lsblk_data = json.loads(lsblk_proc.stdout)
+                for blockdevice in lsblk_data.get("blockdevices", []):
+                    dev_name = blockdevice.get("name", "")
+                    # Normalize device name to match lsblk output (no /dev/ prefix)
+                    norm_device = device.replace("/dev/", "")
+                    if dev_name == norm_device:
+                        if blockdevice.get("mountpoint") or blockdevice.get("mountpoints"):
+                            logger.warning(f"SMART test rejected for {device}: device is mounted")
+                            return jsonify({"error": "Cannot run SMART test on mounted drive"}), 403
+                        # Check children for mountpoints
+                        for child in blockdevice.get("children", []):
+                            if child.get("mountpoint") or child.get("mountpoints"):
+                                logger.warning(f"SMART test rejected for {device}: device partition is mounted")
+                                return jsonify({"error": "Cannot run SMART test on mounted drive"}), 403
+        except Exception as e:
+            logger.warning(f"Failed to check mount status for {device}: {e}")
+        
+        # Check if device is a dual-port secondary path
+        # This requires checking the current drive discovery data
+        try:
+            from device_discovery import get_discovered_drives
+            discovered = get_discovered_drives()
+            for drive in discovered.values():
+                if drive.get("device") == device_path or drive.get("device") == device:
+                    if drive.get("sas_secondary_path"):
+                        logger.warning(f"SMART test rejected for {device}: device is dual-port secondary path")
+                        return jsonify({"error": "Cannot run SMART test on dual-port secondary path. Use primary path instead."}), 403
+                    if drive.get("locked"):
+                        logger.warning(f"SMART test rejected for {device}: device is locked")
+                        return jsonify({"error": "Cannot run SMART test on locked drive"}), 403
+        except Exception as e:
+            logger.warning(f"Failed to check secondary path status for {device}: {e}")
+        
+        # Get test type from request
+        payload = request.get_json(silent=True) or {}
+        test_type = payload.get("test_type", "short")
+        
+        # Import smart_parsing functions
+        from smart_parsing import run_smart_test, get_smart_data
+        from database import record_smart_test_run
+        
+        # Get serial and interface type for audit log and validation
+        smart_data = get_smart_data(device_path)
+        serial = smart_data.get("serial") if smart_data else None
+        interface_type = smart_data.get("interface_type") if smart_data else None
+
+        # Validate test_type against interface type (conveyance is SATA-only)
+        if test_type == "conveyance":
+            if not interface_type or str(interface_type).lower() not in ("sata", "ata"):
+                return jsonify({"error": "Conveyance test is only supported on SATA/ATA devices"}), 400
+        
+        # Run the test
+        test_result = run_smart_test(device_path, test_type)
+        
+        if "error" in test_result:
+            # Record failed test attempt
+            record_smart_test_run(device_path, serial, test_type, "failed", result=test_result.get("error"))
+            return jsonify(test_result), 400
+        
+        # Record test start in audit log and capture record ID for future updates
+        test_record_id = record_smart_test_run(device_path, serial, test_type, "started")
+        
+        # Store record ID in response for frontend to use in status polling
+        test_result["record_id"] = test_record_id
+        
+        return jsonify(test_result), 200
+    except Exception as e:
+        logger.error(f"SMART test failed for {device}: {e}")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        # Only release the lock if it was acquired
+        if lock_acquired:
+            device_lock.release()
+
+
+@admin_bp.route("/api/admin/drives/<device>/smart-test-status")
+@require_admin_auth
+@limiter.limit("30 per minute")
+def get_smart_test_status_endpoint(device):
+    """Get the status of a running SMART self-test.
+    
+    Phase 7 Feature G: SMART test runner polling
+    """
+    try:
+        # Validate device name (lesson #9)
+        if not is_valid_device_name(device):
+            return jsonify({"error": "Invalid device name"}), 400
+        
+        # Build device path
+        device_path = f"/dev/{device}"
+        
+        # Import smart_parsing function
+        from smart_parsing import get_smart_test_status
+        from database import get_smart_test_history, update_smart_test_run
+        
+        # Get test status from drive (live data)
+        status_result = get_smart_test_status(device_path)
+        
+        if "error" in status_result:
+            return jsonify(status_result), 400
+        
+        # Check database for active test record and update if completed
+        try:
+            recent_tests = get_smart_test_history(device=device_path, limit=1)
+            if recent_tests:
+                latest_test = recent_tests[0]
+                test_status = latest_test.get("status")
+                record_id = latest_test.get("id")
+                started_at = latest_test.get("started_at")
+                
+                # Include started_at in response for frontend grace period check
+                status_result["started_at"] = started_at
+                
+                # If database shows test running but drive shows completed, update database
+                # BUT only if enough time has passed for the test to actually complete.
+                # The drive's self-test log may not update immediately after starting a test,
+                # so we need a grace period to avoid false completion detection.
+                if test_status in ("started", "in_progress") and status_result.get("status") == "completed":
+                    if should_update_test_status(started_at):
+                        # Determine pass/fail: prefer the reliable status.passed boolean
+                        latest_result = status_result.get("latest_result", {})
+                        drive_status = latest_result.get("status", "").lower()
+                        passed = latest_result.get("passed")
+                        
+                        if passed is True:
+                            result = "passed"
+                        elif passed is False:
+                            result = "failed"
+                        elif ("passed" in drive_status or "completed without error" in drive_status or "completed" in drive_status) and "failed" not in drive_status:
+                            result = "passed"
+                        elif "failed" in drive_status or "error" in drive_status:
+                            result = "failed"
+                        else:
+                            result = "unknown"
+                        
+                        logger.debug(f"SMART test {device} completed with drive_status={drive_status}, passed={passed}, result={result}")
+                        # Use optimistic locking with current_updated_at
+                        current_updated_at = latest_test.get("updated_at")
+                        updated = update_smart_test_run(record_id, "completed", result=result, 
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"SMART test {device} record was modified by another process, skipping update")
+                # If database shows test running but drive shows failed, update database
+                # Apply the same grace period check to avoid false failure from old log entries
+                elif test_status in ("started", "in_progress") and status_result.get("status") == "failed":
+                    if should_update_test_status(started_at):
+                        logger.debug(f"SMART test {device} failed according to drive status")
+                        # Use optimistic locking with current_updated_at
+                        current_updated_at = latest_test.get("updated_at")
+                        updated = update_smart_test_run(record_id, "failed", result="failed",
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"SMART test {device} record was modified by another process, skipping update")
+        except Exception as e:
+            logger.warning(f"Failed to update SMART test database record for {device}: {e}")
+        
+        return jsonify(status_result), 200
+    except Exception as e:
+        logger.error(f"SMART test status failed for {device}: {e}")
         return jsonify({"error": str(e)}), 500
 
 

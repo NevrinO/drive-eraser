@@ -23,7 +23,13 @@ const thresholdFields = [
   "hdd_heavy_fdw_threshold",
   "realloc_raw_new_threshold",
   "pending_sectors_destroy_threshold",
-  "pending_sectors_scratch_threshold"
+  "pending_sectors_scratch_threshold",
+  "sas_grown_defect_fail_threshold",
+  "sas_grown_defect_scratch_threshold",
+  "sas_nme_advisory_threshold",
+  "sas_nme_penalty_threshold",
+  "sas_sticky_lba_threshold",
+  "sas_high_poh_threshold"
 ];
 
 // Type mapping for threshold fields (matches backend validation)
@@ -42,7 +48,13 @@ const thresholdFieldTypes = {
   "hdd_heavy_fdw_threshold": "float",
   "realloc_raw_new_threshold": "int",
   "pending_sectors_destroy_threshold": "int",
-  "pending_sectors_scratch_threshold": "int"
+  "pending_sectors_scratch_threshold": "int",
+  "sas_grown_defect_fail_threshold": "int",
+  "sas_grown_defect_scratch_threshold": "int",
+  "sas_nme_advisory_threshold": "int",
+  "sas_nme_penalty_threshold": "int",
+  "sas_sticky_lba_threshold": "int",
+  "sas_high_poh_threshold": "int"
 };
 
 async function loadTriageConfig() {

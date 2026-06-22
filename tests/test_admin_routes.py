@@ -296,6 +296,196 @@ class TestAdminRoutes:
             data = json.loads(response.data)
             assert "confirmation_required" in data["error"]
 
+    # Phase 8: SMART endpoint tests
+    def test_smart_export_invalid_device(self, admin_session):
+        """Test smart-export rejects invalid device names."""
+        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-export')
+        assert response.status_code == 400
+
+    def test_smart_export_success(self, admin_session):
+        """Test smart-export returns JSON file."""
+        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+            mock_get_smart.return_value = {
+                "serial": "TEST123",
+                "model": "Test Drive",
+                "raw": json.dumps({"test": "data"})
+            }
+            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                mock_lock.__enter__ = Mock()
+                mock_lock.__exit__ = Mock()
+                response = admin_session.get('/api/admin/drives/sda/smart-export')
+                assert response.status_code == 200
+                assert "application/json" in response.content_type
+                assert "attachment" in response.headers.get("Content-Disposition", "")
+
+    def test_smart_export_while_wiping(self, admin_session):
+        """Test smart-export blocked during active wipe."""
+        with patch('routes.admin_routes.ERASE_JOBS') as mock_jobs:
+            mock_jobs.values.return_value = [
+                {"status": "running", "request": {"device": "/dev/sda"}}
+            ]
+            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                mock_lock.__enter__ = Mock()
+                mock_lock.__exit__ = Mock()
+                response = admin_session.get('/api/admin/drives/sda/smart-export')
+                assert response.status_code == 409
+                data = json.loads(response.data)
+                assert "wipe is in progress" in data["error"]
+
+    def test_smart_details_invalid_device(self, admin_session):
+        """Test smart-details rejects invalid device names."""
+        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-details')
+        assert response.status_code == 400
+
+    def test_smart_details_success(self, admin_session):
+        """Test smart-details returns structured SMART data."""
+        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+            mock_get_smart.return_value = {
+                "serial": "TEST123",
+                "raw": json.dumps({
+                    "ata_smart_attributes": {"table": [{"id": 1, "name": "Raw_Read_Error_Rate", "value": 100}]}
+                })
+            }
+            response = admin_session.get('/api/admin/drives/sda/smart-details')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert "attributes" in data
+            assert len(data["attributes"]) == 1
+
+    def test_smart_details_size_limits(self, admin_session):
+        """Test smart-details enforces size limits (DoS prevention)."""
+        large_attrs = [{"id": i, "name": f"Attr{i}", "value": 100} for i in range(200)]
+        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+            mock_get_smart.return_value = {
+                "serial": "TEST123",
+                "raw": json.dumps({
+                    "ata_smart_attributes": {"table": large_attrs}
+                })
+            }
+            response = admin_session.get('/api/admin/drives/sda/smart-details')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            # Should be truncated to MAX_ATTRIBUTES (100)
+            assert len(data["attributes"]) == 100
+            assert data["truncated"] is True
+
+    def test_smart_test_invalid_device(self, admin_session):
+        """Test smart-test rejects invalid device names."""
+        response = admin_session.post('/api/admin/drives/../../../etc/passwd/smart-test', json={"test_type": "short"})
+        assert response.status_code == 400
+
+    def test_smart_test_invalid_test_type(self, admin_session):
+        """Test smart-test rejects invalid test types."""
+        with patch('routes.admin_routes.os.path.exists', return_value=True):
+            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                mock_lock.__enter__ = Mock()
+                mock_lock.__exit__ = Mock()
+                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                    mock_test_locks_lock.__enter__ = Mock()
+                    mock_test_locks_lock.__exit__ = Mock()
+                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                        response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "invalid"})
+                        assert response.status_code == 400
+
+    def test_smart_test_success(self, admin_session):
+        """Test smart-test starts a test successfully."""
+        with patch('routes.admin_routes.os.path.exists', return_value=True):
+            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                mock_lock.__enter__ = Mock()
+                mock_lock.__exit__ = Mock()
+                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                    mock_test_locks_lock.__enter__ = Mock()
+                    mock_test_locks_lock.__exit__ = Mock()
+                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+                            mock_get_smart.return_value = {
+                                "serial": "TEST123",
+                                "interface_type": "sata"
+                            }
+                            with patch('routes.admin_routes.run_smart_test') as mock_run_test:
+                                mock_run_test.return_value = {
+                                    "test_type": "short",
+                                    "status": "started",
+                                    "estimated_minutes": 2
+                                }
+                                with patch('routes.admin_routes.record_smart_test_run', return_value=1):
+                                    response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "short"})
+                                    assert response.status_code == 200
+                                    data = json.loads(response.data)
+                                    assert data["status"] == "started"
+
+    def test_smart_test_while_wiping(self, admin_session):
+        """Test smart-test blocked during active wipe."""
+        with patch('routes.admin_routes.os.path.exists', return_value=True):
+            with patch('routes.admin_routes.ERASE_JOBS') as mock_jobs:
+                mock_jobs.values.return_value = [
+                    {"status": "running", "request": {"device": "/dev/sda"}}
+                ]
+                with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                    mock_lock.__enter__ = Mock()
+                    mock_lock.__exit__ = Mock()
+                    response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "short"})
+                    assert response.status_code == 409
+                    data = json.loads(response.data)
+                    assert "wipe is in progress" in data["error"]
+
+    def test_smart_test_conveyance_sata_only(self, admin_session):
+        """Test conveyance test rejected on non-SATA devices."""
+        with patch('routes.admin_routes.os.path.exists', return_value=True):
+            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                mock_lock.__enter__ = Mock()
+                mock_lock.__exit__ = Mock()
+                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                    mock_test_locks_lock.__enter__ = Mock()
+                    mock_test_locks_lock.__exit__ = Mock()
+                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+                            mock_get_smart.return_value = {
+                                "serial": "TEST123",
+                                "interface_type": "sas"
+                            }
+                            response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "conveyance"})
+                            assert response.status_code == 400
+                            data = json.loads(response.data)
+                            assert "Conveyance test is only supported on SATA" in data["error"]
+
+    def test_smart_test_status_invalid_device(self, admin_session):
+        """Test smart-test-status rejects invalid device names."""
+        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-test-status')
+        assert response.status_code == 400
+
+    def test_smart_test_status_success(self, admin_session):
+        """Test smart-test-status returns test status."""
+        with patch('routes.admin_routes.get_smart_test_status') as mock_get_status:
+            mock_get_status.return_value = {
+                "status": "in_progress",
+                "percentage": 50.0,
+                "latest_result": {"type": "Short", "status": "Self-test in progress"}
+            }
+            response = admin_session.get('/api/admin/drives/sda/smart-test-status')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["status"] == "in_progress"
+            assert data["percentage"] == 50.0
+
+    def test_drive_models_endpoint(self, admin_session):
+        """Test drive-models endpoint returns model profiles."""
+        with patch('routes.admin_routes.os.path.exists', return_value=True):
+            with patch('builtins.open', MagicMock(return_value=BytesIO(json.dumps({
+                "drive_models": {
+                    "SEAGATE,ST4000NM0023,0003": {
+                        "vendor": "SEAGATE",
+                        "product": "ST4000NM0023",
+                        "revision": "0003",
+                        "trip_temperature": 60
+                    }
+                }
+            }).encode()))):
+                response = admin_session.get('/api/admin/drive-models')
+                assert response.status_code == 200
+                data = json.loads(response.data)
+                assert "drive_models" in data
+
     def test_manage_logo_post_with_confirmation(self, admin_session):
         """Test POST logo with confirmation."""
         with patch('routes.admin_routes.os.path.exists', return_value=True):

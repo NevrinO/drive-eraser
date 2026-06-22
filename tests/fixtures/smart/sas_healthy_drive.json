@@ -1,0 +1,38 @@
+{
+  "model_name": "ST4000NM0023",
+  "serial_number": "S1Z1M0YR",
+  "vendor": "SEAGATE",
+  "firmware_version": "0003",
+  "user_capacity": {
+    "bytes": 4000000000000
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "rotation_rate": 7200,
+  "power_on_time": {
+    "hours": 30000
+  },
+  "scsi_grown_defect_list": 6,
+  "scsi_non_medium_error_count": 57000000,
+  "scsi_error_counter_log": {
+    "read": {
+      "total_uncorrectable_errors": 0
+    },
+    "write": {
+      "total_uncorrectable_errors": 0
+    },
+    "verify": {
+      "total_uncorrectable_errors": 0
+    }
+  },
+  "scsi_background_scan_log": {
+    "status": {
+      "string": "completed"
+    },
+    "table": []
+  },
+  "device": {
+    "protocol": "SCSI"
+  }
+}

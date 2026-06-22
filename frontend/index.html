@@ -27,6 +27,7 @@
 
     <nav class="tabs" id="mainTabs">
       <button type="button" class="tab-button active" data-tab="workbenchPanel">Active Workbench</button>
+      <button type="button" class="tab-button" data-tab="triagePanel">Batch Intake Triage</button>
       <button type="button" class="tab-button" data-tab="auditPanel">Compliance Audit Vault</button>
       <button type="button" class="tab-button" data-tab="adminPanel">System Administration</button>
     </nav>
@@ -50,7 +51,61 @@
       </div>
     </section>
 
-    <!-- TAB B: AUDIT VAULT -->
+    <!-- TAB B: BATCH INTAKE TRIAGE -->
+    <section id="triagePanel" class="tab-panel">
+      <div class="workbench-controls-header">
+        <div class="section-title">Batch Intake Triage Report</div>
+        <button type="button" id="refreshTriageBtn" class="btn btn--secondary">Refresh Drives</button>
+      </div>
+
+      <div class="triage-controls" style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
+        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+          <label style="font-size: 0.8rem; font-weight: bold;">Filter:</label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
+            <input type="checkbox" id="filterFailed" checked>
+            FAILED
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
+            <input type="checkbox" id="filterHalted" checked>
+            SAS Scan Halted
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
+            <input type="checkbox" id="filterStickyLBA" checked>
+            Sticky LBA
+          </label>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
+            <input type="checkbox" id="filterUncorrectable" checked>
+            Uncorrectable Errors
+          </label>
+          <button type="button" id="printTriageBtn" class="btn btn--primary" style="margin-left: auto;">Print Report</button>
+        </div>
+      </div>
+
+      <div id="triageTableContainer" style="overflow-x: auto;">
+        <table id="triageTable" class="triage-table">
+          <thead>
+            <tr>
+              <th>Bay</th>
+              <th>Serial</th>
+              <th>Model</th>
+              <th>Interface</th>
+              <th>Capacity</th>
+              <th>Health Score</th>
+              <th>Recommendation</th>
+              <th>FAILED</th>
+              <th>SAS Scan Halted</th>
+              <th>Sticky LBA</th>
+              <th>Uncorrectable Errors</th>
+            </tr>
+          </thead>
+          <tbody id="triageTableBody">
+            <!-- Populated dynamically -->
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB C: AUDIT VAULT -->
     <section id="auditPanel" class="tab-panel">
       <div class="section-title">Compliance Search Index</div>
       <div class="control-bar history-controls">
@@ -152,6 +207,13 @@
             <button type="button" id="openTriageConfigBtn" class="btn btn--primary w-full mb-2">Configure Triage Thresholds</button>
             <button type="button" id="openSystemConfigBtn" class="btn btn--secondary w-full">Configure System Settings</button>
           </div>
+        </div>
+
+        <!-- Zone G: Drive Model Risk Profiles -->
+        <div class="admin-card">
+          <div class="card-title">Drive Model Risk Profiles</div>
+          <p class="admin-desc">View configured drive model risk profiles from drive_models.json.</p>
+          <button type="button" id="openDriveModelsBtn" class="btn btn--primary w-full">View Drive Models</button>
         </div>
 
         <!-- Zone E: Template Management -->
@@ -518,92 +580,136 @@
       <div class="modal-content">
         <div id="triageConfigError" class="test-result-label hidden mb-3"></div>
         <form id="triageConfigForm" novalidate>
+          
+          <div class="modal-section-header">Power-On Hours Thresholds</div>
           <div class="form-fields-stack">
-            <div class="modal-section-header">Power-On Hours Thresholds</div>
             <label>
-              SSD New POH Threshold (hours)
+              SSD New POH (hours)
               <input type="number" id="ssd_new_poh_threshold" name="ssd_new_poh_threshold" min="0" max="100000" step="100">
-              <small class="text-muted-xs">Drives below this runtime are considered "new stock"</small>
+              <small class="text-muted-xs">Below this = "new stock"</small>
             </label>
             <label>
-              SSD High POH Threshold (hours)
+              SSD High POH (hours)
               <input type="number" id="ssd_high_poh_threshold" name="ssd_high_poh_threshold" min="0" max="200000" step="1000">
-              <small class="text-muted-xs">Drives above this runtime are flagged as "heavily used"</small>
+              <small class="text-muted-xs">Above this = "heavily used"</small>
             </label>
             <label>
-              HDD New POH Threshold (hours)
+              HDD New POH (hours)
               <input type="number" id="hdd_new_poh_threshold" name="hdd_new_poh_threshold" min="0" max="100000" step="100">
-              <small class="text-muted-xs">Drives below this runtime are considered "new stock"</small>
+              <small class="text-muted-xs">Below this = "new stock"</small>
             </label>
             <label>
-              HDD High POH Threshold (hours)
+              HDD High POH (hours)
               <input type="number" id="hdd_high_poh_threshold" name="hdd_high_poh_threshold" min="0" max="200000" step="1000">
-              <small class="text-muted-xs">Drives above this runtime are flagged as "heavily used"</small>
-            </label>
-
-            <div class="modal-section-header">Health Score Thresholds</div>
-            <label>
-              Health Score Destroy Threshold
-              <input type="number" id="health_score_destroy_threshold" name="health_score_destroy_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">Drives at or below this score are marked for destruction</small>
-            </label>
-            <label>
-              Health Score Scratch Threshold
-              <input type="number" id="health_score_scratch_threshold" name="health_score_scratch_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">Drives at or below this score are marked for scratch use only</small>
-            </label>
-
-            <div class="modal-section-header">SSD Remaining Life Thresholds</div>
-            <label>
-              SSD Remaining Life Destroy Threshold (%)
-              <input type="number" id="ssd_remaining_life_destroy_threshold" name="ssd_remaining_life_destroy_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">SSDs with less than this life remaining are marked for destruction</small>
-            </label>
-            <label>
-              SSD Remaining Life Scratch Threshold (%)
-              <input type="number" id="ssd_remaining_life_scratch_threshold" name="ssd_remaining_life_scratch_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">SSDs with less than this life remaining are marked for scratch use</small>
-            </label>
-            <label>
-              SSD Remaining Life Good Threshold (%)
-              <input type="number" id="ssd_remaining_life_good_threshold" name="ssd_remaining_life_good_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">SSDs with at least this life remaining are considered "good"</small>
-            </label>
-
-            <div class="modal-section-header">Full Drive Writes (FDW) Thresholds</div>
-            <label>
-              SSD New FDW Threshold
-              <input type="number" id="ssd_new_fdw_threshold" name="ssd_new_fdw_threshold" min="0" max="100" step="0.01">
-              <small class="text-muted-xs">SSDs below this FDW ratio are considered "new stock"</small>
-            </label>
-            <label>
-              HDD New FDW Threshold
-              <input type="number" id="hdd_new_fdw_threshold" name="hdd_new_fdw_threshold" min="0" max="100" step="0.1">
-              <small class="text-muted-xs">HDDs below this FDW ratio are considered "new stock"</small>
-            </label>
-            <label>
-              HDD Heavy FDW Threshold
-              <input type="number" id="hdd_heavy_fdw_threshold" name="hdd_heavy_fdw_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">HDDs above this FDW ratio are flagged as "heavily used"</small>
-            </label>
-
-            <div class="modal-section-header">Sector Thresholds</div>
-            <label>
-              Realloc Raw New Threshold
-              <input type="number" id="realloc_raw_new_threshold" name="realloc_raw_new_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Drives with this many reallocated sectors are still considered "new"</small>
-            </label>
-            <label>
-              Pending Sectors Destroy Threshold
-              <input type="number" id="pending_sectors_destroy_threshold" name="pending_sectors_destroy_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Drives with more pending sectors are marked for destruction</small>
-            </label>
-            <label>
-              Pending Sectors Scratch Threshold
-              <input type="number" id="pending_sectors_scratch_threshold" name="pending_sectors_scratch_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Drives with more pending sectors are marked for scratch use</small>
+              <small class="text-muted-xs">Above this = "heavily used"</small>
             </label>
           </div>
+
+          <div class="modal-section-header">Health Score Thresholds</div>
+          <div class="form-fields-stack">
+            <label>
+              Destroy Threshold
+              <input type="number" id="health_score_destroy_threshold" name="health_score_destroy_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">At or below = destroy</small>
+            </label>
+            <label>
+              Scratch Threshold
+              <input type="number" id="health_score_scratch_threshold" name="health_score_scratch_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">At or below = scratch only</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">SSD Remaining Life (%)</div>
+          <div class="form-fields-stack">
+            <label>
+              Destroy Threshold
+              <input type="number" id="ssd_remaining_life_destroy_threshold" name="ssd_remaining_life_destroy_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">Below this = destroy</small>
+            </label>
+            <label>
+              Scratch Threshold
+              <input type="number" id="ssd_remaining_life_scratch_threshold" name="ssd_remaining_life_scratch_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">Below this = scratch</small>
+            </label>
+            <label>
+              Good Threshold
+              <input type="number" id="ssd_remaining_life_good_threshold" name="ssd_remaining_life_good_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">At or above = "good"</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">Workload (FDW) Thresholds</div>
+          <div class="form-fields-stack">
+            <label>
+              SSD New FDW
+              <input type="number" id="ssd_new_fdw_threshold" name="ssd_new_fdw_threshold" min="0" max="100" step="0.01">
+              <small class="text-muted-xs">Below this = "new stock"</small>
+            </label>
+            <label>
+              HDD New FDW
+              <input type="number" id="hdd_new_fdw_threshold" name="hdd_new_fdw_threshold" min="0" max="100" step="0.1">
+              <small class="text-muted-xs">Below this = "new stock"</small>
+            </label>
+            <label>
+              HDD Heavy FDW
+              <input type="number" id="hdd_heavy_fdw_threshold" name="hdd_heavy_fdw_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Above this = "heavily used"</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">Sector Thresholds</div>
+          <div class="form-fields-stack">
+            <label>
+              Realloc New Threshold
+              <input type="number" id="realloc_raw_new_threshold" name="realloc_raw_new_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">This many = still "new"</small>
+            </label>
+            <label>
+              Pending Destroy
+              <input type="number" id="pending_sectors_destroy_threshold" name="pending_sectors_destroy_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Above = destroy</small>
+            </label>
+            <label>
+              Pending Scratch
+              <input type="number" id="pending_sectors_scratch_threshold" name="pending_sectors_scratch_threshold" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Above = scratch</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">SAS-Specific Thresholds</div>
+          <div class="form-fields-stack">
+            <label>
+              Grown Defect Destroy
+              <input type="number" id="sas_grown_defect_fail_threshold" name="sas_grown_defect_fail_threshold" min="0" max="100000" step="100">
+              <small class="text-muted-xs">Above = destroy</small>
+            </label>
+            <label>
+              Grown Defect Scratch
+              <input type="number" id="sas_grown_defect_scratch_threshold" name="sas_grown_defect_scratch_threshold" min="0" max="10000" step="10">
+              <small class="text-muted-xs">Above = scratch</small>
+            </label>
+            <label>
+              NME Advisory
+              <input type="number" id="sas_nme_advisory_threshold" name="sas_nme_advisory_threshold" min="0" max="100000000" step="100000">
+              <small class="text-muted-xs">Above = advisory flag</small>
+            </label>
+            <label>
+              NME Penalty
+              <input type="number" id="sas_nme_penalty_threshold" name="sas_nme_penalty_threshold" min="0" max="1000000000" step="1000000">
+              <small class="text-muted-xs">Above = score penalty</small>
+            </label>
+            <label>
+              Sticky LBA Threshold
+              <input type="number" id="sas_sticky_lba_threshold" name="sas_sticky_lba_threshold" min="0" max="10" step="1">
+              <small class="text-muted-xs">Events above = sticky LBA</small>
+            </label>
+            <label>
+              SAS High POH (hours)
+              <input type="number" id="sas_high_poh_threshold" name="sas_high_poh_threshold" min="0" max="100000" step="1000">
+              <small class="text-muted-xs">Above = heavily used</small>
+            </label>
+          </div>
+
           <button type="submit" id="triageConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Thresholds</button>
         </form>
       </div>
@@ -680,6 +786,31 @@
           </div>
           <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>
         </form>
+      </div>
+    </div>
+  </div>
+
+  <!-- DRIVE MODELS MODAL -->
+  <div id="driveModelsModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="driveModelsTitle" style="max-width: 900px;">
+      <header class="modal-header">
+        <h3 id="driveModelsTitle">Drive Model Risk Profiles</h3>
+        <button type="button" id="driveModelsClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+        <div id="driveModelsError" class="test-result-label hidden mb-3"></div>
+        <div style="margin-bottom: 12px; padding: 12px; background: var(--color-surface-2); border-radius: 4px;">
+          <div style="font-size: 0.8rem; color: var(--color-text-muted); margin-bottom: 8px;">
+            Drive model risk profiles are stored in <code>config/drive_models.json</code>. These profiles contain model-specific thresholds and notes for SMART health assessment.
+          </div>
+          <div style="font-size: 0.75rem; color: var(--color-warning);">
+            To add new entries, edit the JSON file directly. The key format is <code>VENDOR,PRODUCT,REVISION</code>.
+          </div>
+        </div>
+        <div id="driveModelsList" style="max-height: 500px; overflow-y: auto;">
+          <!-- Populated dynamically -->
+        </div>
       </div>
     </div>
   </div>
@@ -877,6 +1008,8 @@
   <script src="/auth.js" defer></script>
   <script src="/driveManagement.js" defer></script>
   <script src="/modals.js" defer></script>
+  <script src="/smartDeepDive.js" defer></script>
+  <script src="/triageReport.js" defer></script>
   <script src="/auditLedger.js" defer></script>
   <script src="/admin/adminUtilities.js" defer></script>
   <script src="/admin/enclosureManagement.js" defer></script>
@@ -889,6 +1022,7 @@
   <script src="/admin/discoveryModal.js" defer></script>
   <script src="/admin/triageConfig.js" defer></script>
   <script src="/admin/systemConfig.js" defer></script>
+  <script src="/admin/driveModels.js" defer></script>
   <script src="/app.js" defer></script>
 </body>
 </html>

@@ -815,11 +815,68 @@ input:focus, select:focus {
   padding: 24px;
 }
 
-.modal-section-header {
-  font-size: 1.1em;
+/* Nested modal styles for stacking */
+.modal--nested .modal-backdrop {
+  z-index: 650;
+}
+
+.modal--nested .modal-dialog {
+  z-index: 660;
+}
+
+.modal-dialog--wide {
+  width: 1200px !important;
+  max-width: 94vw !important;
+}
+
+.modal--nested .modal-dialog--wide {
+  width: 1200px !important;
+  max-width: 94vw !important;
+}
+
+.modal-dialog--wide .modal-content {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.modal-dialog--wide .data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.modal-dialog--wide .data-table th,
+.modal-dialog--wide .data-table td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-dialog--wide .data-table th {
+  background: var(--color-surface-2);
   font-weight: bold;
-  margin-bottom: 10px;
-  margin-top: 16px;
+  white-space: nowrap;
+}
+
+.modal-dialog--wide .data-table td:nth-child(1),
+.modal-dialog--wide .data-table td:nth-child(3),
+.modal-dialog--wide .data-table td:nth-child(4),
+.modal-dialog--wide .data-table td:nth-child(5),
+.modal-dialog--wide .data-table td:nth-child(6) {
+  white-space: nowrap;
+  font-family: monospace;
+}
+
+.modal-dialog--wide .data-table td:nth-child(2) {
+  max-width: 300px;
+  word-wrap: break-word;
+}
+
+.modal-section-header {
+  font-size: 1.05em;
+  font-weight: bold;
+  margin-bottom: 8px;
+  margin-top: 12px;
   color: var(--color-text);
 }
 
@@ -1521,6 +1578,132 @@ input:focus, select:focus {
   .auth-overlay {
     transition: none !important;
     animation: none !important;
+  }
+}
+
+/* Triage Table Styles */
+.triage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  background: var(--color-surface-1);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.triage-table thead {
+  background: var(--color-surface-3);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.triage-table th {
+  padding: 12px 8px;
+  text-align: left;
+  font-weight: bold;
+  border-bottom: 2px solid var(--color-border-strong);
+  white-space: nowrap;
+}
+
+.triage-table td {
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.triage-table tbody tr:hover {
+  background: var(--color-surface-2);
+}
+
+.triage-table .flag-cell {
+  text-align: center;
+  font-weight: bold;
+}
+
+.triage-table .flag-true {
+  color: var(--color-danger);
+  font-weight: bold;
+}
+
+.triage-table .flag-false {
+  color: var(--color-text-muted);
+}
+
+.triage-table .health-score-good {
+  color: var(--color-success);
+  font-weight: bold;
+}
+
+.triage-table .health-score-warning {
+  color: var(--color-warning);
+  font-weight: bold;
+}
+
+.triage-table .health-score-fail {
+  color: var(--color-danger);
+  font-weight: bold;
+}
+
+/* Print Styles for Triage Report */
+@media print {
+  body {
+    background: white;
+    color: black;
+  }
+
+  .app-header,
+  .status-bar,
+  .tabs,
+  .workbench-controls-header,
+  .triage-controls,
+  .batch-action-footer,
+  .modal,
+  .auth-overlay {
+    display: none !important;
+  }
+
+  #triagePanel {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: white;
+    color: black;
+  }
+
+  .triage-table {
+    background: white;
+    color: black;
+    border: 1px solid #000;
+  }
+
+  .triage-table thead {
+    background: #f0f0f0;
+    color: black;
+  }
+
+  .triage-table th,
+  .triage-table td {
+    border: 1px solid #000;
+    color: black;
+  }
+
+  .triage-table .flag-true {
+    color: black;
+    font-weight: bold;
+  }
+
+  .triage-table .flag-false {
+    color: #666;
+  }
+
+  .triage-table .health-score-good,
+  .triage-table .health-score-warning,
+  .triage-table .health-score-fail {
+    color: black;
   }
 }
 

@@ -23,7 +23,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data, None)
 
         # For NVMe, health = 100 - wear_level = 89
         assert health == 89, f"Expected health 89, got {health}"
@@ -43,7 +43,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data, None)
 
         # Base health 89, penalty for POH > threshold: max 20% = 69 minimum
         assert health >= 69, f"Expected health >= 69, got {health}"
@@ -64,7 +64,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data, None)
 
         # Base health 89, quadratic penalty at 50% position = 5 points = 84
         assert health >= 83, f"Expected health >= 83, got {health}"
@@ -85,7 +85,7 @@ class TestHDDMechanicalAging:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data, None)
 
         # POH penalty: (30000-20000)/40000*30 = 7.5, FDW penalty: (5/200)*30 = 0.75
         # Base: 100 - 7.5 - 0.75 = 91.75, min 40
@@ -102,7 +102,7 @@ class TestHDDMechanicalAging:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data, None)
 
         # POH penalty: 7.5, FDW penalty: (200/200)*30 = 30
         # Base: 100 - 7.5 - 30 = 62.5
@@ -121,7 +121,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data, None)
 
         # HDD penalty: 10 for 1 sector
         assert health <= 90, f"Expected health <= 90 (10% penalty), got {health}"
@@ -135,7 +135,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data, None)
 
         # HDD penalty: 10 + (6-1)*5 = 35 for 6 sectors
         assert health <= 65, f"Expected health <= 65 (35% penalty), got {health}"
@@ -150,7 +150,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data, None)
 
         # SSD with 100% spare has no penalty
         assert health >= 90, f"Expected health >= 90 (no penalty), got {health}"
@@ -183,7 +183,7 @@ class TestSASGListIntegrity:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sas", smart_data, None)
+        health, _ = calculate_drive_health_score("sas", smart_data, None)
 
         # Interface errors no longer penalized
         assert health >= 95, f"Expected health >= 95, got {health}"
@@ -198,7 +198,7 @@ class TestSASGListIntegrity:
             "status": "PASSED"
         }
 
-        health = calculate_drive_health_score("sas", smart_data, None)
+        health, _ = calculate_drive_health_score("sas", smart_data, None)
 
         # No reallocated sectors, interface errors no longer penalized
         assert health >= 95, f"Expected health >= 95, got {health}"
@@ -492,6 +492,140 @@ class TestTriageThresholds:
         with patch('smart_parsing.load_policy', return_value={"triage_thresholds": {"ssd_new_poh_threshold": 1000}}):
             thresholds = get_triage_thresholds()
             assert thresholds["ssd_new_poh_threshold"] == 1000
+
+    def test_sas_thresholds_in_defaults(self):
+        """Test that new SAS-specific thresholds are present in defaults."""
+        from smart_parsing import get_triage_thresholds
+
+        thresholds = get_triage_thresholds()
+        assert "sas_grown_defect_fail_threshold" in thresholds
+        assert "sas_grown_defect_scratch_threshold" in thresholds
+        assert "sas_nme_advisory_threshold" in thresholds
+        assert "sas_nme_penalty_threshold" in thresholds
+        assert "sas_sticky_lba_threshold" in thresholds
+        assert "sas_high_poh_threshold" in thresholds
+        assert thresholds["sas_grown_defect_fail_threshold"] == 10000
+        assert thresholds["sas_grown_defect_scratch_threshold"] == 100
+        assert thresholds["sas_nme_advisory_threshold"] == 1000000
+        assert thresholds["sas_nme_penalty_threshold"] == 100000000
+        assert thresholds["sas_sticky_lba_threshold"] == 3
+        assert thresholds["sas_high_poh_threshold"] == 50000
+
+
+class TestSASFields:
+    """Test new SAS-specific fields in smart data."""
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    def test_sas_fields_present_in_empty_template(self, mock_get_command_path, mock_run_command):
+        """Test that SAS-specific fields are present in the empty template."""
+        from smart_parsing import get_smart_data
+
+        mock_get_command_path.return_value = None
+        result = get_smart_data("/dev/sda")
+
+        assert "sas_grown_defect_list" in result
+        assert "sas_scan_status" in result
+        assert "sas_non_medium_errors" in result
+        assert "sas_uncorrectable_read_errors" in result
+        assert "sas_uncorrectable_write_errors" in result
+        assert "sas_uncorrectable_verify_errors" in result
+        assert "sas_scan_event_count" in result
+        assert "sas_scan_unique_lbas" in result
+        assert "sas_sticky_lba_detected" in result
+        assert "model_profile" in result
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    @patch('smart_parsing.get_config_dir')
+    @patch('os.path.exists')
+    def test_model_profile_loading(self, mock_exists, mock_get_config_dir, mock_get_command_path, mock_run_command):
+        """Test that model_profile is loaded from drive_models.json."""
+        from smart_parsing import get_smart_data
+        import tempfile
+        import json as json_lib
+
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json_lib.dumps({
+            "model_name": "ST4000NM0023",
+            "serial_number": "Z1Z3MFCJ",
+            "vendor": "SEAGATE",
+            "firmware_version": "0003",
+            "user_capacity": {"bytes": 4000000000000},
+            "smart_status": {"passed": True}
+        })
+
+        # Create a temporary config directory with drive_models.json
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mock_get_config_dir.return_value = tmpdir
+            drive_models_path = f"{tmpdir}/drive_models.json"
+            mock_exists.side_effect = lambda path: path == drive_models_path
+
+            with open(drive_models_path, "w") as f:
+                json_lib.dump({
+                    "drive_models": {
+                        "SEAGATE,ST4000NM0023,0003": {
+                            "vendor": "SEAGATE",
+                            "product": "ST4000NM0023",
+                            "revision": "0003",
+                            "trip_temperature": 60,
+                            "nme_normal_range_max": 100000000,
+                            "notes": "Test entry"
+                        }
+                    }
+                }, f)
+
+            result = get_smart_data("/dev/sda")
+            assert result["model_profile"] is not None
+            assert result["model_profile"]["vendor"] == "SEAGATE"
+            assert result["model_profile"]["product"] == "ST4000NM0023"
+            assert result["model_profile"]["revision"] == "0003"
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    def test_sas_fields_populated_from_smartctl(self, mock_get_command_path, mock_run_command):
+        """Test that SAS-specific fields are populated from smartctl JSON output."""
+        from smart_parsing import get_smart_data
+        import json as json_lib
+
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json_lib.dumps({
+            "model_name": "ST4000NM0023",
+            "serial_number": "Z1Z3MFCJ",
+            "vendor": "SEAGATE",
+            "firmware_version": "0003",
+            "user_capacity": {"bytes": 4000000000000},
+            "smart_status": {"passed": True},
+            "scsi_grown_defect_list": 150,
+            "scsi_non_medium_error_count": 5000,
+            "scsi_error_counter_log": {
+                "read": {"total_uncorrectable_errors": 10},
+                "write": {"total_uncorrectable_errors": 5},
+                "verify": {"total_uncorrectable_errors": 2}
+            },
+            "scsi_self_test_log": {
+                "table": [
+                    {"status": "Completed without error", "lba": 1000},
+                    {"status": "Completed without error", "lba": 2000},
+                    {"status": "Completed: read failure", "lba": 3000},
+                    {"status": "Completed: read failure", "lba": 3000},
+                    {"status": "Completed: read failure", "lba": 3000}
+                ]
+            }
+        })
+
+        result = get_smart_data("/dev/sda")
+        
+        # Verify SAS fields are populated
+        assert result["sas_grown_defect_list"] == 150
+        assert result["sas_non_medium_errors"] == 5000
+        assert result["sas_uncorrectable_read_errors"] == 10
+        assert result["sas_uncorrectable_write_errors"] == 5
+        assert result["sas_uncorrectable_verify_errors"] == 2
+        assert result["sas_scan_status"] == "COMPLETED"
+        assert result["sas_scan_event_count"] == 5
+        assert result["sas_scan_unique_lbas"] == 3  # 1000, 2000, 3000
+        assert result["sas_sticky_lba_detected"] == True  # LBA 3000 has 3 errors
 
 
 if __name__ == "__main__":

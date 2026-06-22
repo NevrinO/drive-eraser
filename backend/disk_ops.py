@@ -11,17 +11,17 @@ import subprocess
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 
-from common import get_config_dir, load_policy
+from common import get_config_dir, load_policy, DRIVE_DATA_CACHE_TTL
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
 from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
 from disk_capabilities import detect_drive_capabilities
 from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map, resolve_multipath_parent
+from database import record_intake_snapshot
 
 # Performance: per-device cache for expensive drive data (SMART, capabilities, marker).
 # Presence detection (by-path resolution) is intentionally NOT cached so drive
 # insertion/removal is still detected in near real time on every discovery call.
 _DRIVE_DATA_CACHE = {}  # cache_key -> {'data': payload, 'timestamp': ts}
-_DRIVE_DATA_CACHE_TTL = 30  # seconds
 _DRIVE_DATA_CACHE_LOCK = threading.Lock()
 
 # Performance: cached OS drive lookup (OS drive cannot change while the service runs)
@@ -180,7 +180,7 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
     """Collect all expensive per-drive data (SMART, capabilities, marker) for one device.
 
     Runs in a worker thread during parallel discovery. Returns a payload dict that is
-    merged into the bay record and cached for _DRIVE_DATA_CACHE_TTL seconds.
+    merged into the bay record and cached for DRIVE_DATA_CACHE_TTL seconds.
     """
     command_diagnostics = {}
     smart = get_smart_data(dev_node, command_diagnostics)
@@ -193,9 +193,17 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         marker_status["is_pristine"] = is_pristine
         marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
 
-    health_score = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
+    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
     recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
     drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
+
+    # Phase 4: Record intake snapshot for tracking drive history
+    serial = smart.get("serial")
+    if serial:
+        try:
+            record_intake_snapshot(serial, smart, recommendation, health_score=health_score)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Failed to record intake snapshot for {serial}: {e}")
 
     return {
         "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
@@ -205,7 +213,8 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         "smart": {
             "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
             "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
-            "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw")
+            "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+            "penalty_breakdown": penalty_breakdown
         }
     }
 
@@ -229,18 +238,47 @@ def _apply_collection_failure(bay_info, dev_node, reason):
     bay_info.update({"present": True, "device": dev_node, "status": "UNKNOWN"})
     bay_info["diagnostics"]["commands"]["collection"] = {"ok": False, "reason": reason}
 
+def _audit_dual_port_deduplication(results):
+    """Audit for dual-port SAS drives: if two device nodes share a serial, mark one as secondary path.
+    
+    This prevents concurrent wipe jobs from being issued to both paths of the same physical drive.
+    The first occurrence (by bay order) is considered primary, subsequent duplicates are marked secondary.
+    """
+    serial_to_devices = {}
+    # First pass: collect all serials and their device nodes
+    for bay_info in results:
+        serial = bay_info.get("serial")
+        device = bay_info.get("device")
+        if serial and device and bay_info.get("present"):
+            if serial not in serial_to_devices:
+                serial_to_devices[serial] = []
+            serial_to_devices[serial].append(bay_info)
+    
+    # Second pass: mark secondary paths for duplicates
+    for serial, device_list in serial_to_devices.items():
+        if len(device_list) > 1:
+            # Multiple devices with same serial - mark all but first as secondary
+            for i, bay_info in enumerate(device_list):
+                if i > 0:  # First device is primary, rest are secondary
+                    bay_info["sas_secondary_path"] = True
+                    bay_info["recommendation"] = {"status": "LOCKED", "comment": "Secondary path of dual-port SAS drive. Use primary path for operations."}
+                    bay_info["supported_methods"] = []
+                    bay_info["diagnostics"]["commands"]["collection"] = {"ok": True, "reason": "secondary_path_deduplication"}
+                else:
+                    bay_info["sas_secondary_path"] = False
+
 def _store_drive_payload(cache_key, payload):
     """Store a fresh payload in the per-device cache and prune expired entries."""
     now = time.time()
     with _DRIVE_DATA_CACHE_LOCK:
-        for key in [k for k, v in _DRIVE_DATA_CACHE.items() if (now - v['timestamp']) >= _DRIVE_DATA_CACHE_TTL]:
+        for key in [k for k, v in _DRIVE_DATA_CACHE.items() if (now - v['timestamp']) >= DRIVE_DATA_CACHE_TTL]:
             del _DRIVE_DATA_CACHE[key]
         _DRIVE_DATA_CACHE[cache_key] = {'data': payload, 'timestamp': now}
 
 def _get_cached_drive_payload(cache_key):
     with _DRIVE_DATA_CACHE_LOCK:
         entry = _DRIVE_DATA_CACHE.get(cache_key)
-        if entry and (time.time() - entry['timestamp']) < _DRIVE_DATA_CACHE_TTL:
+        if entry and (time.time() - entry['timestamp']) < DRIVE_DATA_CACHE_TTL:
             return entry['data']
     return None
 
@@ -610,6 +648,9 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
             _collect_pending_serial(pending, passphrase)
 
+    # Phase 6: dual-port deduplication audit
+    _audit_dual_port_deduplication(results)
+
     return results
 
 
@@ -741,5 +782,8 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
         except Exception as e:
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
             _collect_pending_serial(pending, passphrase)
+
+    # Phase 6: dual-port deduplication audit
+    _audit_dual_port_deduplication(results)
 
     return results

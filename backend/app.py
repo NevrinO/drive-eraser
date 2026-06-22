@@ -3,6 +3,8 @@
 # This file imports and registers all modular components
 
 import signal
+import threading
+import time
 from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
 
@@ -59,6 +61,7 @@ def _centralized_signal_handler(signum, frame):
     crypto_verification._handle_verification_signal(signum, frame)
     disk_ops._handle_discovery_signal(signum, frame)
     udev_listener.stop_udev_listener()
+    stop_smart_test_update_thread()
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")
@@ -79,6 +82,14 @@ def add_security_headers(response):
     response.headers['Content-Security-Policy'] = csp_header
     return response
 
+# Global error handler to ensure all errors return JSON instead of HTML
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Global exception handler to return JSON for all errors."""
+    logger.error(f"Unhandled exception: {e}", exc_info=True)
+    # Return JSON error response for all exceptions
+    return jsonify({"error": str(e)}), 500
+
 # Initialize database on module import (required for WSGI deployments)
 init_wipe_db()
 
@@ -87,6 +98,122 @@ udev_listener.set_websocket_manager(socketio)
 
 # Start udev event listener for real-time device discovery
 udev_listener.start_udev_listener()
+
+# Background thread to update SMART test status in database
+SMART_TEST_UPDATE_INTERVAL = 30  # Check every 30 seconds
+smart_test_update_thread = None
+smart_test_update_stop_event = threading.Event()
+
+def update_smart_test_status_background():
+    """Background thread to update SMART test status in database.
+    
+    This ensures that tests complete even if the user closes the modal
+    and stops polling. The database is updated based on drive status.
+    Uses optimistic locking to prevent race conditions with frontend polling.
+    """
+    import os
+    from database import get_smart_test_history, update_smart_test_run
+    from smart_parsing import get_smart_test_status
+    from routes.admin_routes import should_update_test_status
+    
+    logger.info("SMART test status background thread started")
+    
+    while not smart_test_update_stop_event.is_set():
+        try:
+            # Get all tests that are still in progress
+            recent_tests = get_smart_test_history(limit=100)
+            
+            for test in recent_tests:
+                if test.get("status") not in ("started", "in_progress"):
+                    continue
+                
+                device = test.get("device")
+                if not device:
+                    continue
+                
+                # Check if device still exists before querying SMART status
+                if not os.path.exists(device):
+                    logger.debug(f"Device {device} no longer exists, skipping SMART status check")
+                    continue
+                
+                try:
+                    # Get live status from drive
+                    status_result = get_smart_test_status(device)
+                    
+                    if "error" in status_result:
+                        continue
+                    
+                    record_id = test.get("id")
+                    started_at = test.get("started_at")
+                    current_updated_at = test.get("updated_at")
+                    drive_status = status_result.get("status")
+                    
+                    # Update database if drive shows completed and grace period elapsed
+                    if drive_status == "completed" and should_update_test_status(started_at):
+                        latest_result = status_result.get("latest_result", {})
+                        passed = latest_result.get("passed")
+                        
+                        if passed is True:
+                            result = "passed"
+                        elif passed is False:
+                            result = "failed"
+                        else:
+                            drive_status_str = latest_result.get("status", "").lower()
+                            if ("passed" in drive_status_str or "completed without error" in drive_status_str) and "failed" not in drive_status_str:
+                                result = "passed"
+                            elif "failed" in drive_status_str or "error" in drive_status_str:
+                                result = "failed"
+                            else:
+                                result = "unknown"
+                        
+                        logger.info(f"Background update: SMART test {device} completed with result={result}")
+                        # Use optimistic locking with current_updated_at
+                        updated = update_smart_test_run(record_id, "completed", result=result, 
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                    
+                    # Update database if drive shows failed and grace period elapsed
+                    elif drive_status == "failed" and should_update_test_status(started_at):
+                        logger.info(f"Background update: SMART test {device} failed")
+                        # Use optimistic locking with current_updated_at
+                        updated = update_smart_test_run(record_id, "failed", result="failed",
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                
+                except Exception as e:
+                    logger.warning(f"Failed to update SMART test status for {device}: {e}")
+        
+        except Exception as e:
+            logger.error(f"SMART test status background thread error: {e}")
+        
+        # Wait for interval or stop event
+        smart_test_update_stop_event.wait(SMART_TEST_UPDATE_INTERVAL)
+    
+    logger.info("SMART test status background thread stopped")
+
+def start_smart_test_update_thread():
+    """Start the background thread for SMART test status updates."""
+    global smart_test_update_thread
+    if smart_test_update_thread is None or not smart_test_update_thread.is_alive():
+        smart_test_update_stop_event.clear()
+        smart_test_update_thread = threading.Thread(target=update_smart_test_status_background, daemon=True)
+        smart_test_update_thread.start()
+        logger.info("Started SMART test status background thread")
+
+def stop_smart_test_update_thread():
+    """Stop the background thread for SMART test status updates."""
+    global smart_test_update_thread
+    if smart_test_update_thread and smart_test_update_thread.is_alive():
+        smart_test_update_stop_event.set()
+        smart_test_update_thread.join(timeout=5)
+        logger.info("Stopped SMART test status background thread")
+
+# Start the background thread
+start_smart_test_update_thread()
 
 def main():
     """Run the Drive Eraser Flask-SocketIO server."""

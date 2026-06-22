@@ -7,9 +7,7 @@ import hmac
 import copy
 import base64
 import secrets
-import re
 from datetime import datetime, timezone
-from bs4 import BeautifulSoup
 from PIL import Image
 import io
 from common import load_policy, get_cert_dir, get_data_dir, SIGNATURE_KDF_ITERATIONS
@@ -254,6 +252,20 @@ def build_certificate_html(certificate):
     software_versions = certificate.get("software_versions") or {}
     software_versions_text = "; ".join(f"{k}: {v}" for k, v in sorted(software_versions.items())) if software_versions else "Not available"
 
+    # Build SMART diff rows if available
+    smart_diff = certificate.get("smart_diff") or {}
+    smart_diff_rows = ""
+    if smart_diff.get("worsened_metrics"):
+        worsened = smart_diff["worsened_metrics"]
+        for metric in worsened:
+            pre = metric.get("pre_value", "N/A")
+            post = metric.get("post_value", "N/A")
+            delta = metric.get("delta", "N/A")
+            metric_name = metric.get("metric", "Unknown")
+            smart_diff_rows += f"<tr><th>SMART Degradation: {esc(metric_name)}</th><td>Pre: {esc(pre)} → Post: {esc(post)} (Delta: {esc(delta)})</td></tr>"
+    else:
+        smart_diff_rows = '<tr><th>SMART Health Comparison</th><td>No significant SMART metric degradation detected during wipe</td></tr>'
+
     template = """<!doctype html>
 <html lang="en">
 <head>
@@ -291,6 +303,7 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
 <tr><th>Software Versions</th><td>{{SOFTWARE_VERSIONS}}</td></tr>
 <tr><th>Verification Integrity</th><td class="{{STATUS_CLASS}}">{{STATUS_TEXT}}</td></tr>
 <tr><th>Verification Details</th><td><pre>{{VERIFICATION_DETAILS}}</pre></td></tr>
+{{SMART_DIFF_ROWS}}
 {{STANDARD_ROWS}}
 <tr><th>Certificate Integrity</th><td>{{SIGNATURE_STATUS}}</td></tr>
 <tr><th>Audit Signature (HMAC)</th><td><small>{{SIGNATURE}}</small></td></tr>
@@ -337,6 +350,7 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     content = content.replace("{{VERIFICATION_DETAILS}}", json_cell(verification_details))
     content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
     content = content.replace("{{SIGNATURE}}", esc(certificate.get("signature")))
+    content = content.replace("{{SMART_DIFF_ROWS}}", smart_diff_rows)
     content = content.replace("{{STANDARD_ROWS}}", standard_rows)
 
     return content
@@ -583,6 +597,7 @@ def build_certificate(job):
         "verification_evidence": build_verification_evidence(verification, marker),
         "software_versions": software_versions,
         "bad_sectors": bad_sectors_info,
+        "smart_diff": job.get("smart_diff"),
     }
 
     certificate["signature_meta"] = {

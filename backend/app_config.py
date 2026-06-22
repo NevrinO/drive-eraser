@@ -127,6 +127,10 @@ def get_wipe_semaphore():
 BULK_CERT_JOBS = {}
 BULK_CERT_JOBS_LOCK = Lock()
 
+# Lesson #92: Atomic check-then-act for SMART test allocation
+SMART_TEST_LOCKS = {}
+SMART_TEST_LOCKS_LOCK = Lock()
+
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 

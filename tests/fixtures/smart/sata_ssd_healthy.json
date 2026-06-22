@@ -1,0 +1,49 @@
+{
+  "model_name": "Samsung SSD 870 EVO",
+  "serial_number": "S4Z1NY0K123456",
+  "firmware_version": "2B6Q",
+  "user_capacity": {
+    "bytes": 500107862016
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "rotation_rate": 0,
+  "power_on_time": {
+    "hours": 10000
+  },
+  "ata_smart_attributes": {
+    "table": [
+      {
+        "id": 177,
+        "name": "Wear_Leveling_Count",
+        "value": 90,
+        "thresh": 0,
+        "raw": {
+          "value": 10
+        }
+      },
+      {
+        "id": 233,
+        "name": "Media_Wearout_Indicator",
+        "value": 90,
+        "thresh": 0,
+        "raw": {
+          "value": 10
+        }
+      },
+      {
+        "id": 241,
+        "name": "Total_LBAs_Written",
+        "value": 100,
+        "thresh": 0,
+        "raw": {
+          "value": 5000000
+        }
+      }
+    ]
+  },
+  "device": {
+    "protocol": "ATA"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "model_name": "Samsung SSD 970 EVO",
+  "serial_number": "S4Z1NY0K123456",
+  "firmware_version": "2B6Q",
+  "user_capacity": {
+    "bytes": 500107862016
+  },
+  "smart_status": {
+    "passed": true
+  },
+  "nvme_smart_health_information_log": {
+    "percentage_used": 11,
+    "data_units_written": 1000000,
+    "data_units_read": 5000000
+  },
+  "device": {
+    "protocol": "NVMe"
+  }
+}

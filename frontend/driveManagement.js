@@ -449,6 +449,7 @@ function renderBayCard(drive) {
   const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
   const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
   const isUnconfigured = isBayUnconfigured(drive);
+  const isSmartTestRunning = drive.smart_test_status === "running" || drive.smart_test_status === "in_progress";
 
   let stateClass = "healthy";
   let bannerLabel = "READY / UNPROCESSED";
@@ -468,6 +469,9 @@ function renderBayCard(drive) {
   } else if (isRunning) {
     stateClass = "running";
     bannerLabel = "WIPING IN PROGRESS";
+  } else if (isSmartTestRunning) {
+    stateClass = "running";
+    bannerLabel = "SMART TEST RUNNING";
   } else if (isMarkerDisabled) {
     stateClass = "completed";
     bannerLabel = "SANITIZED (NO MARKER)";

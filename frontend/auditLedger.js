@@ -155,6 +155,35 @@ function renderExpandedAuditRow(job) {
   }
 
   // Regular erase jobs
+  // Phase 6 Feature C: Pre/Post-Wipe Diff UI
+  let smartDiffHtml = "";
+  if (isCompleted && job.has_pre_wipe_snapshot && job.has_post_wipe_snapshot) {
+    const smartDiff = job.smart_diff || {};
+    const worsenedMetrics = smartDiff.worsened_metrics || [];
+    
+    let metricsHtml = "";
+    if (worsenedMetrics.length > 0) {
+      metricsHtml = worsenedMetrics.map(metric => `
+        <div class="kv" style="margin-top: 4px;">
+          <span style="color: var(--color-error);">${escapeHtml(metric.metric || "Unknown")}:</span>
+          <span>${escapeHtml(String(metric.pre_value || "N/A"))} → ${escapeHtml(String(metric.post_value || "N/A"))} (Δ${escapeHtml(String(metric.delta || "N/A"))})</span>
+        </div>
+      `).join("");
+    } else {
+      metricsHtml = `<div style="margin-top: 8px; font-size: 0.7rem; color: var(--color-success);">No significant SMART metric degradation detected</div>`;
+    }
+    
+    smartDiffHtml = `
+      <div class="detail-section" style="grid-column: span 2; margin-top: 12px; padding: 14px; background: var(--color-surface-2); border: 1px solid var(--color-border);">
+        <h4 style="margin-bottom: 8px; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.5px;">SMART Data Comparison (Pre-Wipe vs Post-Wipe)</h4>
+        <div style="font-size: 0.7rem; color: var(--color-text-muted); margin-bottom: 8px;">SMART snapshots captured before and after sanitization. Worsened metrics are flagged.</div>
+        <div class="kv"><span>Pre-Wipe Snapshot:</span><span style="color: var(--color-success);">✓ Captured</span></div>
+        <div class="kv"><span>Post-Wipe Snapshot:</span><span style="color: var(--color-success);">✓ Captured</span></div>
+        ${metricsHtml}
+      </div>
+    `;
+  }
+
   return `
     <div class="expanded-audit-details">
       <div class="audit-meta-col">
@@ -173,6 +202,7 @@ function renderExpandedAuditRow(job) {
           <button type="button" class="copy-fields-btn" data-job-index="${escapeHtml(job.id)}" style="padding: 6px;">Copy Fields</button>
         </div>
       </div>
+      ${smartDiffHtml}
       ${diagnosticsHtml}
     </div>
   `;

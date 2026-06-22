@@ -132,6 +132,19 @@ def register_routes(flask_app):
                         ERASE_JOBS[job["id"]] = job
                     persist_job(job)
 
+                    # Phase 4: Capture pre-wipe SMART snapshot
+                    device = validated.get("device")
+                    if device:
+                        try:
+                            from smart_parsing import get_smart_data
+                            command_diagnostics = {}
+                            pre_wipe_smart = get_smart_data(device, command_diagnostics)
+                            if pre_wipe_smart:
+                                from database import save_wipe_smart_snapshot
+                                save_wipe_smart_snapshot(job["id"], "pre", pre_wipe_smart)
+                        except Exception as e:
+                            logger.warning(f"Failed to capture pre-wipe SMART snapshot for job {job['id']}: {e}")
+
                     # Wrap worker to release semaphore when done
                     def worker_with_cleanup(job_id):
                         try:

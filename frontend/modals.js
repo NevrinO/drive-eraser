@@ -87,7 +87,7 @@ function renderLiveDetails(drive) {
 
   let smartDetailsHtml = `
     <div class="kv"><span>SMART Health Status:</span><span class="status-chip ${smartHealthClass}">${smartHealthText}</span></div>
-    <div class="kv"><span>Estimated Remaining Life:</span><span>${remainingLife}</span></div>
+    <div class="kv"><span>NAND Remaining Life:</span><span>${remainingLife}</span></div>
     <div class="kv"><span>Total Lifetime Reads:</span><span>${formatTraffic(drive, 'read')}</span></div>
     <div class="kv"><span>Total Lifetime Writes:</span><span>${formatTraffic(drive, 'written')}</span></div>
     <div class="kv"><span>Power-On Time:</span><span>${formatPowerOnTime(smart.power_on_hours)}</span></div>
@@ -95,6 +95,43 @@ function renderLiveDetails(drive) {
     <div class="kv"><span>Pending/Unstable Sectors:</span><span>${pending}</span></div>
     <div class="kv"><span>SATA Interface Errors:</span><span>${interfaceErrors}</span></div>
   `;
+
+
+  // SMART Export and Deep Dive buttons
+  const deviceName = drive.device ? drive.device.replace('/dev/', '') : '';
+  const smartButtonsHtml = deviceName ? `
+    <div class="detail-section">
+      <h4>SMART Data Tools</h4>
+      <button type="button" class="btn btn--secondary" data-smart-export data-device="${escapeHtml(deviceName)}" data-serial="${escapeHtml(drive.serial || 'unknown')}">Download Raw SMART JSON</button>
+      <button type="button" class="btn btn--secondary" data-deep-dive data-device="${escapeHtml(deviceName)}" data-serial="${escapeHtml(drive.serial || 'unknown')}" data-interface="${escapeHtml(drive.interface_type || 'unknown')}">Open Deep Dive Viewer</button>
+    </div>
+  ` : '';
+
+  // Prior Visit UI (Phase 6 Feature D)
+  let priorVisitHtml = "";
+  const priorVisit = drive.prior_visit;
+  if (priorVisit) {
+    const prevHealthScore = priorVisit.health_score || 0;
+    const currentHealthScore = drive.health_score || 0;
+    const healthDelta = currentHealthScore - prevHealthScore;
+    const healthDeltaClass = healthDelta > 0 ? "status-complete" : healthDelta < 0 ? "status-failed" : "status-view-only";
+    const healthDeltaText = healthDelta > 0 ? `+${healthDelta}` : healthDelta.toString();
+    
+    const prevRecStatus = priorVisit.recommendation || "UNKNOWN";
+    const currentRec = rec.status || "UNKNOWN";
+    
+    priorVisitHtml = `
+      <div class="detail-section">
+        <h4>Previous Visit</h4>
+        <div class="kv"><span>Last Seen:</span><span>${escapeHtml(formatIsoDate(priorVisit.seen_at))}</span></div>
+        <div class="kv"><span>Previous Health Score:</span><span>${prevHealthScore}</span></div>
+        <div class="kv"><span>Current Health Score:</span><span>${currentHealthScore}</span></div>
+        <div class="kv"><span>Health Score Delta:</span><span class="${healthDeltaClass}">${healthDeltaText}</span></div>
+        <div class="kv"><span>Previous Recommendation:</span><span>${escapeHtml(prevRecStatus.replace("_", " ").toUpperCase())}</span></div>
+        <div class="kv"><span>Current Recommendation:</span><span>${escapeHtml(currentRec.replace("_", " ").toUpperCase())}</span></div>
+      </div>
+    `;
+  }
 
   bayDetailContent.innerHTML = `
     <div class="detail-section">
@@ -107,10 +144,11 @@ function renderLiveDetails(drive) {
       <div class="kv"><span>Capacity:</span><span>${escapeHtml(drive.capacity_str)}</span></div>
       <div class="kv"><span>Interface:</span><span>${escapeHtml(drive.interface_type?.toUpperCase() || "-")}</span></div>
     </div>
-    
+
     <div class="detail-section">
-      <h4>Normalized SMART Essentials</h4>
-      ${smartDetailsHtml}
+      <h4>System Triage Recommendation</h4>
+      <div class="kv"><span>Target Destination:</span><span class="status-chip ${recClass}">${escapeHtml(recLabel)}</span></div>
+      <div class="kv"><span>Comments:</span><span>${escapeHtml(rec.comment)}</span></div>
     </div>
 
     <div class="detail-section">
@@ -121,10 +159,13 @@ function renderLiveDetails(drive) {
     </div>
 
     <div class="detail-section">
-      <h4>System Triage Recommendation</h4>
-      <div class="kv"><span>Target Destination:</span><span class="status-chip ${recClass}">${escapeHtml(recLabel)}</span></div>
-      <div class="kv"><span>Comments:</span><span>${escapeHtml(rec.comment)}</span></div>
+      <h4>Normalized SMART Essentials</h4>
+      ${smartDetailsHtml}
     </div>
+
+    ${smartButtonsHtml}
+
+    ${priorVisitHtml}
 
     ${terminalSection}
   `;
@@ -148,4 +189,71 @@ document.querySelectorAll("[data-close-modal='true']").forEach(elem => {
     if (modal) closeModal(modal);
   });
 });
+
+// Event delegation for SMART export buttons
+document.addEventListener("click", (event) => {
+  if (event.target.matches("[data-smart-export]")) {
+    const button = event.target;
+    const device = button.dataset.device;
+    const serial = button.dataset.serial;
+    downloadSmartData(device, serial);
+  }
+});
+
+// Event delegation for Deep Dive buttons
+document.addEventListener("click", (event) => {
+  if (event.target.matches("[data-deep-dive]")) {
+    const button = event.target;
+    const device = button.dataset.device;
+    const serial = button.dataset.serial;
+    const interfaceType = button.dataset.interface;
+    // Keep bay detail modal open - deep dive will stack on top (nested modal)
+    openSmartDeepDive(device, serial, interfaceType);
+  }
+});
+
+// Phase 6 Feature E: Download SMART data
+async function downloadSmartData(device, serial) {
+  try {
+    const response = await safeFetch(`/api/admin/drives/${device}/smart-export`);
+    if (!response.ok) {
+      const error = await response.json();
+      alert(`Failed to download SMART data: ${error.error || "Unknown error"}`);
+      return;
+    }
+    
+    // Get the blob from the response
+    const blob = await response.blob();
+    
+    // Create a download link
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    
+    // Generate filename with timestamp
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+    a.download = `smartctl-${serial}-${timestamp}.json`;
+    
+    // Trigger download
+    document.body.appendChild(a);
+    a.click();
+    
+    // Cleanup
+    window.URL.revokeObjectURL(url);
+    document.body.removeChild(a);
+  } catch (error) {
+    console.error("Failed to download SMART data:", error);
+    alert(`Failed to download SMART data: ${error.message}`);
+  }
+}
+
+// Phase 7 Feature G: Open SMART Deep Dive modal
+function openSmartDeepDive(device, serial, interfaceType) {
+  if (typeof openSmartDeepDiveModal === 'function') {
+    openSmartDeepDiveModal(device, serial, interfaceType);
+  } else {
+    console.error("openSmartDeepDiveModal function not available. Ensure smartDeepDive.js is loaded.");
+    alert("Failed to open SMART Deep Dive viewer");
+  }
+}
 // --- END OF FILE frontend/modals.js ---

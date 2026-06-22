@@ -6,6 +6,9 @@ import time
 import uuid
 import threading
 import logging
+import json
+import sqlite3
+from contextlib import closing
 from datetime import datetime, timezone
 
 # Constants
@@ -36,9 +39,9 @@ def _check_job_interrupted():
 
 from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
-    purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy
+    purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy, get_db_path
 )
-from database import persist_job, load_job
+from database import persist_job, load_job, save_wipe_smart_snapshot, calculate_smart_diff
 from verification import (
     verification_for_method,
     write_marker_and_verify,
@@ -54,7 +57,7 @@ from certificates import build_certificate
 from notifier import send_slack_notification
 from disk_ops import get_os_by_path, invalidate_drive_cache
 from disk_utils import validate_device_path
-from smart_parsing import get_raw_smart_diagnostics
+from smart_parsing import get_raw_smart_diagnostics, get_smart_data
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
 
 def build_recommended_method(drive, policy):
@@ -84,6 +87,8 @@ def validate_single_bay(technician, ticket_number, bay, method_override, drives,
         return None, {"error": f"bay role is not erasable: {bay}"}, 403
     if not selected_drive.get("present"):
         return None, {"error": f"no drive present in bay: {bay}"}, 409
+    if selected_drive.get("sas_secondary_path"):
+        return None, {"error": f"Cannot wipe secondary path of dual-port SAS drive: {bay}"}, 403
 
     # Validate secure mode requirements before proceeding
     strict_audit = policy.get("strict_audit_mode", False)
@@ -742,6 +747,41 @@ def run_erase_job(job_id):
                     warnings_list = []
                 warnings_list.append(f"Initiation process returned non-zero code ({execution.get('exit_code')}), but hardware-level sanitization status verified successfully.")
                 job["result"]["warnings"] = warnings_list
+
+            # Phase 5: Capture post-wipe SMART snapshot after successful verification
+            post_wipe_smart = None
+            try:
+                from smart_parsing import get_smart_data
+                command_diagnostics = {}
+                post_wipe_smart = get_smart_data(device, command_diagnostics)
+                if post_wipe_smart:
+                    save_wipe_smart_snapshot(job_id, "post", post_wipe_smart)
+                    logger.info(f"Job {job_id} (Bay {job['request']['bay']}) post-wipe SMART snapshot captured")
+            except Exception as e:
+                logger.warning(f"Failed to capture post-wipe SMART snapshot for job {job_id}: {e}")
+
+            # Phase 5: Calculate SMART diff if both pre and post snapshots exist
+            if post_wipe_smart:
+                try:
+                    # Load pre-wipe snapshot from database
+                    pre_wipe_smart = None
+                    with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn:
+                        conn.row_factory = sqlite3.Row
+                        row = conn.execute(
+                            "SELECT pre_wipe_smart_json FROM erase_jobs WHERE id = ?",
+                            (job_id,)
+                        ).fetchone()
+                        if row and row["pre_wipe_smart_json"]:
+                            pre_wipe_smart = json.loads(row["pre_wipe_smart_json"])
+
+                    if pre_wipe_smart:
+                        smart_diff = calculate_smart_diff(pre_wipe_smart, post_wipe_smart)
+                        if smart_diff:
+                            job["smart_diff"] = smart_diff
+                            if smart_diff.get("worsened"):
+                                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) SMART metrics worsened during wipe: {smart_diff['worsened']}")
+                except Exception as e:
+                    logger.warning(f"Failed to calculate SMART diff for job {job_id}: {e}")
 
             # Check if post-erase marker is enabled in policy or disabled per request
             policy = load_policy(get_config_dir())

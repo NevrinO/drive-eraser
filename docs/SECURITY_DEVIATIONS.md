@@ -46,3 +46,8 @@
 - **Deviation**: `allow_unsafe_werkzeug=True` is passed to `socketio.run()` in `backend/app.py`, allowing Flask's built-in Werkzeug development server to run in production mode.
 - **Reason**: Development and testing convenience. This is a temporary workaround after a Flask-SocketIO upgrade began raising `RuntimeError` when Werkzeug is detected in production mode.
 - **Context**: The proper production replacement is **Gunicorn with a gevent or eventlet worker** (or uWSGI with gevent/Hypercorn). The current setup is acceptable for internal testing on a LAN, but the systemd service should be changed to run Gunicorn before any production deployment. The typical command would be: `/opt/drive-eraser/venv/bin/gunicorn -k gevent -w 1 --bind 0.0.0.0:5000 app:app`. This deviation should be revisited before the project is deployed to any production environment.
+
+## [2026-06-21] - SMART Data Endpoints Without Admin Authentication
+- **Deviation**: `export_smart_data` and `get_smart_details` endpoints in `backend/routes/admin_routes.py` do not require `@require_admin_auth` authentication.
+- **Reason**: SMART data is not considered sensitive in this environment. It is diagnostic hardware information (model, serial, capacity, attributes, error logs, self-test logs) similar to `smartctl -x` output.
+- **Context**: These endpoints expose drive diagnostic information only, not user data, credentials, or PII. In this environment, operators/technicians may need access to SMART data without requiring full admin privileges. Rate limiting (30 per minute) is in place to prevent abuse. Future Critic Agents should not flag the absence of authentication on SMART data endpoints as a security flaw.

@@ -11,7 +11,8 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 import disk_ops
-from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_TTL, _discovery_interrupt_lock
+from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock
+from common import DRIVE_DATA_CACHE_TTL
 
 
 class TestGetOSParentDevice:
@@ -273,7 +274,7 @@ class TestDriveDataCache:
         with patch('disk_ops._DRIVE_DATA_CACHE_LOCK'):
             _DRIVE_DATA_CACHE[cache_key] = {
                 'data': mock_payload,
-                'timestamp': time.time() - _DRIVE_DATA_CACHE_TTL - 10
+                'timestamp': time.time() - DRIVE_DATA_CACHE_TTL - 10
             }
 
         from disk_ops import _get_cached_drive_payload
