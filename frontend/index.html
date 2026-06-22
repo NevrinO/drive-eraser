@@ -61,22 +61,27 @@
       <div class="triage-controls" style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
         <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
           <label style="font-size: 0.8rem; font-weight: bold;">Filter:</label>
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
-            <input type="checkbox" id="filterFailed" checked>
-            FAILED
-          </label>
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
-            <input type="checkbox" id="filterHalted" checked>
-            SAS Scan Halted
-          </label>
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
-            <input type="checkbox" id="filterStickyLBA" checked>
-            Sticky LBA
-          </label>
-          <label style="display: flex; align-items: center; gap: 6px; font-size: 0.8rem;">
-            <input type="checkbox" id="filterUncorrectable" checked>
-            Uncorrectable Errors
-          </label>
+          <select id="filterInterface" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+            <option value="all">All Interfaces</option>
+            <option value="sata">SATA</option>
+            <option value="sas">SAS</option>
+            <option value="nvme">NVMe</option>
+          </select>
+          <select id="filterMediaType" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+            <option value="all">All Media Types</option>
+            <option value="ssd">SSD</option>
+            <option value="hdd">HDD</option>
+          </select>
+          <select id="filterRecommendation" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+            <option value="all">All Recommendations</option>
+            <option value="new">New Stock</option>
+            <option value="good">Used Good</option>
+            <option value="heavy">Used Heavy</option>
+            <option value="destroy">Destroy</option>
+            <option value="scratch">Scratch</option>
+            <option value="locked">Locked</option>
+            <option value="unknown">Unknown</option>
+          </select>
           <button type="button" id="printTriageBtn" class="btn btn--primary" style="margin-left: auto;">Print Report</button>
         </div>
       </div>
@@ -88,14 +93,12 @@
               <th>Bay</th>
               <th>Serial</th>
               <th>Model</th>
+              <th>Media Type</th>
               <th>Interface</th>
               <th>Capacity</th>
+              <th>POH</th>
               <th>Health Score</th>
               <th>Recommendation</th>
-              <th>FAILED</th>
-              <th>SAS Scan Halted</th>
-              <th>Sticky LBA</th>
-              <th>Uncorrectable Errors</th>
             </tr>
           </thead>
           <tbody id="triageTableBody">
