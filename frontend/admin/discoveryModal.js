@@ -374,14 +374,6 @@ if (discoverSlotsBtn) {
   discoverSlotsBtn.addEventListener("click", discoverSlots);
 }
 
-// Auto-Detect button event listener
-const autoDetectBtn = document.getElementById('btn-auto-detect');
-if (autoDetectBtn) {
-  autoDetectBtn.addEventListener('click', () => {
-    openDiscoveryModal();
-  });
-}
-
 // Grouping mode buttons (Task 4.3)
 function setGroupingMode(mode) {
   const discoveryState = window.DiscoveryState.getDiscoveryState();

@@ -1616,20 +1616,6 @@ input:focus, select:focus {
   background: var(--color-surface-2);
 }
 
-.triage-table .flag-cell {
-  text-align: center;
-  font-weight: bold;
-}
-
-.triage-table .flag-true {
-  color: var(--color-danger);
-  font-weight: bold;
-}
-
-.triage-table .flag-false {
-  color: var(--color-text-muted);
-}
-
 .triage-table .health-score-good {
   color: var(--color-success);
   font-weight: bold;
@@ -1689,15 +1675,6 @@ input:focus, select:focus {
   .triage-table td {
     border: 1px solid #000;
     color: black;
-  }
-
-  .triage-table .flag-true {
-    color: black;
-    font-weight: bold;
-  }
-
-  .triage-table .flag-false {
-    color: #666;
   }
 
   .triage-table .health-score-good,
