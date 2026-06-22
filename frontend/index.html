@@ -205,18 +205,12 @@
         <!-- Zone D: System Configurations -->
         <div class="admin-card">
           <div class="card-title">System Configurations</div>
-          <p class="admin-desc">Configure triage thresholds and system-wide parameters.</p>
+          <p class="admin-desc">Configure triage thresholds, system-wide parameters, and drive model risk profiles.</p>
           <div class="button-stack">
             <button type="button" id="openTriageConfigBtn" class="btn btn--primary w-full mb-2">Configure Triage Thresholds</button>
-            <button type="button" id="openSystemConfigBtn" class="btn btn--secondary w-full">Configure System Settings</button>
+            <button type="button" id="openSystemConfigBtn" class="btn btn--secondary w-full mb-2">Configure System Settings</button>
+            <button type="button" id="openDriveModelsBtn" class="btn btn--secondary w-full">View Drive Models</button>
           </div>
-        </div>
-
-        <!-- Zone G: Drive Model Risk Profiles -->
-        <div class="admin-card">
-          <div class="card-title">Drive Model Risk Profiles</div>
-          <p class="admin-desc">View configured drive model risk profiles from drive_models.json.</p>
-          <button type="button" id="openDriveModelsBtn" class="btn btn--primary w-full">View Drive Models</button>
         </div>
 
         <!-- Zone E: Template Management -->
@@ -297,7 +291,6 @@
           </div>
           <div class="layout-controls-row mt-2">
             <button type="button" id="applyLayoutTemplateBtn" class="btn btn--primary h-fit-content">Apply Template</button>
-            <button id="btn-auto-detect" class="btn btn-secondary" type="button">⚡ Auto-Detect</button>
             <button type="button" id="saveBayMapBtnTop" class="btn btn--primary">Save Mapping</button>
           </div>
 
