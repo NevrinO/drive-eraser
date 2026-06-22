@@ -87,9 +87,9 @@ function renderTriageTable() {
     
     // Bay label: enclosure name + bay name, or just bay name if no enclosure
     let bayLabel;
-    if (drive.enclosure_name && drive.display_number) {
+    if (drive.enclosure_name != null && drive.display_number != null) {
       bayLabel = `${drive.enclosure_name} BAY ${drive.display_number}`;
-    } else if (drive.display_number) {
+    } else if (drive.display_number != null) {
       bayLabel = `BAY ${drive.display_number}`;
     } else {
       bayLabel = (drive.bay || "-").toUpperCase();
