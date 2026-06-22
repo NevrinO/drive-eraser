@@ -41,6 +41,7 @@ from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
     purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy, get_db_path
 )
+from smart_parsing import pre_wipe_health_gate
 from database import persist_job, load_job, save_wipe_smart_snapshot, calculate_smart_diff
 from verification import (
     verification_for_method,
@@ -355,6 +356,52 @@ def run_erase_job(job_id):
 
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}', Interface: '{interface_type}'")
+
+    # Pre-wipe health gate check to prevent starting wipes on failing drives
+    config_dir = get_config_dir()
+    policy = load_policy(config_dir)
+    health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
+    
+    # Check if override was requested
+    health_gate_override = job["request"].get("health_gate_override", False)
+    health_gate_override_justification = job["request"].get("health_gate_override_justification", "")
+    
+    if health_gate_result.get("blocked"):
+        block_reason = health_gate_result.get("block_reason")
+        strict_mode = policy.get("prewipe_health_gate_strict_mode", False)
+        strict_audit_mode = policy.get("strict_audit_mode", False)
+        
+        # Determine if override is allowed
+        override_allowed = not strict_mode and not strict_audit_mode
+        
+        # If override was requested and allowed, log and proceed
+        if health_gate_override and override_allowed:
+            logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) health gate override requested: {block_reason}. Justification: {health_gate_override_justification}")
+            # Update job with override details for audit trail
+            with ERASE_JOBS_LOCK:
+                job = ERASE_JOBS.get(job_id)
+                if job:
+                    job["health_gate_result"] = health_gate_result
+                    job["health_gate_override"] = True
+                    job["health_gate_override_justification"] = health_gate_override_justification
+                    persist_job(job)
+            # Proceed with wipe despite health gate block
+        else:
+            logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) blocked by pre-wipe health gate: {block_reason}")
+            
+            # Update job with health gate failure details
+            with ERASE_JOBS_LOCK:
+                job = ERASE_JOBS.get(job_id)
+                if job:
+                    job["health_gate_result"] = health_gate_result
+                    job["override_allowed"] = override_allowed
+                    persist_job(job)
+            
+            if override_allowed:
+                finalize_failed_job(job_id, f"pre_wipe_health_check_failed_override_available: {block_reason}")
+            else:
+                finalize_failed_job(job_id, f"pre_wipe_health_check_failed: {block_reason}")
+            return
 
     # Capture before-state for all methods for hash comparison verification
     before_state = None

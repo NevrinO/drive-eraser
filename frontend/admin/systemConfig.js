@@ -65,7 +65,53 @@ async function loadSystemConfig() {
     if (wipePassphraseInput) {
       wipePassphraseInput.value = ""; // Never populate the passphrase field for security
     }
-    
+
+    // Health gate settings
+    const healthGateEnabledInput = document.getElementById("prewipe_health_gate_enabled");
+    if (healthGateEnabledInput) {
+      healthGateEnabledInput.value = policy.prewipe_health_gate_enabled ? "true" : "false";
+    }
+
+    const healthGateStrictModeInput = document.getElementById("prewipe_health_gate_strict_mode");
+    if (healthGateStrictModeInput) {
+      healthGateStrictModeInput.value = policy.prewipe_health_gate_strict_mode ? "true" : "false";
+    }
+
+    const healthGateBlockDestroyInput = document.getElementById("prewipe_health_gate_block_destroy");
+    if (healthGateBlockDestroyInput) {
+      healthGateBlockDestroyInput.value = policy.prewipe_health_gate_block_destroy ? "true" : "false";
+    }
+
+    const healthGateBlockScratchInput = document.getElementById("prewipe_health_gate_block_scratch");
+    if (healthGateBlockScratchInput) {
+      healthGateBlockScratchInput.value = policy.prewipe_health_gate_block_scratch ? "true" : "false";
+    }
+
+    const healthGateBlockFailedSmartInput = document.getElementById("prewipe_health_gate_block_failed_smart");
+    if (healthGateBlockFailedSmartInput) {
+      healthGateBlockFailedSmartInput.value = policy.prewipe_health_gate_block_failed_smart ? "true" : "false";
+    }
+
+    const healthGateMaxPendingInput = document.getElementById("prewipe_health_gate_max_pending_sectors");
+    if (healthGateMaxPendingInput) {
+      healthGateMaxPendingInput.value = policy.prewipe_health_gate_max_pending_sectors || 10;
+    }
+
+    const healthGateMaxReallocatedInput = document.getElementById("prewipe_health_gate_max_reallocated_sectors");
+    if (healthGateMaxReallocatedInput) {
+      healthGateMaxReallocatedInput.value = policy.prewipe_health_gate_max_reallocated_sectors || 5;
+    }
+
+    const healthGateMaxInterfaceErrorsInput = document.getElementById("prewipe_health_gate_max_interface_errors");
+    if (healthGateMaxInterfaceErrorsInput) {
+      healthGateMaxInterfaceErrorsInput.value = policy.prewipe_health_gate_max_interface_errors || 100;
+    }
+
+    const healthGateMaxHealthScoreDropInput = document.getElementById("prewipe_health_gate_max_health_score_drop");
+    if (healthGateMaxHealthScoreDropInput) {
+      healthGateMaxHealthScoreDropInput.value = policy.prewipe_health_gate_max_health_score_drop || 20;
+    }
+
     hideError(systemConfigError);
   } catch (error) {
     showError(systemConfigError, `Failed to load system configuration: ${error.message}`);
@@ -204,12 +250,86 @@ function validateForm() {
       wipePassphraseInput.style.borderColor = "";
     }
   }
-  
+
+  // Health gate settings
+  const healthGateEnabledInput = document.getElementById("prewipe_health_gate_enabled");
+  if (healthGateEnabledInput) {
+    formData.prewipe_health_gate_enabled = healthGateEnabledInput.value === "true";
+  }
+
+  const healthGateStrictModeInput = document.getElementById("prewipe_health_gate_strict_mode");
+  if (healthGateStrictModeInput) {
+    formData.prewipe_health_gate_strict_mode = healthGateStrictModeInput.value === "true";
+  }
+
+  const healthGateBlockDestroyInput = document.getElementById("prewipe_health_gate_block_destroy");
+  if (healthGateBlockDestroyInput) {
+    formData.prewipe_health_gate_block_destroy = healthGateBlockDestroyInput.value === "true";
+  }
+
+  const healthGateBlockScratchInput = document.getElementById("prewipe_health_gate_block_scratch");
+  if (healthGateBlockScratchInput) {
+    formData.prewipe_health_gate_block_scratch = healthGateBlockScratchInput.value === "true";
+  }
+
+  const healthGateBlockFailedSmartInput = document.getElementById("prewipe_health_gate_block_failed_smart");
+  if (healthGateBlockFailedSmartInput) {
+    formData.prewipe_health_gate_block_failed_smart = healthGateBlockFailedSmartInput.value === "true";
+  }
+
+  const healthGateMaxPendingInput = document.getElementById("prewipe_health_gate_max_pending_sectors");
+  if (healthGateMaxPendingInput) {
+    const value = parseInt(healthGateMaxPendingInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 1000) {
+      isValid = false;
+      healthGateMaxPendingInput.style.borderColor = "var(--color-danger)";
+    } else {
+      healthGateMaxPendingInput.style.borderColor = "";
+      formData.prewipe_health_gate_max_pending_sectors = value;
+    }
+  }
+
+  const healthGateMaxReallocatedInput = document.getElementById("prewipe_health_gate_max_reallocated_sectors");
+  if (healthGateMaxReallocatedInput) {
+    const value = parseInt(healthGateMaxReallocatedInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 1000) {
+      isValid = false;
+      healthGateMaxReallocatedInput.style.borderColor = "var(--color-danger)";
+    } else {
+      healthGateMaxReallocatedInput.style.borderColor = "";
+      formData.prewipe_health_gate_max_reallocated_sectors = value;
+    }
+  }
+
+  const healthGateMaxInterfaceErrorsInput = document.getElementById("prewipe_health_gate_max_interface_errors");
+  if (healthGateMaxInterfaceErrorsInput) {
+    const value = parseInt(healthGateMaxInterfaceErrorsInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 100000) {
+      isValid = false;
+      healthGateMaxInterfaceErrorsInput.style.borderColor = "var(--color-danger)";
+    } else {
+      healthGateMaxInterfaceErrorsInput.style.borderColor = "";
+      formData.prewipe_health_gate_max_interface_errors = value;
+    }
+  }
+
+  const healthGateMaxHealthScoreDropInput = document.getElementById("prewipe_health_gate_max_health_score_drop");
+  if (healthGateMaxHealthScoreDropInput) {
+    const value = parseInt(healthGateMaxHealthScoreDropInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 100) {
+      isValid = false;
+      healthGateMaxHealthScoreDropInput.style.borderColor = "var(--color-danger)";
+    } else {
+      healthGateMaxHealthScoreDropInput.style.borderColor = "";
+      formData.prewipe_health_gate_max_health_score_drop = value;
+    }
+  }
+
   if (!isValid) {
     showError(systemConfigError, "Please enter valid values for all fields.");
     return null;
   }
-  
+
   return formData;
 }
 

@@ -462,7 +462,7 @@ def admin_policy():
                     return jsonify({"error": error_msg}), 400
             
             # Apply mutations after validation passes
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode"]
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]

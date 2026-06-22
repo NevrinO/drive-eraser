@@ -37,6 +37,15 @@ const batchEraseForm = document.getElementById("batchEraseForm");
 const selectedDrivesConfigList = document.getElementById("selectedDrivesConfigList");
 const dynamicConfirmationHint = document.getElementById("dynamicConfirmationHint");
 const confirmationText = document.getElementById("confirmationText");
+const healthGateWarningModal = document.getElementById("healthGateWarningModal");
+const healthGateWarningContent = document.getElementById("healthGateWarningContent");
+const healthGateOverrideSection = document.getElementById("healthGateOverrideSection");
+const healthGateOverrideJustification = document.getElementById("healthGateOverrideJustification");
+const healthGateOverrideBtn = document.getElementById("healthGateOverrideBtn");
+const healthGateCancelBtn = document.getElementById("healthGateCancelBtn");
+const healthGateWarningClose = document.getElementById("healthGateWarningClose");
+
+let pendingHealthGatePayload = null;
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -725,7 +734,20 @@ batchEraseForm.addEventListener("submit", async (event) => {
       return;
     }
     if (!response.ok) {
-      alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
+      const error = result.error || "Unknown Error";
+      
+      // Check if error is from health gate
+      if (error.includes("pre_wipe_health_check_failed")) {
+        // Parse health gate details if available
+        const isOverrideAvailable = error.includes("override_available");
+        const blockReason = error.split(":")[1]?.trim() || "Unknown health issue";
+        
+        // Show health gate warning modal
+        showHealthGateWarning(blockReason, isOverrideAvailable, payload);
+        return;
+      }
+      
+      alert(`Wipe Rejected: ${error}`);
       return;
     }
     
@@ -746,4 +768,119 @@ batchEraseForm.addEventListener("submit", async (event) => {
 });
 
 refreshButton.addEventListener("click", () => loadDrives(false));
+
+// Health gate warning modal handlers
+function showHealthGateWarning(blockReason, isOverrideAvailable, payload) {
+  const reasonText = blockReason.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+  
+  // Clear existing content
+  healthGateWarningContent.innerHTML = "";
+  
+  // Create warning box
+  const warningBox = document.createElement("div");
+  warningBox.style.padding = "12px";
+  warningBox.style.background = "var(--color-surface-2)";
+  warningBox.style.borderRadius = "4px";
+  warningBox.style.marginBottom = "12px";
+  
+  const warningTitle = document.createElement("div");
+  warningTitle.style.color = "var(--color-warning)";
+  warningTitle.style.fontWeight = "bold";
+  warningTitle.style.marginBottom = "8px";
+  warningTitle.textContent = "⚠️ Health Check Blocked";
+  
+  const reasonDiv = document.createElement("div");
+  reasonDiv.style.fontSize = "0.9rem";
+  const reasonLabel = document.createElement("strong");
+  reasonLabel.textContent = "Reason: ";
+  const reasonSpan = document.createElement("span");
+  reasonSpan.textContent = reasonText;
+  reasonDiv.appendChild(reasonLabel);
+  reasonDiv.appendChild(reasonSpan);
+  
+  warningBox.appendChild(warningTitle);
+  warningBox.appendChild(reasonDiv);
+  
+  // Create description
+  const descriptionDiv = document.createElement("div");
+  descriptionDiv.style.fontSize = "0.85rem";
+  descriptionDiv.style.color = "var(--color-text-muted)";
+  descriptionDiv.textContent = "The pre-wipe health gate detected a critical health issue that may cause the wipe to fail or waste time.";
+  
+  healthGateWarningContent.appendChild(warningBox);
+  healthGateWarningContent.appendChild(descriptionDiv);
+  
+  if (isOverrideAvailable) {
+    healthGateOverrideSection.classList.remove("hidden");
+    healthGateOverrideJustification.value = "";
+  } else {
+    healthGateOverrideSection.classList.add("hidden");
+  }
+  
+  pendingHealthGatePayload = payload;
+  openModal(healthGateWarningModal);
+}
+
+// Health gate modal event handlers
+if (healthGateOverrideBtn) {
+  healthGateOverrideBtn.addEventListener("click", async () => {
+    const justification = healthGateOverrideJustification.value.trim();
+    if (!justification) {
+      alert("Please provide a justification for overriding the health check.");
+      return;
+    }
+    
+    // Add justification to payload
+    if (pendingHealthGatePayload) {
+      pendingHealthGatePayload.health_gate_override_justification = justification;
+    }
+    
+    closeModal(healthGateWarningModal);
+    
+    // Retry the wipe request with override flag
+    try {
+      const response = await safeFetch("/api/erase/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...pendingHealthGatePayload, health_gate_override: true })
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        console.error("Failed to parse batch erase response JSON:", e);
+        alert("Failed to process server response");
+        return;
+      }
+      if (!response.ok) {
+        alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
+        return;
+      }
+      
+      closeModal(batchWipeModal);
+      isBatchMode = false;
+      batchSelectToggleBtn.classList.remove("active");
+      batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
+      selectedBays.clear();
+      batchActionFooter.classList.add("hidden");
+      
+      alert("Sanitization batch successfully initiated with health gate override.");
+      
+      loadDrives();
+      loadHistoryIndex();
+    } catch (err) {
+      alert(`Failed to launch batch process: ${err.message}`);
+    }
+  });
+}
+
+if (healthGateCancelBtn || healthGateWarningClose) {
+  const cancelHandler = () => {
+    closeModal(healthGateWarningModal);
+    pendingHealthGatePayload = null;
+  };
+  if (healthGateCancelBtn) healthGateCancelBtn.addEventListener("click", cancelHandler);
+  if (healthGateWarningClose) healthGateWarningClose.addEventListener("click", cancelHandler);
+}
+
 // --- END OF FILE frontend/driveManagement.js ---

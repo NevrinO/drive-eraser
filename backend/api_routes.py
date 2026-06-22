@@ -117,6 +117,8 @@ def register_routes(flask_app):
             # Extract wipe options from payload
             disable_marker = payload.get("disable_marker", False)
             full_verification = payload.get("full_verification", False)
+            health_gate_override = payload.get("health_gate_override", False)
+            health_gate_override_justification = payload.get("health_gate_override_justification", "")
 
             accepted_jobs = []
             semaphore = get_wipe_semaphore()
@@ -128,6 +130,8 @@ def register_routes(flask_app):
                     # Store wipe options in job request for use during execution
                     job["request"]["disable_marker"] = disable_marker
                     job["request"]["full_verification"] = full_verification
+                    job["request"]["health_gate_override"] = health_gate_override
+                    job["request"]["health_gate_override_justification"] = health_gate_override_justification
                     with ERASE_JOBS_LOCK:
                         ERASE_JOBS[job["id"]] = job
                     persist_job(job)
