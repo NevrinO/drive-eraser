@@ -36,11 +36,10 @@ def get_drives():
             invalidate_scsi_projections_cache()
             invalidate_master_slot_cache()
             invalidate_drive_cache()
-        else:
-            # Normal polling: only invalidate drive cache
-            # Drive presence changes frequently, but hardware topology rarely changes
-            # Hardware topology caches have their own TTL (3600s) and will auto-refresh when needed
-            invalidate_drive_cache()
+        # Normal polling: do NOT invalidate drive cache
+        # The 600s TTL in _get_cached_drive_payload() handles cache expiration
+        # Drive hot-plug events invalidate cache via udev_listener
+        # Other cache invalidations happen on bay mapping changes, wipe completion, policy changes
 
         running_devices = set()
         with ERASE_JOBS_LOCK:
