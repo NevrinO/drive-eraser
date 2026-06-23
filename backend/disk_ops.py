@@ -731,8 +731,29 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
             if dev_node:
                 bay_info["resolved_by_path"] = matched_by_path
 
+        # 3. Auto-detection fallback for placeholder by_path values
+        # If bay has placeholder (REPLACE_ME) or no configured by_path, try to auto-detect
+        if not dev_node and (not target_path or target_path.startswith("REPLACE_ME")):
+            # Generate master slot map for auto-detection (force refresh to guarantee fresh data)
+            master_map = generate_master_slot_map(force_refresh=True)
+            # Try to find a device by slot number using the master map
+            display_number = config.get("display_number")
+            if display_number is not None:
+                for slot_lane in master_map:
+                    # Normalize display_number to int for comparison (config values are strings)
+                    if slot_lane.get("physical_slot_number") == int(display_number):
+                        auto_by_path = slot_lane.get("by_path")
+                        if auto_by_path:
+                            matched_by_path, dev_node = resolve_bay_device(auto_by_path, path_to_dev)
+                            if dev_node:
+                                bay_info["resolved_by_path"] = matched_by_path
+                                bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": "auto_detected"}
+                                break
+
         if dev_node:
-            bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
+            # Only set default mapping reason if not already set (preserves auto_detected reason)
+            if bay_info["diagnostics"]["mapping"]["reason"] is None:
+                bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
 
             # Get controller information for the device (shared PCI scan, no per-drive rescans)
             controller_info = get_controller_for_device(dev_node, controllers=controllers)
