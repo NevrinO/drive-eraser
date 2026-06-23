@@ -42,6 +42,16 @@ _MASTER_SLOT_CACHE = {'data': None, 'timestamp': 0}
 _MASTER_SLOT_CACHE_TTL = 60  # seconds
 _MASTER_SLOT_CACHE_LOCK = threading.Lock()
 
+# Cache for SAS expander detection results to avoid redundant by-path scans
+_SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp': time}
+_SAS_EXPANDER_CACHE_TTL = 180  # seconds
+_SAS_EXPANDER_CACHE_LOCK = threading.Lock()
+
+# Cache for SCSI host slot projections to avoid redundant full scans
+_SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
+_SCSI_PROJECTIONS_CACHE_TTL = 60  # seconds
+_SCSI_PROJECTIONS_CACHE_LOCK = threading.Lock()
+
 def validate_device_path(device: str) -> bool:
     r"""Validate device path against strict whitelist to prevent path traversal and injection.
     
@@ -624,18 +634,28 @@ def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
     return max_slot
 
 
-def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
+def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True) -> Optional[Dict]:
     """Detect if a SCSI host is connected to a SAS expander and extract expander information.
 
     Args:
         host_path: Path to the SCSI host directory (e.g., /sys/class/scsi_host/host0)
         pci_address: PCI address of the controller (e.g., 0000:af:00.0)
+        use_cache: If True, return cached results if available and not expired
 
     Returns:
         Dictionary with expander info if detected, None otherwise:
         - expander_id: SAS expander identifier (e.g., 0x500056b3059bdcff)
         - phy_count: Number of phy ports on the expander
     """
+    # Check cache first if enabled
+    if use_cache:
+        with _SAS_EXPANDER_CACHE_LOCK:
+            now = time.time()
+            if pci_address in _SAS_EXPANDER_CACHE:
+                cached = _SAS_EXPANDER_CACHE[pci_address]
+                if cached['data'] is not None and (now - cached['timestamp']) < _SAS_EXPANDER_CACHE_TTL:
+                    return cached['data']
+
     # Walk up the sysfs tree to find sas_device directories
     device_link = os.path.join(host_path, 'device')
     try:
@@ -724,6 +744,10 @@ def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
         npath = os.path.dirname(npath)
 
     if not expander_id:
+        # Update cache with None result to avoid repeated failed scans
+        if use_cache:
+            with _SAS_EXPANDER_CACHE_LOCK:
+                _SAS_EXPANDER_CACHE[pci_address] = {'data': None, 'timestamp': time.time()}
         return None
 
     # If no phy count found in sas_device directories, fall back to enclosure slot count
@@ -734,10 +758,17 @@ def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
     if total_phy_count == 0:
         total_phy_count = 10  # Common SAS expander configuration
 
-    return {
+    result = {
         'expander_id': expander_id,
         'phy_count': total_phy_count
     }
+
+    # Update cache with successful result
+    if use_cache:
+        with _SAS_EXPANDER_CACHE_LOCK:
+            _SAS_EXPANDER_CACHE[pci_address] = {'data': result, 'timestamp': time.time()}
+
+    return result
 
 
 def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
@@ -934,7 +965,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
 def invalidate_master_slot_cache():
     """Invalidate the master slot map cache to force a fresh scan on next call.
-    
+
     This should be called when hardware topology changes (e.g., bay_map.json modifications
     or physical hardware changes) to ensure the next discovery uses fresh hardware data.
     """
@@ -942,6 +973,29 @@ def invalidate_master_slot_cache():
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
     logging.info("Master slot map cache invalidated")
+
+
+def invalidate_sas_expander_cache():
+    """Invalidate the SAS expander detection cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., SAS expander hot-plug
+    or controller changes) to ensure the next discovery uses fresh hardware data.
+    """
+    with _SAS_EXPANDER_CACHE_LOCK:
+        _SAS_EXPANDER_CACHE.clear()
+    logging.info("SAS expander cache invalidated")
+
+
+def invalidate_scsi_projections_cache():
+    """Invalidate the SCSI host slot projections cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., drive hot-plug/removal
+    or controller changes) to ensure the next discovery uses fresh hardware data.
+    """
+    with _SCSI_PROJECTIONS_CACHE_LOCK:
+        _SCSI_PROJECTIONS_CACHE['data'] = None
+        _SCSI_PROJECTIONS_CACHE['timestamp'] = 0
+    logging.info("SCSI projections cache invalidated")
 
 
 def resolve_multipath_parent(dev_name: str) -> str:
@@ -983,7 +1037,7 @@ def resolve_multipath_parent(dev_name: str) -> str:
     return f"/dev/{dev_name}"
 
 
-def get_scsi_host_slot_projections() -> List[Dict]:
+def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
     """Scan SCSI hosts and project slot by-path information for physical bay mapping.
 
     This function implements the logic from the bash script that:
@@ -996,6 +1050,9 @@ def get_scsi_host_slot_projections() -> List[Dict]:
     7. Filters out SES/enclosure management devices by checking device type
     8. Uses enclosure metadata to determine max slot for complete enumeration
 
+    Args:
+        use_cache: If True, return cached results if available and not expired
+
     Returns:
         List of slot projection dictionaries with keys:
         - pci_address: PCI address of the controller
@@ -1006,6 +1063,13 @@ def get_scsi_host_slot_projections() -> List[Dict]:
         - device_name: Device name if occupied (e.g., sda), None if empty
         - is_sas_expander: True if this projection uses SAS expander phy paths
     """
+    # Check cache first if enabled
+    if use_cache:
+        with _SCSI_PROJECTIONS_CACHE_LOCK:
+            now = time.time()
+            if _SCSI_PROJECTIONS_CACHE['data'] is not None and (now - _SCSI_PROJECTIONS_CACHE['timestamp']) < _SCSI_PROJECTIONS_CACHE_TTL:
+                return _SCSI_PROJECTIONS_CACHE['data']
+
     projections = []
     scsi_host_base = "/sys/class/scsi_host"
     scsi_device_base = "/sys/class/scsi_device"
@@ -1070,8 +1134,8 @@ def get_scsi_host_slot_projections() -> List[Dict]:
 
         pci_addr = pci_matches[-1]  # Use the last PCI address (actual controller, not bridge)
 
-        # Detect SAS expander for this host
-        sas_expander_info = detect_sas_expander(host_path, pci_addr)
+        # Detect SAS expander for this host (with caching)
+        sas_expander_info = detect_sas_expander(host_path, pci_addr, use_cache=use_cache)
         is_sas_expander = sas_expander_info is not None
 
         if is_sas_expander:
@@ -1127,11 +1191,11 @@ def get_scsi_host_slot_projections() -> List[Dict]:
 
             slot_numbers.sort()
 
-            # Use the higher of: enclosure max slot or highest SCSI device slot
-            # This handles cases where enclosure metadata is available or not
+            # Use the highest SCSI device slot as the baseline for projection
+            # This ensures drives inserted into previously empty bays are discovered
+            # Enclosure metadata is only used as a fallback when no SCSI devices exist
             if slot_numbers:
-                scsi_max_slot = max(slot_numbers)
-                max_slot = max(scsi_max_slot, enclosure_max_slot)
+                max_slot = max(slot_numbers)
             else:
                 max_slot = enclosure_max_slot
 
@@ -1178,6 +1242,12 @@ def get_scsi_host_slot_projections() -> List[Dict]:
         # Break outer loop if we've reached the limit
         if len(projections) >= MAX_TOTAL_PROJECTIONS:
             break
+
+    # Update cache with results
+    if use_cache:
+        with _SCSI_PROJECTIONS_CACHE_LOCK:
+            _SCSI_PROJECTIONS_CACHE['data'] = projections
+            _SCSI_PROJECTIONS_CACHE['timestamp'] = time.time()
 
     return projections
 
