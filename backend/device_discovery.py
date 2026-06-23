@@ -19,17 +19,17 @@ _PCI_ADDRESS_RE = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0
 
 # Cache for PCI controller scan results to avoid redundant subprocess calls
 _PCI_CACHE = {'data': None, 'timestamp': 0}
-_PCI_CACHE_TTL = 180  # seconds (PCI topology changes rarely; longer TTL reduces lspci calls)
+_PCI_CACHE_TTL = 3600  # seconds (1 hour - PCI topology changes rarely; manual refresh on enclosure add/edit)
 _PCI_CACHE_LOCK = threading.Lock()
 
 # Cache for enclosure slot metadata to avoid redundant sysfs scans
 _ENCLOSURE_CACHE = {'data': None, 'timestamp': 0}
-_ENCLOSURE_CACHE_TTL = 180  # seconds
+_ENCLOSURE_CACHE_TTL = 3600  # seconds (1 hour - enclosure metadata changes rarely; manual refresh on enclosure add/edit)
 _ENCLOSURE_CACHE_LOCK = threading.Lock()
 
 # Cache for NVMe list output to avoid redundant subprocess calls
 _NVME_CACHE = {'data': None, 'timestamp': 0}
-_NVME_CACHE_TTL = 180  # seconds
+_NVME_CACHE_TTL = 3600  # seconds (1 hour - NVMe topology changes rarely; manual refresh on enclosure add/edit)
 _NVME_CACHE_LOCK = threading.Lock()
 
 # Cache for device discovery results to avoid redundant full scans
@@ -39,17 +39,17 @@ _DISCOVERY_CACHE_LOCK = threading.Lock()
 
 # Cache for master slot map (hardware topology) to avoid redundant sysfs scans
 _MASTER_SLOT_CACHE = {'data': None, 'timestamp': 0}
-_MASTER_SLOT_CACHE_TTL = 60  # seconds
+_MASTER_SLOT_CACHE_TTL = 3600  # seconds (1 hour - master slot map changes rarely; manual refresh on enclosure add/edit)
 _MASTER_SLOT_CACHE_LOCK = threading.Lock()
 
 # Cache for SAS expander detection results to avoid redundant by-path scans
 _SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp': time}
-_SAS_EXPANDER_CACHE_TTL = 180  # seconds
+_SAS_EXPANDER_CACHE_TTL = 3600  # seconds (1 hour - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
 _SAS_EXPANDER_CACHE_LOCK = threading.Lock()
 
 # Cache for SCSI host slot projections to avoid redundant full scans
 _SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
-_SCSI_PROJECTIONS_CACHE_TTL = 60  # seconds
+_SCSI_PROJECTIONS_CACHE_TTL = 3600  # seconds (1 hour - SCSI projections change rarely; manual refresh on enclosure add/edit)
 _SCSI_PROJECTIONS_CACHE_LOCK = threading.Lock()
 
 def validate_device_path(device: str) -> bool:

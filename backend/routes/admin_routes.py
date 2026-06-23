@@ -20,7 +20,13 @@ from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK, SMART_TEST_LOCKS, SMART_TEST_LOCKS_LOCK
 from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
 from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
-from device_discovery import generate_master_slot_map, validate_pci_address
+from device_discovery import (
+    generate_master_slot_map,
+    validate_pci_address,
+    invalidate_sas_expander_cache,
+    invalidate_scsi_projections_cache,
+    invalidate_master_slot_cache
+)
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
@@ -1189,6 +1195,11 @@ def manage_enclosures():
                 # Save to bay_map.json
                 bay_map.setdefault("enclosures", {})[payload["id"]] = enclosure
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was added
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Created enclosure: {payload['id']}")
             return jsonify({"status": "success", "enclosure": enclosure}), 201
@@ -1336,6 +1347,11 @@ def manage_enclosure(enclosure_id):
                 
                 bay_map["enclosures"][enclosure_id] = enclosure
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was edited
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Updated enclosure: {enclosure_id}")
             return jsonify({"status": "success", "enclosure": enclosure}), 200
@@ -1355,6 +1371,11 @@ def manage_enclosure(enclosure_id):
                 
                 del bay_map["enclosures"][enclosure_id]
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was deleted
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Deleted enclosure: {enclosure_id}")
             return jsonify({"status": "success", "message": f"Enclosure {enclosure_id} deleted"}), 200

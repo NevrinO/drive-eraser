@@ -15,6 +15,7 @@ from device_discovery import (
     invalidate_scsi_projections_cache,
     invalidate_master_slot_cache
 )
+from flask import request
 
 drive_bp = Blueprint('drive_routes', __name__)
 
@@ -25,13 +26,21 @@ def get_drives():
     try:
         config_dir = get_config_dir()
 
-        # Invalidate all discovery caches to ensure fresh data on manual refresh
-        # This is intentional: users clicking "Refresh" expect to see current hardware state
-        # Performance impact is acceptable for manual refresh operations (rate-limited to 60/min)
-        invalidate_sas_expander_cache()
-        invalidate_scsi_projections_cache()
-        invalidate_master_slot_cache()
-        invalidate_drive_cache()
+        # Check if this is a manual refresh (explicit request for fresh hardware topology)
+        force_refresh = request.args.get("force_refresh", "false").lower() == "true"
+        
+        if force_refresh:
+            # Manual refresh: invalidate all caches including hardware topology
+            # Users clicking "Refresh" expect to see current hardware state
+            invalidate_sas_expander_cache()
+            invalidate_scsi_projections_cache()
+            invalidate_master_slot_cache()
+            invalidate_drive_cache()
+        else:
+            # Normal polling: only invalidate drive cache
+            # Drive presence changes frequently, but hardware topology rarely changes
+            # Hardware topology caches have their own TTL (3600s) and will auto-refresh when needed
+            invalidate_drive_cache()
 
         running_devices = set()
         with ERASE_JOBS_LOCK:

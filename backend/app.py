@@ -5,6 +5,7 @@
 import signal
 import threading
 import time
+from flask import jsonify
 from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
 
