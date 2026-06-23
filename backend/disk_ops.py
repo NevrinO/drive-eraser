@@ -831,12 +831,9 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
         if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
             dev_node = bay_info.get("device")
             resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
-            if resolved_by_path:
-                cache_key = (resolved_by_path, dev_node)
-                resolved_path = resolved_by_path
-            else:
-                cache_key = (dev_node, dev_node)
-                resolved_path = dev_node
+            # Use same cache key as initial discovery to ensure cache hit
+            cache_key = (dev_node, dev_node)
+            resolved_path = resolved_by_path or dev_node
             configured_path = bay_info.get("configured_by_path") or dev_node
             configured_type = bay_info.get("interface_type")
             enclosure_id = bay_info.get("enclosure_id")
@@ -987,13 +984,11 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
         if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
             dev_node = bay_info.get("device")
             resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
-            if resolved_by_path:
-                cache_key = (resolved_by_path, dev_node)
-                resolved_path = resolved_by_path
-            else:
-                cache_key = (dev_node, dev_node)
-                resolved_path = dev_node
-            configured_path = bay_info.get("configured_by_path") or dev_node
+            configured_by_path = bay_info.get("configured_by_path") or bay_info.get("configured_by_path_nvme")
+            # Use same cache key as initial discovery to ensure cache hit
+            cache_key = (resolved_by_path or configured_by_path, dev_node)
+            resolved_path = resolved_by_path or dev_node
+            configured_path = configured_by_path or dev_node
             configured_type = bay_info.get("interface_type")
             enclosure_id = bay_info.get("enclosure_id")
             slot_number = bay_info.get("display_number")
