@@ -742,13 +742,24 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
                 for slot_lane in master_map:
                     # Normalize display_number to int for comparison (config values are strings)
                     if slot_lane.get("physical_slot_number") == int(display_number):
-                        auto_by_path = slot_lane.get("by_path")
-                        if auto_by_path:
-                            matched_by_path, dev_node = resolve_bay_device(auto_by_path, path_to_dev)
-                            if dev_node:
-                                bay_info["resolved_by_path"] = matched_by_path
-                                bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": "auto_detected"}
-                                break
+                        # Resolve actual device path from hardware topology
+                        # master_map contains static hardware info, not device mappings
+                        pci_controller = slot_lane.get("pci_controller")
+                        slot_type = slot_lane.get("slot_type")
+                        hw_identifier = slot_lane.get("hardware_identifier")
+                        physical_slot = slot_lane.get("physical_slot_number")
+                        
+                        if pci_controller and slot_type and hw_identifier is not None:
+                            auto_device_path = _resolve_device_from_hardware_identifier(
+                                pci_controller, slot_type, hw_identifier, physical_slot
+                            )
+                            if auto_device_path:
+                                # Resolve the device path to by-path format
+                                matched_by_path, dev_node = resolve_bay_device(auto_device_path, path_to_dev)
+                                if dev_node:
+                                    bay_info["resolved_by_path"] = matched_by_path
+                                    bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": "auto_detected"}
+                                    break
 
         if dev_node:
             # Only set default mapping reason if not already set (preserves auto_detected reason)
