@@ -96,7 +96,7 @@ function handleSmartDataUpdate(data) {
 
     // Re-render the workbench if on workbench tab
     if (document.getElementById('workbenchPanel').classList.contains('active')) {
-      renderBaysGrid();
+      renderBays(currentDrives);
     }
 
     // Re-render triage table if on triage tab
