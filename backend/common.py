@@ -10,7 +10,7 @@ from jsonschema import validate, ValidationError
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
 DEFAULT_CERTIFICATE_RETENTION_DAYS = 365  # Default number of days to retain certificates
 SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certificate signature (NIST recommendation: 100,000+)
-DRIVE_DATA_CACHE_TTL = 30  # seconds - TTL for drive discovery cache
+DRIVE_DATA_CACHE_TTL = 600  # seconds (10 minutes) - TTL for drive discovery cache
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 

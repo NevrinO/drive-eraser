@@ -13,11 +13,13 @@ let currentDrives = [];
 let currentHistoryJobs = [];
 let selectedBays = new Set();
 let isBatchMode = false;
-let ledgerExpandedJobs = new Set(); 
+let ledgerExpandedJobs = new Set();
 let localBayMapCopy = {};
 let localLayoutMetadata = {};
 let availableLayoutTemplates = [];
 let hasUnsavedBayMapChanges = false;
+let socket = null;
+let currentDetailDrive = null;
 
 // Tab switching
 mainTabs.addEventListener("click", (event) => {
@@ -55,9 +57,65 @@ if (helpClose && helpModal) {
   });
 }
 
+// Initialize WebSocket connection
+function initWebSocket() {
+  if (typeof io === 'undefined') {
+    console.warn('Socket.IO library not loaded, WebSocket features disabled');
+    return;
+  }
+
+  socket = io();
+
+  socket.on('connect', () => {
+    console.log('WebSocket connected');
+  });
+
+  socket.on('disconnect', () => {
+    console.log('WebSocket disconnected');
+  });
+
+  socket.on('smart_data_updated', (data) => {
+    handleSmartDataUpdate(data);
+  });
+
+  socket.on('connect_error', (error) => {
+    console.warn('WebSocket connection error:', error);
+  });
+}
+
+// Handle SMART data update from WebSocket
+function handleSmartDataUpdate(data) {
+  const { device, enclosure_id, slot_number, smart, health_score, recommendation } = data || {};
+
+  // Find and update the drive in currentDrives
+  const driveIndex = currentDrives.findIndex(d => d.device === device);
+  if (driveIndex !== -1) {
+    currentDrives[driveIndex].smart = smart;
+    currentDrives[driveIndex].health_score = health_score;
+    currentDrives[driveIndex].recommendation = recommendation;
+
+    // Re-render the workbench if on workbench tab
+    if (document.getElementById('workbenchPanel').classList.contains('active')) {
+      renderBaysGrid();
+    }
+
+    // Re-render triage table if on triage tab
+    if (document.getElementById('triagePanel').classList.contains('active')) {
+      renderTriageTable();
+    }
+
+    // Update detail modal if currently open for this drive
+    const modal = document.getElementById('bayDetailModal');
+    if (modal.classList.contains('open') && currentDetailDrive && currentDetailDrive.device === device) {
+      renderLiveDetails(currentDrives[driveIndex]);
+    }
+  }
+}
+
 // Application initialization
 (async () => {
   setupKeyboardNavigation();
+  initWebSocket();
   await loadSecurityStatus();
   await loadLayoutTemplates();
   await loadBayMappingConfig();
@@ -71,4 +129,5 @@ window.addEventListener("beforeunload", () => {
   if (typeof stopPolling === "function") {
     stopPolling();
   }
+  if (socket) socket.disconnect();
 });

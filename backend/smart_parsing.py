@@ -96,6 +96,60 @@ def is_drive_ssd(interface_type, smart_data):
     if any(m in model_lower for m in ["hdd", "barracuda", "ironwolf", "toshiba"]): return False
     return smart_data.get("wear_level") is not None
 
+def get_smart_identity(device, diagnostics=None):
+    """Get basic device identity information using smartctl -j -i (fast, ~0.5s per drive).
+
+    Returns minimal device info (model, serial, capacity, device type) with
+    smart_polling: true flag to indicate extended SMART data should be collected
+    in the background.
+
+    Args:
+        device: Device path (e.g., "/dev/sda")
+        diagnostics: Optional diagnostics dict for logging
+
+    Returns:
+        Dict with basic device info and smart_polling: true flag
+    """
+    empty_template = {
+        "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
+        "wear_level": None, "reallocated_sectors": None, "pending_sectors": None, "power_on_hours": None,
+        "power_on_days": None, "temperature": None, "interface_errors": None, "data_written_raw": None,
+        "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
+        "rotation_rate": None,
+        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
+        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
+        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
+        "model_profile": None, "smart_polling": True
+    }
+    smartctl_cmd = get_command_path("smartctl")
+    if not smartctl_cmd: return empty_template
+    raw_output = run_command([smartctl_cmd, "-j", "-i", device], diagnostics, "smartctl")
+    if not raw_output: return empty_template
+    try: data = json.loads(raw_output)
+    except Exception: return empty_template
+
+    model = data.get("model_name") or data.get("model_number") or data.get("device", {}).get("product")
+    serial = data.get("serial_number")
+    capacity_bytes = data.get("user_capacity", {}).get("bytes") or data.get("capacity", {}).get("bytes")
+    capacity_str = format_capacity_bytes(capacity_bytes)
+    rotation_rate = data.get("rotation_rate")
+
+    # Detect interface type from identity info
+    interface_type = detect_interface_type(None, device, None, raw_output)
+
+    return {
+        "status": "UNKNOWN", "model": model, "serial": serial, "capacity_str": capacity_str,
+        "capacity_bytes": capacity_bytes, "wear_level": None, "reallocated_sectors": None,
+        "reallocated_normalized": None, "reallocated_threshold": None,
+        "pending_sectors": None, "power_on_hours": None, "power_on_days": None, "temperature": None,
+        "interface_errors": None, "data_written_raw": None, "data_written_bytes": None,
+        "data_read_raw": None, "data_read_bytes": None, "raw": raw_output, "rotation_rate": rotation_rate,
+        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
+        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
+        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
+        "model_profile": None, "interface_type": interface_type, "smart_polling": True
+    }
+
 def get_smart_data(device, diagnostics=None):
     empty_template = {
         "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
@@ -106,7 +160,7 @@ def get_smart_data(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None
+        "model_profile": None, "smart_polling": False
     }
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd: return empty_template

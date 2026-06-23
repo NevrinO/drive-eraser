@@ -73,7 +73,10 @@ function renderLiveDetails(drive) {
 
   let smartHealthText = "SMART: PASSED";
   let smartHealthClass = "status-complete";
-  if (drive.health_score <= 30) {
+  if (smart.smart_polling) {
+    smartHealthText = "SMART: POLLING";
+    smartHealthClass = "status-view-only";
+  } else if (drive.health_score <= 30) {
     smartHealthText = "SMART: FAILING";
     smartHealthClass = "status-failed";
   }

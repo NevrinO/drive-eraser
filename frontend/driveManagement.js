@@ -508,7 +508,15 @@ function renderBayCard(drive) {
   const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
   const phaseLabel = drive.current_phase || "Sanitizing...";
 
-  const bayPrimaryText = (drive.display_number ? `BAY ${drive.display_number}` : (drive.bay && drive.bay.toLowerCase().startsWith('bay') ? drive.bay.toUpperCase() : 'Bay'));
+  // Bay label: enclosure name + bay name, or just bay name if no enclosure
+  let bayPrimaryText;
+  if (drive.enclosure_name != null && drive.display_number != null) {
+    bayPrimaryText = `${drive.enclosure_name} BAY ${drive.display_number}`;
+  } else if (drive.display_number != null) {
+    bayPrimaryText = `BAY ${drive.display_number}`;
+  } else {
+    bayPrimaryText = (drive.bay && drive.bay.toLowerCase().startsWith('bay') ? drive.bay.toUpperCase() : 'Bay');
+  }
   const displayLabel = drive.label ? ` - ${drive.label}` : "";
 
   // Display MPIO device path if available
@@ -541,6 +549,14 @@ function renderBayCard(drive) {
           </div>
           <div class="health-bar-track">
             <div class="health-bar-fill fill-blue" style="width: ${progressPercent}%"></div>
+          </div>
+        ` : drive.smart && drive.smart.smart_polling ? `
+          <div class="health-label">
+            <span style="color: var(--color-warning);">Loading SMART...</span>
+            <span style="color: var(--color-warning);">⏳</span>
+          </div>
+          <div class="health-bar-track">
+            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
           </div>
         ` : `
           <div class="health-label">
@@ -580,6 +596,7 @@ baysGrid.addEventListener("click", (event) => {
       toggleBaySelection(bay);
     }
   } else {
+    currentDetailDrive = drive;
     renderLiveDetails(drive);
     openModal(bayDetailModal);
   }

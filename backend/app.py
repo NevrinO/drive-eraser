@@ -97,6 +97,9 @@ init_wipe_db()
 # Set WebSocket manager for udev event listener
 udev_listener.set_websocket_manager(socketio)
 
+# Set WebSocket manager for disk_ops (SMART data updates)
+disk_ops.set_websocket_manager(socketio)
+
 # Start udev event listener for real-time device discovery
 udev_listener.start_udev_listener()
 
