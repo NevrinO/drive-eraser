@@ -556,12 +556,38 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
             role = slot_config.get("role", "wipe")
             locked = slot_config.get("locked", False)
 
+            bay_id = f"{enclosure_id}_slot_{slot_num}"
+
             # Resolve device from enclosure slot using master map
             dev_node, interface_type = _resolve_device_from_enclosure_slot(
                 slot_config, pci_controller, master_map
             )
 
-            bay_id = f"{enclosure_id}_slot_{slot_num}"
+            # Auto-detection fallback for slots with empty mappings
+            # If slot has no mappings or mappings failed to resolve, try to auto-detect
+            if not dev_node:
+                mappings = slot_config.get("mappings", {})
+                if not mappings:
+                    logging.getLogger(__name__).info(f"Slot {bay_id} has no mappings, attempting auto-detection")
+                    # Try to find a device by physical slot number in master map
+                    for slot_lane in master_map:
+                        if slot_lane.get("physical_slot_number") == physical_slot:
+                            pci_controller_lane = slot_lane.get("pci_controller")
+                            slot_type = slot_lane.get("slot_type")
+                            hw_identifier = slot_lane.get("hardware_identifier")
+
+                            logging.getLogger(__name__).info(f"Auto-detection for slot {bay_id}: matched slot_lane - pci={pci_controller_lane}, type={slot_type}, hw_id={hw_identifier}")
+
+                            if pci_controller_lane and slot_type and hw_identifier is not None:
+                                auto_device_path = _resolve_device_from_hardware_identifier(
+                                    pci_controller_lane, slot_type, hw_identifier, physical_slot
+                                )
+                                logging.getLogger(__name__).info(f"Auto-detection for slot {bay_id}: resolved device_path={auto_device_path}")
+                                if auto_device_path:
+                                    dev_node = auto_device_path
+                                    interface_type = slot_type
+                                    logging.getLogger(__name__).info(f"Auto-detected drive for slot {bay_id}: {dev_node}")
+                                    break
 
             bay_info = {
                 "bay": bay_id,
@@ -731,45 +757,8 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
             if dev_node:
                 bay_info["resolved_by_path"] = matched_by_path
 
-        # 3. Auto-detection fallback for placeholder by_path values
-        # If bay has placeholder (REPLACE_ME) or no configured by_path, try to auto-detect
-        if not dev_node and (not target_path or target_path.startswith("REPLACE_ME")):
-            # Generate master slot map for auto-detection (force refresh to guarantee fresh data)
-            master_map = generate_master_slot_map(force_refresh=True)
-            logging.getLogger(__name__).debug(f"Auto-detection for bay {bay_id}: master_map has {len(master_map)} slots")
-            # Try to find a device by slot number using the master map
-            display_number = config.get("display_number")
-            if display_number is not None:
-                for slot_lane in master_map:
-                    # Normalize display_number to int for comparison (config values are strings)
-                    if slot_lane.get("physical_slot_number") == int(display_number):
-                        # Resolve actual device path from hardware topology
-                        # master_map contains static hardware info, not device mappings
-                        pci_controller = slot_lane.get("pci_controller")
-                        slot_type = slot_lane.get("slot_type")
-                        hw_identifier = slot_lane.get("hardware_identifier")
-                        physical_slot = slot_lane.get("physical_slot_number")
-                        
-                        logging.getLogger(__name__).debug(f"Auto-detection for bay {bay_id}: matched slot_lane - pci={pci_controller}, type={slot_type}, hw_id={hw_identifier}")
-                        
-                        if pci_controller and slot_type and hw_identifier is not None:
-                            auto_device_path = _resolve_device_from_hardware_identifier(
-                                pci_controller, slot_type, hw_identifier, physical_slot
-                            )
-                            logging.getLogger(__name__).debug(f"Auto-detection for bay {bay_id}: resolved device_path={auto_device_path}")
-                            if auto_device_path:
-                                # Resolve the device path to by-path format
-                                matched_by_path, dev_node = resolve_bay_device(auto_device_path, path_to_dev)
-                                if dev_node:
-                                    bay_info["resolved_by_path"] = matched_by_path
-                                    bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": "auto_detected"}
-                                    logging.getLogger(__name__).info(f"Auto-detected drive for bay {bay_id}: {dev_node}")
-                                    break
-
         if dev_node:
-            # Only set default mapping reason if not already set (preserves auto_detected reason)
-            if bay_info["diagnostics"]["mapping"]["reason"] is None:
-                bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
+            bay_info["diagnostics"]["mapping"] = {"ok": True, "reason": None}
 
             # Get controller information for the device (shared PCI scan, no per-drive rescans)
             controller_info = get_controller_for_device(dev_node, controllers=controllers)
