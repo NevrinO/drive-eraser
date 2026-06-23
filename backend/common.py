@@ -191,6 +191,15 @@ SLOT_SCHEMA = {
     "type": "object",
     "properties": {
         "physical_slot_number": {"type": "integer", "minimum": 0},
+        "physical_position": {
+            "type": "object",
+            "properties": {
+                "row": {"type": "integer", "minimum": 0},
+                "col": {"type": "integer", "minimum": 0}
+            },
+            "required": ["row", "col"],
+            "additionalProperties": False
+        },
         "label": {"type": "string"},
         "role": {
             "type": "string",
