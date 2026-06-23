@@ -85,7 +85,8 @@ async function fetchCurrentBayMapDocument() {
 
 async function loadBayMappingConfig() {
   try {
-    await loadLayoutTemplates();
+    // loadLayoutTemplates() is already called during app initialization
+    // Skip duplicate call here to avoid redundant API request
     const bayMapDoc = await fetchCurrentBayMapDocument();
     localLayoutMetadata = bayMapDoc.layout_metadata || {};
     applyLayoutMetadataToControls();
