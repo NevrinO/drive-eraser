@@ -693,11 +693,9 @@ def get_enclosure_hardware_info() -> List[Dict]:
 
             # Check if this is a slot directory (must be a directory)
             if not os.path.isdir(slot_path):
-                logging.debug(f"Skipping {slot_id}: not a directory")
                 continue
 
             total_slots += 1
-            logging.debug(f"Counted slot: {slot_id}")
 
             # Check if slot has a device (drive present)
             # Try multiple methods: status file, device symlink target existence
@@ -729,7 +727,6 @@ def get_enclosure_hardware_info() -> List[Dict]:
             "total_slots": total_slots,
             "occupied_slots": occupied_slots
         })
-        logging.debug(f"Enclosure hardware info: pci={pci_controller}, vendor={vendor}, model={model}, total={total_slots}, occupied={occupied_slots}")
 
     return hardware_info
 

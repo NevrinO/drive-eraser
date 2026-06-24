@@ -176,7 +176,6 @@ async function renderConfiguration() {
     if (response.ok) {
       const data = await response.json();
       hardwareInfo = data.hardware_info || [];
-      console.log("Hardware enclosure info received:", hardwareInfo);
     }
   } catch (e) {
     console.error("Failed to load hardware enclosure info:", e);
@@ -198,16 +197,13 @@ async function renderConfiguration() {
     }
   });
 
-  console.log("Controller groups from master map:", Object.keys(controllerGroups));
-  console.log("Hardware info PCI controllers:", hardwareInfo.map(h => h.pci_controller));
-
   let html = `
     <div class="form-group">
       <label>Enclosure Name</label>
       <input type="text" id="wizardEnclosureName" value="${escapeHtml(wizardData.name)}" placeholder="e.g., Front Bay Array">
     </div>
     <div class="form-group">
-      <label>Display Order</label>
+      <label>Enclosure Display Order</label>
       <input type="number" id="wizardDisplayOrder" value="${wizardData.display_order}" min="0">
     </div>
     <div class="form-group">
@@ -223,8 +219,8 @@ async function renderConfiguration() {
       : group.pci_controller;
     const occupiedBadge = hwInfo ? ` <span style="background: #4a90e2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${hwInfo.occupied_slots} drives</span>` : '';
 
-    // Count total slots for this controller from master map
-    const totalSlots = masterSlotMap.filter(e => e.pci_controller === group.pci_controller).length;
+    // Use hardware_info total_slots (master slot map doesn't exist until after enclosures are configured)
+    const totalSlots = hwInfo && hwInfo.total_slots ? hwInfo.total_slots : 0;
     const totalBadge = totalSlots > 0 ? ` <span style="background: #666; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${totalSlots} slots</span>` : '';
 
     if (expanders.length > 0) {
@@ -258,6 +254,7 @@ async function renderConfiguration() {
       <p style="margin: 0; font-size: 0.85rem; color: #aaa;">
         <strong>Tip:</strong> To identify which controller corresponds to your physical enclosure, insert a test drive into a bay and check which controller shows an increase in the "drives" count above.
       </p>
+      <button type="button" id="refreshHardwareInfo" style="margin-top: 8px; padding: 4px 8px; background: #4a90e2; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.75rem;">Refresh Drive Counts</button>
     </div>
   `;
 
@@ -329,6 +326,29 @@ async function renderConfiguration() {
     wizardData.template_id = e.target.value;
     renderConfiguration(); // Re-render to show/hide NVMe options
   });
+
+  // Bind refresh button to update drive counts
+  const refreshBtn = document.getElementById("refreshHardwareInfo");
+  if (refreshBtn) {
+    refreshBtn.addEventListener("click", async () => {
+      refreshBtn.disabled = true;
+      refreshBtn.textContent = "Refreshing...";
+      try {
+        const response = await safeFetch(`/api/admin/hardware-enclosure-info?_t=${Date.now()}`);
+        if (response.ok) {
+          const data = await response.json();
+          // Update the hardware info in the current render context
+          // Re-render to show updated drive counts
+          renderConfiguration();
+        }
+      } catch (e) {
+        console.error("Failed to refresh hardware info:", e);
+      } finally {
+        refreshBtn.disabled = false;
+        refreshBtn.textContent = "Refresh Drive Counts";
+      }
+    });
+  }
 
   const nvmeSelect = document.getElementById("wizardNvmeStartSlot");
   if (nvmeSelect) {
