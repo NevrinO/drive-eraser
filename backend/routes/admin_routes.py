@@ -1296,9 +1296,10 @@ def manage_enclosures():
                             sas_hw_id = f"phy-0:0:{physical_slot}"
                             sas_slot_type = "sas_expander"
                         else:
-                            # Direct SAS or motherboard SATA - default to motherboard_sata
-                            sas_hw_id = f"ata{physical_slot}"
-                            sas_slot_type = "motherboard_sata"
+                            # Direct SAS (backplane without expander) - default to sas_direct
+                            # motherboard_sata is only for actual motherboard SATA ports
+                            sas_hw_id = f"phy-0:0:{physical_slot}"
+                            sas_slot_type = "sas_direct"
 
                         slot_data["mappings"]["sas_sata"] = {
                             "slot_type": sas_slot_type,

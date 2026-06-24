@@ -947,9 +947,12 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
                     continue
 
                 # Read expander SAS address from the expander directory in the sysfs path
-                # Expander directories are named using the SAS address (e.g., expander-0x500056b3059bdcff)
+                # Expander directories may be named using the SAS address (e.g., expander-0x500056b3059bdcff)
+                # or using a port:phy format (e.g., expander-0:0). Try both patterns.
                 sas_addr = None
                 exp_dir_match = re.search(r'/(expander-0x[0-9a-fA-F]+)/', real_path)
+                if not exp_dir_match:
+                    exp_dir_match = re.search(r'/(expander-\d+:\d+)/', real_path)
                 if exp_dir_match:
                     exp_dir = exp_dir_match.group(1)
                     sas_addr_file = f"/sys/class/sas_device/{exp_dir}/sas_address"
@@ -976,10 +979,13 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
         except (OSError, IOError) as e:
             logging.warning(f"Error scanning sas_phy for SAS expanders: {e}")
 
-    # Fall back to /dev/disk/by-path for SAS expander detection when sas_phy is unavailable
-    # (e.g. older kernels without /sys/class/sas_phy).  Only runs when sas_phy yielded nothing.
+    # Fall back to /dev/disk/by-path for SAS expander detection when sas_phy didn't find
+    # any actual expander entries (i.e., no entries with expander_sas_address set).
+    # This handles cases where /sys/class/sas_phy exists but the expander directory
+    # format doesn't match our regex patterns, or older kernels without sas_phy.
+    has_expander_entries = any(e.get('expander_sas_address') for e in master_map)
     by_path_base = "/dev/disk/by-path"  # defined here for use by all subsequent scans
-    if not _seen_sas_phy and os.path.exists(by_path_base):
+    if not has_expander_entries and os.path.exists(by_path_base):
         try:
             by_path_entries = os.listdir(by_path_base)
             # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0

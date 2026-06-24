@@ -420,8 +420,10 @@ function renderSlotAssignment() {
       sasHwId = `phy-0:0:${physicalSlot}`;
       sasSlotType = "sas_expander";
     } else {
-      sasHwId = `ata${physicalSlot}`;
-      sasSlotType = "motherboard_sata";
+      // Direct SAS (backplane without expander) - default to sas_direct
+      // motherboard_sata is only for actual motherboard SATA ports
+      sasHwId = `phy-0:0:${physicalSlot}`;
+      sasSlotType = "sas_direct";
     }
 
     // Compute NVMe HW identifier for hybrid slots
