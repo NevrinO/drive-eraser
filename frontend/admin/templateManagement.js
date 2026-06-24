@@ -118,10 +118,10 @@ function initializeTemplateManagement() {
         if (!templateData.id) {
           throw new Error("Template ID is required");
         }
-        // CRITIQUE.md #1: Validate template ID format (lowercase, numbers, hyphens only)
-        const idRegex = /^[a-z0-9-]+$/;
+        // CRITIQUE.md #1: Validate template ID format (lowercase, numbers, hyphens, underscores only)
+        const idRegex = /^[a-z0-9_-]+$/;
         if (!idRegex.test(templateData.id)) {
-          throw new Error("Template ID must contain only lowercase letters, numbers, and hyphens");
+          throw new Error("Template ID must contain only lowercase letters, numbers, hyphens, and underscores");
         }
         if (!templateData.name) {
           throw new Error("Template name is required");

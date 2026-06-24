@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 import hashlib
 from threading import Lock
@@ -357,6 +358,11 @@ def validate_template(template):
     # Validate types
     if not isinstance(template["id"], str) or not template["id"].strip():
         return "Template id must be a non-empty string"
+    
+    # Validate template ID format (lowercase, numbers, hyphens, underscores only)
+    id_pattern = r"^[a-z0-9_-]+$"
+    if not re.match(id_pattern, template["id"]):
+        return "Template id must contain only lowercase letters, numbers, hyphens, and underscores"
     
     if not isinstance(template["name"], str) or not template["name"].strip():
         return "Template name must be a non-empty string"
