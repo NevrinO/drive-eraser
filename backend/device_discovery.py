@@ -585,19 +585,50 @@ def get_enclosure_hardware_info() -> List[Dict]:
         enc_path = os.path.join(enclosure_base, enc_id)
         device_path = os.path.join(enc_path, "device")
 
-        # Extract PCI controller from device link
+        # Extract PCI controller from actual drives in the enclosure slots
+        # The enclosure device link points to the enclosure management interface (SES device),
+        # which may be on a different PCI device than the actual HBA that drives are connected to.
+        # Instead, look at the drives in the slots to find the actual HBA PCI address.
         pci_controller = None
+
         try:
-            if os.path.islink(device_path):
-                real_path = os.path.realpath(device_path)
-                # Path format: /sys/devices/pci0000:00/0000:00:1f.2/...
-                # Extract the PCI device directory
-                for part in real_path.split('/'):
-                    if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
-                        pci_controller = part
-                        break
+            slot_ids = os.listdir(enc_path)
         except (OSError, IOError):
-            pass
+            continue
+
+        for slot_id in slot_ids:
+            if slot_id in METADATA_DIRS:
+                continue
+            slot_path = os.path.join(enc_path, slot_id)
+
+            # Check if slot has a device (drive present)
+            device_link = os.path.join(slot_path, "device")
+            try:
+                if os.path.islink(device_link):
+                    # Resolve the symlink and check if it points to a block device
+                    real_path = os.path.realpath(device_link)
+                    # Block devices have a "block" subdirectory in their sysfs path
+                    if os.path.exists(os.path.join(real_path, "block")):
+                        # Extract PCI address from the drive's sysfs path
+                        pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+                        if pci_matches:
+                            # Use the last (deepest) PCI address, which is the HBA
+                            pci_controller = pci_matches[-1]
+                            break  # Found the HBA, no need to check other slots
+            except (OSError, IOError):
+                continue
+
+        if not pci_controller:
+            # Fallback: if no drives present, use the enclosure management interface PCI address
+            # This won't match the master slot map's HBA address, but it's better than nothing
+            try:
+                if os.path.islink(device_path):
+                    real_path = os.path.realpath(device_path)
+                    pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+                    if pci_matches:
+                        pci_controller = pci_matches[-1]
+            except (OSError, IOError):
+                pass
 
         if not pci_controller:
             continue
