@@ -497,7 +497,12 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
                                 device_pci_addr = part
                                 break
                         
-                        if device_pci_addr and device_pci_addr == expected_pci_addr:
+                        # Normalize PCI addresses for comparison (strip function number if present)
+                        # Slot addresses may be "0000:18:00" while device addresses are "0000:18:00.0"
+                        normalized_device = device_pci_addr.split('.')[0] if device_pci_addr else None
+                        normalized_expected = expected_pci_addr.split('.')[0] if expected_pci_addr else None
+                        
+                        if normalized_device and normalized_device == normalized_expected:
                             return f"/dev/{dev_name}"
             except (OSError, IOError):
                 pass
