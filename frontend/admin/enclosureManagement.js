@@ -198,6 +198,9 @@ async function renderConfiguration() {
     }
   });
 
+  console.log("Controller groups from master map:", Object.keys(controllerGroups));
+  console.log("Hardware info PCI controllers:", hardwareInfo.map(h => h.pci_controller));
+
   let html = `
     <div class="form-group">
       <label>Enclosure Name</label>

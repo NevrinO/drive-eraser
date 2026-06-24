@@ -658,10 +658,15 @@ def get_enclosure_hardware_info() -> List[Dict]:
             total_slots += 1
 
             # Check if slot has a device (drive present)
+            # The "device" symlink points to the drive's sysfs entry if a drive is inserted
             device_link = os.path.join(slot_path, "device")
             try:
-                if os.path.islink(device_link) or os.path.exists(device_link):
-                    occupied_slots += 1
+                if os.path.islink(device_link):
+                    # Resolve the symlink and check if it points to a block device
+                    real_path = os.path.realpath(device_link)
+                    # Block devices have a "block" subdirectory in their sysfs path
+                    if os.path.exists(os.path.join(real_path, "block")):
+                        occupied_slots += 1
             except (OSError, IOError):
                 pass
 
