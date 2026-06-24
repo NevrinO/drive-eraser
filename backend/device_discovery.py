@@ -601,6 +601,10 @@ def get_enclosure_hardware_info() -> List[Dict]:
                 continue
             slot_path = os.path.join(enc_path, slot_id)
 
+            # Check if this is a slot directory (has a "device" symlink)
+            if not os.path.isdir(slot_path):
+                continue
+
             # Check if slot has a device (drive present)
             device_link = os.path.join(slot_path, "device")
             try:
@@ -686,14 +690,30 @@ def get_enclosure_hardware_info() -> List[Dict]:
             if slot_id in METADATA_DIRS:
                 continue
             slot_path = os.path.join(enc_path, slot_id)
+
+            # Check if this is a slot directory (has a "device" symlink)
+            if not os.path.isdir(slot_path):
+                continue
+
             total_slots += 1
 
             # Check if slot has a device (drive present)
-            # The "device" symlink points to the drive's sysfs entry if a drive is inserted
+            # Try multiple methods: status file, device symlink target existence
+            status_file = os.path.join(slot_path, "status")
+            try:
+                with open(status_file, 'r') as f:
+                    status = f.read().strip()
+                    # Status file may contain "0" (empty) or "1" (present), or other values
+                    if status and status != "0":
+                        occupied_slots += 1
+                        continue
+            except (OSError, IOError):
+                pass
+
+            # Fallback: check if device symlink target exists
             device_link = os.path.join(slot_path, "device")
             try:
                 if os.path.islink(device_link):
-                    # Check if the symlink target actually exists (not a dangling link)
                     real_path = os.path.realpath(device_link)
                     if os.path.exists(real_path):
                         occupied_slots += 1
