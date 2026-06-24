@@ -508,11 +508,9 @@ function renderBayCard(drive) {
   const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
   const phaseLabel = drive.current_phase || "Sanitizing...";
 
-  // Bay label: enclosure name + bay name, or just bay name if no enclosure
+  // Bay label: just bay number for workbench (enclosure name removed due to length)
   let bayPrimaryText;
-  if (drive.enclosure_name != null && drive.display_number != null) {
-    bayPrimaryText = `${drive.enclosure_name} BAY ${drive.display_number}`;
-  } else if (drive.display_number != null) {
+  if (drive.display_number != null) {
     bayPrimaryText = `BAY ${drive.display_number}`;
   } else {
     bayPrimaryText = (drive.bay && drive.bay.toLowerCase().startsWith('bay') ? drive.bay.toUpperCase() : 'Bay');
