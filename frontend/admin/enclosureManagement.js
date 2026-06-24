@@ -172,7 +172,7 @@ async function renderConfiguration() {
   // Load hardware enclosure info for human-readable controller names
   let hardwareInfo = [];
   try {
-    const response = await safeFetch("/api/admin/hardware-enclosure-info");
+    const response = await safeFetch(`/api/admin/hardware-enclosure-info?_t=${Date.now()}`);
     if (response.ok) {
       const data = await response.json();
       hardwareInfo = data.hardware_info || [];
