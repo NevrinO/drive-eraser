@@ -10,7 +10,7 @@ from jsonschema import validate, ValidationError
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
 DEFAULT_CERTIFICATE_RETENTION_DAYS = 365  # Default number of days to retain certificates
 SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certificate signature (NIST recommendation: 100,000+)
-DRIVE_DATA_CACHE_TTL = 30  # seconds - TTL for drive discovery cache
+DRIVE_DATA_CACHE_TTL = 600  # seconds (10 minutes) - TTL for drive discovery cache
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -49,6 +49,15 @@ DEFAULT_POLICY = {
     "max_concurrent_wipes": 64,
     "blockdev_post_wipe_retries": 3,
     "blockdev_post_wipe_retry_delay": 5,
+    "prewipe_health_gate_enabled": True,
+    "prewipe_health_gate_strict_mode": False,
+    "prewipe_health_gate_block_destroy": True,
+    "prewipe_health_gate_block_scratch": False,
+    "prewipe_health_gate_block_failed_smart": True,
+    "prewipe_health_gate_max_pending_sectors": 10,
+    "prewipe_health_gate_max_reallocated_sectors": 5,
+    "prewipe_health_gate_max_interface_errors": 100,
+    "prewipe_health_gate_max_health_score_drop": 20,
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -82,6 +91,15 @@ POLICY_SCHEMA = {
         "max_concurrent_wipes": {"type": "integer", "minimum": 1, "maximum": 256},
         "blockdev_post_wipe_retries": {"type": "integer", "minimum": 0, "maximum": 10},
         "blockdev_post_wipe_retry_delay": {"type": "integer", "minimum": 0, "maximum": 60},
+        "prewipe_health_gate_enabled": {"type": "boolean"},
+        "prewipe_health_gate_strict_mode": {"type": "boolean"},
+        "prewipe_health_gate_block_destroy": {"type": "boolean"},
+        "prewipe_health_gate_block_scratch": {"type": "boolean"},
+        "prewipe_health_gate_block_failed_smart": {"type": "boolean"},
+        "prewipe_health_gate_max_pending_sectors": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "prewipe_health_gate_max_reallocated_sectors": {"type": "integer", "minimum": 0, "maximum": 1000},
+        "prewipe_health_gate_max_interface_errors": {"type": "integer", "minimum": 0, "maximum": 100000},
+        "prewipe_health_gate_max_health_score_drop": {"type": "integer", "minimum": 0, "maximum": 100},
         "certificate_retention_days": {"type": "integer", "minimum": 1},
         "max_logo_size_mb": {"type": "number", "minimum": 0.1},
         "max_bulk_cert_batch_size": {"type": "integer", "minimum": 1, "maximum": 1000},
@@ -173,6 +191,15 @@ SLOT_SCHEMA = {
     "type": "object",
     "properties": {
         "physical_slot_number": {"type": "integer", "minimum": 0},
+        "physical_position": {
+            "type": "object",
+            "properties": {
+                "row": {"type": "integer", "minimum": 0},
+                "col": {"type": "integer", "minimum": 0}
+            },
+            "required": ["row", "col"],
+            "additionalProperties": False
+        },
         "label": {"type": "string"},
         "role": {
             "type": "string",
@@ -434,8 +461,8 @@ def save_bay_map(bay_map_data, config_dir=None):
         f.flush()
         os.fsync(f.fileno())
     
-    # Atomic rename (POSIX guarantees this is atomic)
-    os.rename(temp_path, bay_map_path)
+    # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
+    os.replace(temp_path, bay_map_path)
 
 def load_bay_map(config_dir=None):
     """

@@ -19,17 +19,17 @@ _PCI_ADDRESS_RE = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0
 
 # Cache for PCI controller scan results to avoid redundant subprocess calls
 _PCI_CACHE = {'data': None, 'timestamp': 0}
-_PCI_CACHE_TTL = 180  # seconds (PCI topology changes rarely; longer TTL reduces lspci calls)
+_PCI_CACHE_TTL = 3600  # seconds (1 hour - PCI topology changes rarely; manual refresh on enclosure add/edit)
 _PCI_CACHE_LOCK = threading.Lock()
 
 # Cache for enclosure slot metadata to avoid redundant sysfs scans
 _ENCLOSURE_CACHE = {'data': None, 'timestamp': 0}
-_ENCLOSURE_CACHE_TTL = 180  # seconds
+_ENCLOSURE_CACHE_TTL = 3600  # seconds (1 hour - enclosure metadata changes rarely; manual refresh on enclosure add/edit)
 _ENCLOSURE_CACHE_LOCK = threading.Lock()
 
 # Cache for NVMe list output to avoid redundant subprocess calls
 _NVME_CACHE = {'data': None, 'timestamp': 0}
-_NVME_CACHE_TTL = 180  # seconds
+_NVME_CACHE_TTL = 3600  # seconds (1 hour - NVMe topology changes rarely; manual refresh on enclosure add/edit)
 _NVME_CACHE_LOCK = threading.Lock()
 
 # Cache for device discovery results to avoid redundant full scans
@@ -39,8 +39,18 @@ _DISCOVERY_CACHE_LOCK = threading.Lock()
 
 # Cache for master slot map (hardware topology) to avoid redundant sysfs scans
 _MASTER_SLOT_CACHE = {'data': None, 'timestamp': 0}
-_MASTER_SLOT_CACHE_TTL = 60  # seconds
+_MASTER_SLOT_CACHE_TTL = 3600  # seconds (1 hour - master slot map changes rarely; manual refresh on enclosure add/edit)
 _MASTER_SLOT_CACHE_LOCK = threading.Lock()
+
+# Cache for SAS expander detection results to avoid redundant by-path scans
+_SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp': time}
+_SAS_EXPANDER_CACHE_TTL = 3600  # seconds (1 hour - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
+_SAS_EXPANDER_CACHE_LOCK = threading.Lock()
+
+# Cache for SCSI host slot projections to avoid redundant full scans
+_SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
+_SCSI_PROJECTIONS_CACHE_TTL = 3600  # seconds (1 hour - SCSI projections change rarely; manual refresh on enclosure add/edit)
+_SCSI_PROJECTIONS_CACHE_LOCK = threading.Lock()
 
 def validate_device_path(device: str) -> bool:
     r"""Validate device path against strict whitelist to prevent path traversal and injection.
@@ -546,6 +556,181 @@ def is_enclosure_device(scsi_device_path: str, device_type_cache: Optional[Dict[
         return False
 
 
+def get_enclosure_hardware_info() -> List[Dict]:
+    """Collect SES hardware info for each PCI controller.
+
+    Scans /sys/class/enclosure to collect vendor, model, total_slots, and occupied_slots
+    for each enclosure controller. Used by the enclosure wizard to identify enclosures.
+
+    Returns:
+        List of dictionaries with hardware info per controller:
+        - pci_controller: PCI address of the controller
+        - vendor: Vendor name from sysfs
+        - model: Model name from sysfs
+        - total_slots: Total slot count from SES
+        - occupied_slots: Count of slots with drives present
+    """
+    enclosure_base = "/sys/class/enclosure"
+    METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
+    hardware_info = []
+
+    # Attempt the operation directly; handle errors from the actual operation (Lesson #6)
+    try:
+        enc_ids = os.listdir(enclosure_base)
+    except (OSError, IOError):
+        logging.debug(f"Failed to list enclosure directory: {enclosure_base}")
+        return hardware_info
+
+    for enc_id in enc_ids:
+        enc_path = os.path.join(enclosure_base, enc_id)
+        device_path = os.path.join(enc_path, "device")
+
+        # Extract PCI controller from actual drives in the enclosure slots
+        # The enclosure device link points to the enclosure management interface (SES device),
+        # which may be on a different PCI device than the actual HBA that drives are connected to.
+        # Instead, look at the drives in the slots to find the actual HBA PCI address.
+        pci_controller = None
+
+        try:
+            slot_ids = os.listdir(enc_path)
+        except (OSError, IOError):
+            continue
+
+        for slot_id in slot_ids:
+            if slot_id in METADATA_DIRS:
+                continue
+            slot_path = os.path.join(enc_path, slot_id)
+
+            # Check if this is a slot directory (has a "device" symlink)
+            if not os.path.isdir(slot_path):
+                continue
+
+            # Check if slot has a device (drive present)
+            device_link = os.path.join(slot_path, "device")
+            try:
+                if os.path.islink(device_link):
+                    # Resolve the symlink and check if it points to a block device
+                    real_path = os.path.realpath(device_link)
+                    # Block devices have a "block" subdirectory in their sysfs path
+                    if os.path.exists(os.path.join(real_path, "block")):
+                        # Extract PCI address from the drive's sysfs path
+                        pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+                        if pci_matches:
+                            # Use the last (deepest) PCI address, which is the HBA
+                            pci_controller = pci_matches[-1]
+                            break  # Found the HBA, no need to check other slots
+            except (OSError, IOError):
+                continue
+
+        if not pci_controller:
+            # Fallback: if no drives present, use the enclosure management interface PCI address
+            # This won't match the master slot map's HBA address, but it's better than nothing
+            try:
+                if os.path.islink(device_path):
+                    real_path = os.path.realpath(device_path)
+                    pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+                    if pci_matches:
+                        pci_controller = pci_matches[-1]
+            except (OSError, IOError):
+                pass
+
+        if not pci_controller:
+            continue
+
+        # Read vendor and model from sysfs
+        # Try multiple locations: enclosure directory, device directory, and resolved device path
+        vendor = None
+        model = None
+
+        # Possible locations for vendor/model files
+        vendor_paths = [
+            os.path.join(enc_path, "vendor"),
+            os.path.join(device_path, "vendor"),
+        ]
+        model_paths = [
+            os.path.join(enc_path, "model"),
+            os.path.join(device_path, "model"),
+        ]
+
+        # Try resolved device path if device is a symlink
+        try:
+            if os.path.islink(device_path):
+                real_device_path = os.path.realpath(device_path)
+                vendor_paths.append(os.path.join(real_device_path, "vendor"))
+                model_paths.append(os.path.join(real_device_path, "model"))
+        except (OSError, IOError):
+            pass
+
+        for vendor_file in vendor_paths:
+            try:
+                with open(vendor_file, 'r') as f:
+                    vendor = f.read().strip()
+                    break
+            except (OSError, IOError):
+                continue
+
+        for model_file in model_paths:
+            try:
+                with open(model_file, 'r') as f:
+                    model = f.read().strip()
+                    break
+            except (OSError, IOError):
+                continue
+
+        # Count total and occupied slots
+        total_slots = 0
+        occupied_slots = 0
+
+        try:
+            slot_ids = os.listdir(enc_path)
+        except (OSError, IOError):
+            continue
+
+        for slot_id in slot_ids:
+            if slot_id in METADATA_DIRS:
+                continue
+            slot_path = os.path.join(enc_path, slot_id)
+
+            # Check if this is a slot directory (must be a directory)
+            if not os.path.isdir(slot_path):
+                continue
+
+            total_slots += 1
+
+            # Check if slot has a device (drive present)
+            # Try multiple methods: status file, device symlink target existence
+            status_file = os.path.join(slot_path, "status")
+            try:
+                with open(status_file, 'r') as f:
+                    status = f.read().strip()
+                    # Status file contains "unknown" when drive is present, "not installed" when empty
+                    if status and status != "not installed":
+                        occupied_slots += 1
+                        continue
+            except (OSError, IOError):
+                pass
+
+            # Fallback: check if device symlink target exists
+            device_link = os.path.join(slot_path, "device")
+            try:
+                if os.path.islink(device_link):
+                    real_path = os.path.realpath(device_link)
+                    if os.path.exists(real_path):
+                        occupied_slots += 1
+            except (OSError, IOError):
+                pass
+
+        hardware_info.append({
+            "pci_controller": pci_controller,
+            "vendor": vendor,
+            "model": model,
+            "total_slots": total_slots,
+            "occupied_slots": occupied_slots
+        })
+
+    return hardware_info
+
+
 def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
     """Query enclosure metadata to get the maximum slot number.
 
@@ -624,18 +809,28 @@ def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
     return max_slot
 
 
-def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
+def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True) -> Optional[Dict]:
     """Detect if a SCSI host is connected to a SAS expander and extract expander information.
 
     Args:
         host_path: Path to the SCSI host directory (e.g., /sys/class/scsi_host/host0)
         pci_address: PCI address of the controller (e.g., 0000:af:00.0)
+        use_cache: If True, return cached results if available and not expired
 
     Returns:
         Dictionary with expander info if detected, None otherwise:
         - expander_id: SAS expander identifier (e.g., 0x500056b3059bdcff)
         - phy_count: Number of phy ports on the expander
     """
+    # Check cache first if enabled
+    if use_cache:
+        with _SAS_EXPANDER_CACHE_LOCK:
+            now = time.time()
+            if pci_address in _SAS_EXPANDER_CACHE:
+                cached = _SAS_EXPANDER_CACHE[pci_address]
+                if cached['data'] is not None and (now - cached['timestamp']) < _SAS_EXPANDER_CACHE_TTL:
+                    return cached['data']
+
     # Walk up the sysfs tree to find sas_device directories
     device_link = os.path.join(host_path, 'device')
     try:
@@ -724,6 +919,10 @@ def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
         npath = os.path.dirname(npath)
 
     if not expander_id:
+        # Update cache with None result to avoid repeated failed scans
+        if use_cache:
+            with _SAS_EXPANDER_CACHE_LOCK:
+                _SAS_EXPANDER_CACHE[pci_address] = {'data': None, 'timestamp': time.time()}
         return None
 
     # If no phy count found in sas_device directories, fall back to enclosure slot count
@@ -734,10 +933,37 @@ def detect_sas_expander(host_path: str, pci_address: str) -> Optional[Dict]:
     if total_phy_count == 0:
         total_phy_count = 10  # Common SAS expander configuration
 
-    return {
+    result = {
         'expander_id': expander_id,
         'phy_count': total_phy_count
     }
+
+    # Update cache with successful result
+    if use_cache:
+        with _SAS_EXPANDER_CACHE_LOCK:
+            _SAS_EXPANDER_CACHE[pci_address] = {'data': result, 'timestamp': time.time()}
+
+    return result
+
+
+def get_parent_pci(real_path: str) -> Optional[str]:
+    """Return the deepest (last) PCI address component from a sysfs real path.
+
+    When a device sits behind an expander, the sysfs path contains multiple
+    PCI addresses (root bridge, then HBA, etc.).  The last one is the actual
+    HBA PCI address that appears in /dev/disk/by-path entries.
+
+    Args:
+        real_path: A resolved sysfs path string (e.g. from os.path.realpath)
+
+    Returns:
+        Last PCI address found in the path, or None if none present
+    """
+    matches = re.findall(
+        r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]',
+        real_path
+    )
+    return matches[-1] if matches else None
 
 
 def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
@@ -768,8 +994,74 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     master_map = []
     MAX_TOTAL_SLOTS = 1000  # Rule #5: enforce size limits for DoS prevention
 
-    # Scan SAS expander topology from /dev/disk/by-path
-    by_path_base = "/dev/disk/by-path"
+    # Track seen (pci_controller, expander_sas_address, phy_num) tuples to avoid duplicates
+    _seen_sas_phy = set()
+
+    # Scan SAS expander topology from /sys/class/sas_phy
+    # This enumerates ALL PHY lanes whether or not a drive is present, and records
+    # the expander SAS address per PHY so resolution is expander-specific.
+    sas_phy_base = "/sys/class/sas_phy"
+    if os.path.isdir(sas_phy_base):
+        try:
+            for phy_name in os.listdir(sas_phy_base):
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+
+                # phy_name format: phy-0:0:N  (where N = physical slot index)
+                phy_match = re.search(r'phy-\d+(?::\d+)?:(\d+)$', phy_name)
+                if not phy_match:
+                    continue
+                slot_number = int(phy_match.group(1))
+
+                phy_path = os.path.join(sas_phy_base, phy_name)
+                try:
+                    real_path = os.path.realpath(phy_path)
+                except (OSError, IOError):
+                    continue
+
+                pci_addr = get_parent_pci(real_path)
+                if not pci_addr or not validate_pci_address(pci_addr):
+                    continue
+
+                # Read expander SAS address from the expander directory in the sysfs path
+                # Expander directories may be named using the SAS address (e.g., expander-0x500056b3059bdcff)
+                # or using a port:phy format (e.g., expander-0:0). Try both patterns.
+                sas_addr = None
+                exp_dir_match = re.search(r'/(expander-0x[0-9a-fA-F]+)/', real_path)
+                if not exp_dir_match:
+                    exp_dir_match = re.search(r'/(expander-\d+:\d+)/', real_path)
+                if exp_dir_match:
+                    exp_dir = exp_dir_match.group(1)
+                    sas_addr_file = f"/sys/class/sas_device/{exp_dir}/sas_address"
+                    try:
+                        with open(sas_addr_file, 'r') as f:
+                            sas_addr = f.read().strip()
+                    except (OSError, IOError):
+                        pass
+
+                slot_type = "sas_expander" if sas_addr else "sas_direct"
+
+                dedup_key = (pci_addr, sas_addr, slot_number)
+                if dedup_key in _seen_sas_phy:
+                    continue
+                _seen_sas_phy.add(dedup_key)
+
+                master_map.append({
+                    'pci_controller': pci_addr,
+                    'slot_type': slot_type,
+                    'expander_sas_address': sas_addr,
+                    'physical_slot_number': slot_number,
+                    'hardware_identifier': phy_name
+                })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning sas_phy for SAS expanders: {e}")
+
+    # Fall back to /dev/disk/by-path for SAS expander detection to supplement sas_phy scan.
+    # The sas_phy scan may not find expander entries due to sysfs path format differences,
+    # so we always run the by-path scan to ensure expander entries are present.
+    # Deduplication via _seen_sas_phy prevents duplicates.
+    by_path_base = "/dev/disk/by-path"  # defined here for use by all subsequent scans
     if os.path.exists(by_path_base):
         try:
             by_path_entries = os.listdir(by_path_base)
@@ -791,6 +1083,11 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
                     if not validate_pci_address(pci_addr):
                         logging.debug(f"Invalid PCI address in SAS expander entry: {pci_addr}")
                         continue
+
+                    dedup_key = (pci_addr, expander_id, phy_num)
+                    if dedup_key in _seen_sas_phy:
+                        continue
+                    _seen_sas_phy.add(dedup_key)
 
                     master_map.append({
                         'pci_controller': pci_addr,
@@ -923,6 +1220,45 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
         except (OSError, IOError) as e:
             logging.warning(f"Error scanning by-path for SATA: {e}")
 
+    # Supplement SATA scan with /sys/class/ata_port to capture empty SATA bays
+    # that don't appear in by-path when no drive is installed.
+    # Already-discovered ATA ports from by-path are skipped via seen_ata set.
+    seen_ata = {
+        (e['pci_controller'], e['physical_slot_number'])
+        for e in master_map if e['slot_type'] == 'motherboard_sata'
+    }
+    sata_port_base = "/sys/class/ata_port"
+    if os.path.isdir(sata_port_base):
+        try:
+            for port_name in os.listdir(sata_port_base):
+                if len(master_map) >= MAX_TOTAL_SLOTS:
+                    logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
+                    break
+                port_match = re.search(r'ata(\d+)$', port_name)
+                if not port_match:
+                    continue
+                ata_num = int(port_match.group(1))
+                port_path = os.path.join(sata_port_base, port_name)
+                try:
+                    real_path = os.path.realpath(port_path)
+                except (OSError, IOError):
+                    continue
+                pci_addr = get_parent_pci(real_path)
+                if not pci_addr or not validate_pci_address(pci_addr):
+                    continue
+                if (pci_addr, ata_num) in seen_ata:
+                    continue
+                seen_ata.add((pci_addr, ata_num))
+                master_map.append({
+                    'pci_controller': pci_addr,
+                    'slot_type': 'motherboard_sata',
+                    'expander_sas_address': None,
+                    'physical_slot_number': ata_num,
+                    'hardware_identifier': f'ata{ata_num}'
+                })
+        except (OSError, IOError) as e:
+            logging.warning(f"Error scanning ata_port for SATA: {e}")
+
     # Update cache with results
     with _MASTER_SLOT_CACHE_LOCK:
         _MASTER_SLOT_CACHE['data'] = master_map
@@ -934,7 +1270,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
 def invalidate_master_slot_cache():
     """Invalidate the master slot map cache to force a fresh scan on next call.
-    
+
     This should be called when hardware topology changes (e.g., bay_map.json modifications
     or physical hardware changes) to ensure the next discovery uses fresh hardware data.
     """
@@ -942,6 +1278,29 @@ def invalidate_master_slot_cache():
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
     logging.info("Master slot map cache invalidated")
+
+
+def invalidate_sas_expander_cache():
+    """Invalidate the SAS expander detection cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., SAS expander hot-plug
+    or controller changes) to ensure the next discovery uses fresh hardware data.
+    """
+    with _SAS_EXPANDER_CACHE_LOCK:
+        _SAS_EXPANDER_CACHE.clear()
+    logging.info("SAS expander cache invalidated")
+
+
+def invalidate_scsi_projections_cache():
+    """Invalidate the SCSI host slot projections cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., drive hot-plug/removal
+    or controller changes) to ensure the next discovery uses fresh hardware data.
+    """
+    with _SCSI_PROJECTIONS_CACHE_LOCK:
+        _SCSI_PROJECTIONS_CACHE['data'] = None
+        _SCSI_PROJECTIONS_CACHE['timestamp'] = 0
+    logging.info("SCSI projections cache invalidated")
 
 
 def resolve_multipath_parent(dev_name: str) -> str:
@@ -983,7 +1342,7 @@ def resolve_multipath_parent(dev_name: str) -> str:
     return f"/dev/{dev_name}"
 
 
-def get_scsi_host_slot_projections() -> List[Dict]:
+def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
     """Scan SCSI hosts and project slot by-path information for physical bay mapping.
 
     This function implements the logic from the bash script that:
@@ -996,6 +1355,9 @@ def get_scsi_host_slot_projections() -> List[Dict]:
     7. Filters out SES/enclosure management devices by checking device type
     8. Uses enclosure metadata to determine max slot for complete enumeration
 
+    Args:
+        use_cache: If True, return cached results if available and not expired
+
     Returns:
         List of slot projection dictionaries with keys:
         - pci_address: PCI address of the controller
@@ -1006,6 +1368,13 @@ def get_scsi_host_slot_projections() -> List[Dict]:
         - device_name: Device name if occupied (e.g., sda), None if empty
         - is_sas_expander: True if this projection uses SAS expander phy paths
     """
+    # Check cache first if enabled
+    if use_cache:
+        with _SCSI_PROJECTIONS_CACHE_LOCK:
+            now = time.time()
+            if _SCSI_PROJECTIONS_CACHE['data'] is not None and (now - _SCSI_PROJECTIONS_CACHE['timestamp']) < _SCSI_PROJECTIONS_CACHE_TTL:
+                return _SCSI_PROJECTIONS_CACHE['data']
+
     projections = []
     scsi_host_base = "/sys/class/scsi_host"
     scsi_device_base = "/sys/class/scsi_device"
@@ -1070,8 +1439,8 @@ def get_scsi_host_slot_projections() -> List[Dict]:
 
         pci_addr = pci_matches[-1]  # Use the last PCI address (actual controller, not bridge)
 
-        # Detect SAS expander for this host
-        sas_expander_info = detect_sas_expander(host_path, pci_addr)
+        # Detect SAS expander for this host (with caching)
+        sas_expander_info = detect_sas_expander(host_path, pci_addr, use_cache=use_cache)
         is_sas_expander = sas_expander_info is not None
 
         if is_sas_expander:
@@ -1127,11 +1496,11 @@ def get_scsi_host_slot_projections() -> List[Dict]:
 
             slot_numbers.sort()
 
-            # Use the higher of: enclosure max slot or highest SCSI device slot
-            # This handles cases where enclosure metadata is available or not
+            # Use the highest SCSI device slot as the baseline for projection
+            # This ensures drives inserted into previously empty bays are discovered
+            # Enclosure metadata is only used as a fallback when no SCSI devices exist
             if slot_numbers:
-                scsi_max_slot = max(slot_numbers)
-                max_slot = max(scsi_max_slot, enclosure_max_slot)
+                max_slot = max(slot_numbers)
             else:
                 max_slot = enclosure_max_slot
 
@@ -1178,6 +1547,12 @@ def get_scsi_host_slot_projections() -> List[Dict]:
         # Break outer loop if we've reached the limit
         if len(projections) >= MAX_TOTAL_PROJECTIONS:
             break
+
+    # Update cache with results
+    if use_cache:
+        with _SCSI_PROJECTIONS_CACHE_LOCK:
+            _SCSI_PROJECTIONS_CACHE['data'] = projections
+            _SCSI_PROJECTIONS_CACHE['timestamp'] = time.time()
 
     return projections
 

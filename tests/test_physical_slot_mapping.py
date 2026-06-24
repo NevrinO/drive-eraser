@@ -422,6 +422,81 @@ class TestEnclosureCrudOperations:
                         # Validation failed, but that's OK for this test
                         assert response.status_code in [400, 500]
 
+    def test_create_enclosure_auto_mapping_sequential_sas_expander(self, admin_session):
+        """Auto-map on a SAS expander must fill every slot with sequential phy-0:0:N IDs.
+
+        Regression check: the old implementation searched the master map by physical slot
+        number and would pull in unrelated drives (e.g. ata1/ata2) for empty bays. Now we
+        always derive the identifier from the controller pattern.
+        """
+        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+            mock_load_templates.return_value = ({
+                "test_4bay": {
+                    "id": "test_4bay",
+                    "name": "Test 4-Bay",
+                    "vendor": "Test",
+                    "slot_count": 4,
+                    "default_role": "wipe"
+                }
+            }, False)
+            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+                # Master map only has drives in slots 0 and 3 of the expander, and unrelated
+                # motherboard SATA drives occupying slots 1 and 2 on a different controller.
+                mock_master.return_value = [
+                    {
+                        "pci_controller": "0000:01:00.0",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 0,
+                        "hardware_identifier": "phy-0:0:0",
+                        "expander_sas_address": "0x500605b000000000"
+                    },
+                    {
+                        "pci_controller": "0000:01:00.0",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 3,
+                        "hardware_identifier": "phy-0:0:3",
+                        "expander_sas_address": "0x500605b000000000"
+                    },
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "motherboard_sata",
+                        "physical_slot_number": 1,
+                        "hardware_identifier": "ata1",
+                        "expander_sas_address": None
+                    },
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "motherboard_sata",
+                        "physical_slot_number": 2,
+                        "hardware_identifier": "ata2",
+                        "expander_sas_address": None
+                    },
+                ]
+                with patch('routes.admin_routes.validate_pci_address', return_value=True):
+                    with patch('routes.admin_routes.save_bay_map') as mock_save:
+                        payload = {
+                            "id": "test_sequential",
+                            "name": "Test Sequential",
+                            "template_id": "test_4bay",
+                            "pci_controller": "0000:01:00.0",
+                            "expander_sas_address": "0x500605b000000000",
+                            "display_order": 0,
+                            "auto_map_slots": True,
+                            "nvme_start_slot": None
+                        }
+                        response = admin_session.post('/api/admin/enclosures', json=payload)
+                        assert response.status_code == 201, response.data
+                        data = json.loads(response.data)
+                        slots = data["enclosure"]["slots"]
+                        assert len(slots) == 4
+                        for i, expected in enumerate([
+                            "phy-0:0:0", "phy-0:0:1", "phy-0:0:2", "phy-0:0:3"
+                        ]):
+                            mapping = slots[str(i)]["mappings"]["sas_sata"]
+                            assert mapping["slot_type"] == "sas_expander"
+                            assert mapping["hardware_identifier"] == expected
+                        mock_save.assert_called_once()
+
     def test_create_enclosure_with_hybrid_nvme_auto_increment(self, admin_session):
         """Test enclosure creation with hybrid NVMe auto-increment."""
         with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:

@@ -96,6 +96,60 @@ def is_drive_ssd(interface_type, smart_data):
     if any(m in model_lower for m in ["hdd", "barracuda", "ironwolf", "toshiba"]): return False
     return smart_data.get("wear_level") is not None
 
+def get_smart_identity(device, diagnostics=None):
+    """Get basic device identity information using smartctl -j -i (fast, ~0.5s per drive).
+
+    Returns minimal device info (model, serial, capacity, device type) with
+    smart_polling: true flag to indicate extended SMART data should be collected
+    in the background.
+
+    Args:
+        device: Device path (e.g., "/dev/sda")
+        diagnostics: Optional diagnostics dict for logging
+
+    Returns:
+        Dict with basic device info and smart_polling: true flag
+    """
+    empty_template = {
+        "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
+        "wear_level": None, "reallocated_sectors": None, "pending_sectors": None, "power_on_hours": None,
+        "power_on_days": None, "temperature": None, "interface_errors": None, "data_written_raw": None,
+        "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
+        "rotation_rate": None,
+        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
+        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
+        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
+        "model_profile": None, "smart_polling": True
+    }
+    smartctl_cmd = get_command_path("smartctl")
+    if not smartctl_cmd: return empty_template
+    raw_output = run_command([smartctl_cmd, "-j", "-i", device], diagnostics, "smartctl")
+    if not raw_output: return empty_template
+    try: data = json.loads(raw_output)
+    except Exception: return empty_template
+
+    model = data.get("model_name") or data.get("model_number") or data.get("device", {}).get("product")
+    serial = data.get("serial_number")
+    capacity_bytes = data.get("user_capacity", {}).get("bytes") or data.get("capacity", {}).get("bytes")
+    capacity_str = format_capacity_bytes(capacity_bytes)
+    rotation_rate = data.get("rotation_rate")
+
+    # Detect interface type from identity info
+    interface_type = detect_interface_type(None, device, None, raw_output)
+
+    return {
+        "status": "UNKNOWN", "model": model, "serial": serial, "capacity_str": capacity_str,
+        "capacity_bytes": capacity_bytes, "wear_level": None, "reallocated_sectors": None,
+        "reallocated_normalized": None, "reallocated_threshold": None,
+        "pending_sectors": None, "power_on_hours": None, "power_on_days": None, "temperature": None,
+        "interface_errors": None, "data_written_raw": None, "data_written_bytes": None,
+        "data_read_raw": None, "data_read_bytes": None, "raw": raw_output, "rotation_rate": rotation_rate,
+        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
+        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
+        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
+        "model_profile": None, "interface_type": interface_type, "smart_polling": True
+    }
+
 def get_smart_data(device, diagnostics=None):
     empty_template = {
         "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
@@ -106,7 +160,7 @@ def get_smart_data(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None
+        "model_profile": None, "smart_polling": False
     }
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd: return empty_template
@@ -928,4 +982,222 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
         if poh >= hdd_high_poh_thresh: return {"status": "USED_HEAVY", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
         if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
         return {"status": "USED_HEAVY" if fdw >= hdd_heavy_fdw_thresh else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= hdd_heavy_fdw_thresh else "Used but has clean write history and moderate runtime."}
+
+
+def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
+    """Pre-wipe health gate check to prevent starting wipes on failing drives.
+
+    Args:
+        device: Device path (e.g., "/dev/sda")
+        interface_type: Interface type ("sata", "sas", "nvme")
+        policy: Policy dict from load_policy()
+        diagnostics: Optional diagnostics dict for logging
+
+    Returns:
+        Dict with structure:
+        {
+            "ok": true/false,
+            "blocked": true/false,
+            "block_reason": "string" or None,
+            "health_score": int,
+            "recommendation": "DESTROY"/"SCRATCH"/"USED_GOOD"/"NEW_STOCK"/"USED_HEAVY",
+            "smart_status": "PASSED"/"FAILED"/"UNKNOWN",
+            "penalty_breakdown": {...},
+            "details": {
+                "pending_sectors": int,
+                "reallocated_sectors": int,
+                "interface_errors": int,
+                "sas_grown_defect_list": int or None,
+                "sas_scan_status": str or None,
+                "model_risk": "normal"/"high_risk",
+                "health_score_delta": int or None
+            }
+        }
+    """
+    # Validate device path to prevent path traversal (Lesson #13)
+    if not validate_device_path(device):
+        return {
+            "ok": False,
+            "blocked": True,
+            "block_reason": "invalid_device_path",
+            "health_score": 0,
+            "recommendation": "DESTROY",
+            "smart_status": "UNKNOWN",
+            "penalty_breakdown": {},
+            "details": {}
+    }
+
+    # Load policy settings with fallback defaults
+    gate_enabled = policy.get("prewipe_health_gate_enabled", True)
+    if not gate_enabled:
+        return {
+            "ok": True,
+            "blocked": False,
+            "block_reason": None,
+            "health_score": 100,
+            "recommendation": "USED_GOOD",
+            "smart_status": "UNKNOWN",
+            "penalty_breakdown": {},
+            "details": {}
+        }
+
+    strict_mode = policy.get("prewipe_health_gate_strict_mode", False)
+    block_destroy = policy.get("prewipe_health_gate_block_destroy", True)
+    block_scratch = policy.get("prewipe_health_gate_block_scratch", False)
+    block_failed_smart = policy.get("prewipe_health_gate_block_failed_smart", True)
+    max_pending = policy.get("prewipe_health_gate_max_pending_sectors", 10)
+    max_reallocated = policy.get("prewipe_health_gate_max_reallocated_sectors", 5)
+    max_interface_errors = policy.get("prewipe_health_gate_max_interface_errors", 100)
+    max_health_score_drop = policy.get("prewipe_health_gate_max_health_score_drop", 20)
+
+    # Re-read SMART data fresh (not cached)
+    smart = get_smart_data(device, diagnostics)
+    if not smart or smart.get("status") == "UNKNOWN":
+        return {
+            "ok": False,
+            "blocked": True,
+            "block_reason": "drive_not_accessible",
+            "health_score": 0,
+            "recommendation": "DESTROY",
+            "smart_status": "UNKNOWN",
+            "penalty_breakdown": {},
+            "details": {}
+        }
+
+    # Calculate health score and recommendation
+    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
+    recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+    smart_status = smart.get("status", "UNKNOWN")
+
+    # Extract critical attributes
+    pending = safe_int(smart.get("pending_sectors"), 0)
+    reallocated = safe_int(smart.get("reallocated_sectors"), 0)
+    interface_errors = safe_int(smart.get("interface_errors"), 0)
+    sas_grown_defect_list = smart.get("sas_grown_defect_list")
+    sas_scan_status = smart.get("sas_scan_status")
+    sas_uncorrectable_verify_errors = safe_int(smart.get("sas_uncorrectable_verify_errors"), 0)
+    sas_uncorrectable_write_errors = safe_int(smart.get("sas_uncorrectable_write_errors"), 0)
+    sas_uncorrectable_read_errors = safe_int(smart.get("sas_uncorrectable_read_errors"), 0)
+    sas_sticky_lba = smart.get("sas_sticky_lba_detected", False)
+    model_profile = smart.get("model_profile")
+
+    # Check device state from sysfs
+    device_name = os.path.basename(device) if device else ""
+    device_state = "unknown"
+    if device_name:
+        try:
+            state_path = f"/sys/block/{device_name}/device/state"
+            if os.path.exists(state_path):
+                with open(state_path, "r") as f:
+                    device_state = f.read().strip()
+        except Exception as e:
+            logger.warning(f"Failed to read device state from {state_path}: {e}")
+
+    # Model risk profile check
+    model_risk = "normal"
+    if model_profile and isinstance(model_profile, dict):
+        if model_profile.get("high_risk"):
+            model_risk = "high_risk"
+
+    # Intake history comparison (placeholder - requires database integration)
+    health_score_delta = None
+
+    # Build details dict
+    details = {
+        "pending_sectors": pending,
+        "reallocated_sectors": reallocated,
+        "interface_errors": interface_errors,
+        "sas_grown_defect_list": sas_grown_defect_list,
+        "sas_scan_status": sas_scan_status,
+        "model_risk": model_risk,
+        "health_score_delta": health_score_delta,
+        "device_state": device_state
+    }
+
+    # Check blocking conditions
+    block_reason = None
+
+    # 1. SMART status FAILED
+    if block_failed_smart and smart_status == "FAILED":
+        block_reason = "smart_status_failed"
+
+    # 2. Health score below DESTROY threshold
+    thresholds = get_triage_thresholds()
+    destroy_threshold = thresholds.get("health_score_destroy_threshold", 30)
+    if block_destroy and health_score <= destroy_threshold:
+        block_reason = "health_score_below_destroy_threshold"
+
+    # 3. Recommendation is DESTROY
+    if block_destroy and recommendation.get("status") == "DESTROY":
+        block_reason = "recommendation_destroy"
+
+    # 4. Recommendation is SCRATCH (if configured)
+    if block_scratch and recommendation.get("status") == "SCRATCH":
+        block_reason = "recommendation_scratch"
+
+    # 5. Critical attribute thresholds
+    if pending > max_pending:
+        block_reason = "pending_sectors_exceeded"
+
+    if reallocated > max_reallocated:
+        block_reason = "reallocated_sectors_exceeded"
+
+    if interface_errors > max_interface_errors:
+        block_reason = "interface_errors_exceeded"
+
+    # 6. NVMe-specific checks
+    if interface_type == "nvme":
+        nvme_available_spare = smart.get("reallocated_normalized")  # Available spare is stored here for NVMe
+        if nvme_available_spare is not None and nvme_available_spare < 10:
+            block_reason = "nvme_available_spare_low"
+
+        nvme_critical_warning = None
+        try:
+            if smart.get("raw"):
+                raw_data = json.loads(smart.get("raw"))
+                nvme_log = raw_data.get("nvme_smart_health_information_log", {})
+                nvme_critical_warning = safe_int(nvme_log.get("critical_warning"), 0)
+                if nvme_critical_warning & 0x04 or nvme_critical_warning & 0x08:
+                    block_reason = "nvme_critical_warning"
+        except Exception:
+            pass
+
+    # 7. SAS-specific checks
+    if interface_type == "sas":
+        sas_grown_defect_fail_threshold = thresholds.get("sas_grown_defect_fail_threshold", 10000)
+        if sas_grown_defect_list is not None and sas_grown_defect_list > sas_grown_defect_fail_threshold:
+            block_reason = "sas_grown_defect_list_exceeded"
+
+        if sas_scan_status and "halted" in str(sas_scan_status).lower():
+            block_reason = "sas_scan_halted"
+
+        if sas_uncorrectable_verify_errors >= 1:
+            block_reason = "sas_uncorrectable_verify_error"
+
+        if sas_uncorrectable_write_errors >= 1:
+            block_reason = "sas_uncorrectable_write_error"
+
+        if sas_uncorrectable_read_errors >= 10:
+            block_reason = "sas_uncorrectable_read_errors_exceeded"
+
+        if sas_sticky_lba:
+            block_reason = "sas_sticky_lba_detected"
+
+    # 8. Device state check
+    if device_state in ("offline", "removed"):
+        block_reason = "device_offline_or_removed"
+
+    # Determine if blocked
+    blocked = block_reason is not None
+
+    return {
+        "ok": True,
+        "blocked": blocked,
+        "block_reason": block_reason,
+        "health_score": health_score,
+        "recommendation": recommendation.get("status", "UNKNOWN"),
+        "smart_status": smart_status,
+        "penalty_breakdown": penalty_breakdown,
+        "details": details
+    }
 # --- END OF FILE backend/smart_parsing.py ---

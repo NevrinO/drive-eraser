@@ -324,5 +324,385 @@ class TestSASRecommendationWithFixtures:
         assert recommendation["status"] in ["SCRATCH", "DESTROY"]
 
 
+class TestPreWipeHealthGate:
+    """Test pre-wipe health gate functionality."""
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_health_gate_disabled(self, mock_get_triage_thresholds, mock_get_smart_data):
+        """Test that health gate returns ok when disabled."""
+        from smart_parsing import pre_wipe_health_gate
+
+        policy = {
+            "prewipe_health_gate_enabled": False,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is False
+        assert result["block_reason"] is None
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_drive_not_accessible(self, mock_get_triage_thresholds, mock_get_smart_data):
+        """Test that health gate blocks when drive is not accessible."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = None
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is False
+        assert result["blocked"] is True
+        assert result["block_reason"] == "drive_not_accessible"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_smart_status_failed_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that SMART status FAILED blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "FAILED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (50, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "smart_status_failed"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_health_score_below_destroy_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that health score below DESTROY threshold blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (25, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "health_score_below_destroy_threshold"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_recommendation_destroy_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that DESTROY recommendation blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (50, {})
+        mock_get_drive_recommendation.return_value = {"status": "DESTROY", "comment": "Critical issues"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "recommendation_destroy"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_recommendation_scratch_blocks_when_configured(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that SCRATCH recommendation blocks wipe when configured."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (50, {})
+        mock_get_drive_recommendation.return_value = {"status": "SCRATCH", "comment": "Unstable"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": True,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "recommendation_scratch"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_pending_sectors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that pending sectors exceeding threshold blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 15,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (80, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "pending_sectors_exceeded"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_reallocated_sectors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that reallocated sectors exceeding threshold blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 10,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (80, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "reallocated_sectors_exceeded"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_interface_errors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that interface errors exceeding threshold blocks wipe."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 150,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (80, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is True
+        assert result["block_reason"] == "interface_errors_exceeded"
+
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_healthy_drive_passes_gate(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Test that healthy drive passes health gate."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (95, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        result = pre_wipe_health_gate("/dev/sda", "sata", policy)
+
+        assert result["ok"] is True
+        assert result["blocked"] is False
+        assert result["block_reason"] is None
+        assert result["health_score"] == 95
+        assert result["recommendation"] == "USED_GOOD"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

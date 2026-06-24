@@ -20,7 +20,14 @@ from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK, SMART_TEST_LOCKS, SMART_TEST_LOCKS_LOCK
 from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
 from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
-from device_discovery import generate_master_slot_map, validate_pci_address
+from device_discovery import (
+    generate_master_slot_map,
+    validate_pci_address,
+    invalidate_sas_expander_cache,
+    invalidate_scsi_projections_cache,
+    invalidate_master_slot_cache,
+    get_enclosure_hardware_info
+)
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
@@ -462,7 +469,7 @@ def admin_policy():
                     return jsonify({"error": error_msg}), 400
             
             # Apply mutations after validation passes
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode"]
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]
@@ -969,6 +976,24 @@ def kill_all_jobs():
 
 # ==================== Enclosure Management APIs ====================
 
+@admin_bp.route("/api/admin/hardware-enclosure-info", methods=["GET"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def get_hardware_enclosure_info():
+    """Return SES hardware info for each PCI controller.
+
+    Returns vendor, model, total_slots, and occupied_slots for each enclosure
+    controller detected in /sys/class/enclosure. Used by the enclosure wizard
+    to identify enclosures with human-readable names.
+    """
+    try:
+        hardware_info = get_enclosure_hardware_info()
+        return jsonify({"hardware_info": hardware_info}), 200
+    except Exception as e:
+        logger.error(f"Error getting hardware enclosure info: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 @admin_bp.route("/api/admin/enclosures", methods=["GET", "POST"])
 @require_admin_auth
 @limiter.limit("30 per minute")
@@ -1118,7 +1143,99 @@ def manage_enclosures():
                     if role not in VALID_ROLES:
                         return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
 
-                if auto_map_slots:
+                # Check if frontend provided explicit slot mappings
+                slot_mappings = payload.get("slot_mappings")
+                if slot_mappings:
+                    # Use frontend-provided slot mappings with HW identifiers
+                    template = template_map[payload["template_id"]]
+                    slot_count = template.get("slot_count", 0)
+                    rows = template.get("rows", 1)
+                    cols = template.get("cols", 1)
+                    traversal_preset = template.get("traversal_preset", "top_left_down_then_across")
+
+                    if slot_count <= 0:
+                        return jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400
+
+                    # Enforce size limit for slots per enclosure (Rule #5)
+                    if slot_count > MAX_SLOTS_PER_ENCLOSURE:
+                        return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+
+                    # Validate slot_mappings structure
+                    if not isinstance(slot_mappings, dict):
+                        return jsonify({"error": "slot_mappings must be a dictionary"}), 400
+                    if len(slot_mappings) > MAX_SLOTS_PER_ENCLOSURE:
+                        return jsonify({"error": f"Slot mappings count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+
+                    # Safe numeric conversion for starting_slot_number (Rule #84)
+                    try:
+                        starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
+                        if starting_slot < 0 or starting_slot > 9999:
+                            return jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400
+                    except (ValueError, TypeError):
+                        return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
+
+                    # Validate each provided slot mapping
+                    VALID_ROLES = {"wipe", "os", "reserved"}
+                    for slot_key, slot_mapping in slot_mappings.items():
+                        if not isinstance(slot_mapping, dict):
+                            return jsonify({"error": f"Slot mapping for {slot_key} must be a dictionary"}), 400
+                        label = slot_mapping.get("label", "")
+                        if not isinstance(label, str):
+                            return jsonify({"error": f"Custom label for slot {slot_key} must be a string"}), 400
+                        if len(label) > 100:
+                            return jsonify({"error": f"Custom label for slot {slot_key} exceeds maximum length (100)"}), 400
+                        if any(ord(c) < 32 for c in label):
+                            return jsonify({"error": f"Custom label for slot {slot_key} contains invalid characters"}), 400
+                        role = slot_mapping.get("role", template.get("default_role", "wipe"))
+                        if role not in VALID_ROLES:
+                            return jsonify({"error": f"Invalid role '{role}' for slot {slot_key}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
+                        # Validate each interface mapping against the schema
+                        mappings = slot_mapping.get("mappings", {})
+                        if not isinstance(mappings, dict):
+                            return jsonify({"error": f"Mappings for slot {slot_key} must be a dictionary"}), 400
+                        for interface_type, mapping in mappings.items():
+                            if interface_type not in ("sas_sata", "nvme"):
+                                return jsonify({"error": f"Invalid interface type '{interface_type}' for slot {slot_key}"}), 400
+                            if not isinstance(mapping, dict):
+                                return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must be a dictionary"}), 400
+                            if "slot_type" not in mapping or "hardware_identifier" not in mapping:
+                                return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must include slot_type and hardware_identifier"}), 400
+                            if mapping.get("slot_type") not in ("sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"):
+                                return jsonify({"error": f"Invalid slot_type '{mapping.get('slot_type')}' for {interface_type} in slot {slot_key}"}), 400
+                            hw_id = mapping.get("hardware_identifier")
+                            if not isinstance(hw_id, str) or len(hw_id) == 0 or len(hw_id) > 100:
+                                return jsonify({"error": f"Invalid hardware_identifier for {interface_type} in slot {slot_key}"}), 400
+
+                    # Build traversal positions
+                    if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
+                        try:
+                            positions = build_traversal_positions(rows, cols, traversal_preset, slot_count)
+                        except ValueError as e:
+                            return jsonify({"error": f"Failed to build traversal positions: {str(e)}"}), 400
+                    else:
+                        positions = [(i, 0) for i in range(slot_count)]
+
+                    # Build slots from frontend-provided mappings
+                    for slot_index, (row, col) in enumerate(positions):
+                        slot_key = str(slot_index)
+                        slot_mapping = slot_mappings.get(slot_key, {})
+                        
+                        # Calculate physical slot number
+                        physical_slot = starting_slot + slot_index
+
+                        role = slot_mapping.get("role", template.get("default_role", "wipe"))
+                        slot_data = {
+                            "physical_slot_number": physical_slot,
+                            "physical_position": {"row": row, "col": col},
+                            "label": slot_mapping.get("label", f"Bay {slot_index}"),
+                            "role": role,
+                            "locked": slot_mapping.get("locked", role == "os"),
+                            "mappings": slot_mapping.get("mappings", {})
+                        }
+
+                        enclosure["slots"][slot_key] = slot_data
+
+                elif auto_map_slots:
                     template = template_map[payload["template_id"]]
                     slot_count = template.get("slot_count", 0)
                     hybrid_slots = template.get("hybrid_slots", [])
@@ -1167,28 +1284,52 @@ def manage_enclosures():
                             "mappings": {}
                         }
 
-                        # Auto-detect SAS/SATA mapping from master map
-                        sas_mapping = _auto_detect_mapping(
-                            master_map, pci_controller, expander_sas_address, physical_slot, "sas"
-                        )
-                        if sas_mapping:
-                            slot_data["mappings"]["sas_sata"] = sas_mapping
+                        # Compute HW identifiers arithmetically from the controller type.
+                        # The master map only contains entries for currently occupied slots,
+                        # so it cannot fill empty bays. Worse, searching it by physical slot
+                        # number can match drives from other controllers that happen to share
+                        # that slot number, producing non-sequential, random-looking results
+                        # (e.g. ata1/ata2 between phy-0:0:0 and phy-0:0:3 on a SAS expander).
+                        # Always derive the identifier from the controller pattern instead.
+                        if expander_sas_address:
+                            # SAS expander connection
+                            sas_hw_id = f"phy-0:0:{physical_slot}"
+                            sas_slot_type = "sas_expander"
+                        else:
+                            # Direct SAS (backplane without expander) - default to sas_direct
+                            # motherboard_sata is only for actual motherboard SATA ports
+                            sas_hw_id = f"phy-0:0:{physical_slot}"
+                            sas_slot_type = "sas_direct"
 
-                        # Auto-detect NVMe mapping for hybrid slots
+                        slot_data["mappings"]["sas_sata"] = {
+                            "slot_type": sas_slot_type,
+                            "hardware_identifier": sas_hw_id,
+                            "auto_detected": True
+                        }
+
+                        # Compute NVMe mapping for hybrid slots
                         if slot_index in hybrid_slots and nvme_start_slot is not None:
                             nvme_offset = hybrid_slots.index(slot_index)
                             nvme_slot_num = int(nvme_start_slot) + nvme_offset
-                            nvme_mapping = _auto_detect_mapping(
-                                master_map, pci_controller, None, nvme_slot_num, "nvme"
-                            )
-                            if nvme_mapping:
-                                slot_data["mappings"]["nvme"] = nvme_mapping
+                            # NVMe hardware identifier is the slot folder name in /sys/bus/pci/slots/
+                            nvme_hw_id = str(nvme_slot_num)
+
+                            slot_data["mappings"]["nvme"] = {
+                                "slot_type": "pcie_nvme",
+                                "hardware_identifier": nvme_hw_id,
+                                "auto_detected": True
+                            }
 
                         enclosure["slots"][slot_key] = slot_data
                 
                 # Save to bay_map.json
                 bay_map.setdefault("enclosures", {})[payload["id"]] = enclosure
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was added
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Created enclosure: {payload['id']}")
             return jsonify({"status": "success", "enclosure": enclosure}), 201
@@ -1255,14 +1396,19 @@ def manage_enclosure(enclosure_id):
             # Validate custom_labels and custom_roles if provided (Rule #83)
             custom_labels = payload.get("custom_labels", {})
             custom_roles = payload.get("custom_roles", {})
+            slot_mappings = payload.get("slot_mappings")
             if not isinstance(custom_labels, dict):
                 return jsonify({"error": "custom_labels must be a dictionary"}), 400
             if not isinstance(custom_roles, dict):
                 return jsonify({"error": "custom_roles must be a dictionary"}), 400
+            if slot_mappings is not None and not isinstance(slot_mappings, dict):
+                return jsonify({"error": "slot_mappings must be a dictionary"}), 400
             if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
                 return jsonify({"error": f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
             if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
                 return jsonify({"error": f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
+            if slot_mappings is not None and len(slot_mappings) > MAX_SLOTS_PER_ENCLOSURE:
+                return jsonify({"error": f"Slot mappings count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
             
             # Validate custom label and role keys are strings (type mismatch fix)
             for slot_num in custom_labels.keys():
@@ -1287,6 +1433,37 @@ def manage_enclosure(enclosure_id):
                 if role not in VALID_ROLES:
                     return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
             
+            # Validate slot_mappings if provided
+            if slot_mappings is not None:
+                for slot_key, slot_mapping in slot_mappings.items():
+                    if not isinstance(slot_mapping, dict):
+                        return jsonify({"error": f"Slot mapping for {slot_key} must be a dictionary"}), 400
+                    label = slot_mapping.get("label", "")
+                    if not isinstance(label, str):
+                        return jsonify({"error": f"Custom label for slot {slot_key} must be a string"}), 400
+                    if len(label) > 100:
+                        return jsonify({"error": f"Custom label for slot {slot_key} exceeds maximum length (100)"}), 400
+                    if any(ord(c) < 32 for c in label):
+                        return jsonify({"error": f"Custom label for slot {slot_key} contains invalid characters"}), 400
+                    role = slot_mapping.get("role")
+                    if role is not None and role not in VALID_ROLES:
+                        return jsonify({"error": f"Invalid role '{role}' for slot {slot_key}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
+                    mappings = slot_mapping.get("mappings", {})
+                    if not isinstance(mappings, dict):
+                        return jsonify({"error": f"Mappings for slot {slot_key} must be a dictionary"}), 400
+                    for interface_type, mapping in mappings.items():
+                        if interface_type not in ("sas_sata", "nvme"):
+                            return jsonify({"error": f"Invalid interface type '{interface_type}' for slot {slot_key}"}), 400
+                        if not isinstance(mapping, dict):
+                            return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must be a dictionary"}), 400
+                        if "slot_type" not in mapping or "hardware_identifier" not in mapping:
+                            return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must include slot_type and hardware_identifier"}), 400
+                        if mapping.get("slot_type") not in ("sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"):
+                            return jsonify({"error": f"Invalid slot_type '{mapping.get('slot_type')}' for {interface_type} in slot {slot_key}"}), 400
+                        hw_id = mapping.get("hardware_identifier")
+                        if not isinstance(hw_id, str) or len(hw_id) == 0 or len(hw_id) > 100:
+                            return jsonify({"error": f"Invalid hardware_identifier for {interface_type} in slot {slot_key}"}), 400
+            
             with BAY_MAP_LOCK:
                 bay_map = load_bay_map(config_dir)
                 enclosures = bay_map.get("enclosures", {})
@@ -1304,6 +1481,10 @@ def manage_enclosure(enclosure_id):
                 for slot_key in custom_roles.keys():
                     if slot_key not in slots:
                         return jsonify({"error": f"Slot {slot_key} not found in enclosure"}), 400
+                if slot_mappings is not None:
+                    for slot_key in slot_mappings.keys():
+                        if slot_key not in slots:
+                            return jsonify({"error": f"Slot {slot_key} not found in enclosure"}), 400
                 
                 # Update allowed fields
                 updatable_fields = ["name", "template_id", "pci_controller", "expander_sas_address", "display_order"]
@@ -1321,6 +1502,19 @@ def manage_enclosure(enclosure_id):
                         slots[slot_key]["role"] = role
                         slots[slot_key]["locked"] = role == "os"
                 
+                # Update slot_mappings on existing slots
+                if slot_mappings is not None:
+                    for slot_key, slot_mapping in slot_mappings.items():
+                        if slot_key not in slots:
+                            continue
+                        if "label" in slot_mapping:
+                            slots[slot_key]["label"] = slot_mapping["label"]
+                        if "role" in slot_mapping:
+                            slots[slot_key]["role"] = slot_mapping["role"]
+                            slots[slot_key]["locked"] = slot_mapping["role"] == "os"
+                        if "mappings" in slot_mapping:
+                            slots[slot_key]["mappings"] = slot_mapping["mappings"]
+                
                 # Validate template exists if updated (from the same source the frontend uses)
                 if "template_id" in payload:
                     templates_dict, _ = load_layout_templates(config_dir)
@@ -1336,6 +1530,11 @@ def manage_enclosure(enclosure_id):
                 
                 bay_map["enclosures"][enclosure_id] = enclosure
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was edited
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Updated enclosure: {enclosure_id}")
             return jsonify({"status": "success", "enclosure": enclosure}), 200
@@ -1355,6 +1554,11 @@ def manage_enclosure(enclosure_id):
                 
                 del bay_map["enclosures"][enclosure_id]
                 save_bay_map(bay_map, config_dir)
+                
+                # Invalidate hardware topology caches since enclosure was deleted
+                invalidate_sas_expander_cache()
+                invalidate_scsi_projections_cache()
+                invalidate_master_slot_cache()
             
             logger.info(f"Deleted enclosure: {enclosure_id}")
             return jsonify({"status": "success", "message": f"Enclosure {enclosure_id} deleted"}), 200
@@ -2329,51 +2533,3 @@ def get_smart_test_status_endpoint(device):
         return jsonify({"error": str(e)}), 500
 
 
-def _auto_detect_mapping(master_map, pci_controller, expander_sas_address, slot_num, interface_type):
-    """Auto-detect hardware identifier from master map for a given slot.
-    
-    Args:
-        master_map: Master slot map from generate_master_slot_map()
-        pci_controller: PCI address of the controller
-        expander_sas_address: SAS expander address (null for direct/NVMe)
-        slot_num: Physical slot number
-        interface_type: "sas" or "nvme"
-        
-    Returns:
-        Mapping dictionary or None if not found
-    """
-    for entry in master_map:
-        if (entry["pci_controller"] == pci_controller and
-            entry["physical_slot_number"] == slot_num):
-            
-            # Match SAS devices (both expander and direct)
-            if interface_type == "sas":
-                # Match entries with SAS slot types (sas_expander, sas_direct, motherboard_sata)
-                if entry["slot_type"] in ("sas_expander", "sas_direct", "motherboard_sata"):
-                    # For expander connections, verify expander address matches
-                    if entry["slot_type"] == "sas_expander":
-                        if entry["expander_sas_address"] == expander_sas_address:
-                            return {
-                                "slot_type": entry["slot_type"],
-                                "hardware_identifier": entry["hardware_identifier"],
-                                "auto_detected": True
-                            }
-                    # For direct/motherboard connections, expander_sas_address should be None
-                    else:
-                        if expander_sas_address is None:
-                            return {
-                                "slot_type": entry["slot_type"],
-                                "hardware_identifier": entry["hardware_identifier"],
-                                "auto_detected": True
-                            }
-            
-            # Match NVMe slots (no expander)
-            elif interface_type == "nvme":
-                if entry["slot_type"] == "pcie_nvme" and entry["expander_sas_address"] is None:
-                    return {
-                        "slot_type": entry["slot_type"],
-                        "hardware_identifier": entry["hardware_identifier"],
-                        "auto_detected": True
-                    }
-    
-    return None

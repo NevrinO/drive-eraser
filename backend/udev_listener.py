@@ -15,7 +15,11 @@ except ImportError:
     pyudev = None
     logging.warning("pyudev not installed - event-driven discovery disabled")
 
-from device_discovery import generate_master_slot_map, resolve_multipath_parent
+from device_discovery import (
+    generate_master_slot_map,
+    resolve_multipath_parent
+)
+from disk_ops import invalidate_drive_cache
 from common import get_config_dir, load_policy
 
 # Runtime slot state: (enclosure_id, slot_number) -> device_info
@@ -217,7 +221,7 @@ def udev_event_listener_thread():
                     if match:
                         enc_id, slot_num = match
                         dev_name = os.path.basename(dev_node)
-                        
+
                         # MPIO settling time: If this is a raw device (not dm-), wait for multipathd to bind
                         # This prevents UI flicker when dual-ported SAS drives are inserted
                         if not dev_name.startswith('dm-') and not dev_name.startswith('mapper/'):
@@ -231,13 +235,18 @@ def udev_event_listener_thread():
                                 final_dev_node = resolve_multipath_parent(dev_name)
                         else:
                             final_dev_node = resolve_multipath_parent(dev_name)
-                        
+
+                        # Invalidate drive cache to ensure next /api/drives call returns fresh data
+                        # Hardware topology caches (SAS expander, SCSI projections, master slot map) are NOT
+                        # invalidated here because drive hot-plug does not change physical hardware topology
+                        invalidate_drive_cache(final_dev_node)
+
                         with _runtime_slot_lock:
                             _runtime_slot_state[(enc_id, slot_num)] = {
                                 'logical_device': final_dev_node,
                                 'status': 'Active'
                             }
-                        
+
                         # Broadcast via WebSocket if available
                         if _websocket_manager:
                             try:
@@ -250,18 +259,24 @@ def udev_event_listener_thread():
                                 })
                             except Exception as e:
                                 logger.debug(f"Failed to broadcast slot update via WebSocket: {e}")
-                        
+
                         logger.info(f"udev: Device {final_dev_node} added to enclosure {enc_id} slot {slot_num}")
             
             elif action == 'remove':
                 # Device removed - clear from runtime state
                 # Resolve multipath parent before comparison to match the stored logical_device
                 final_dev_node = resolve_multipath_parent(os.path.basename(dev_node))
+
+                # Invalidate drive cache to ensure next /api/drives call returns fresh data
+                # Hardware topology caches (SAS expander, SCSI projections, master slot map) are NOT
+                # invalidated here because drive hot-plug does not change physical hardware topology
+                invalidate_drive_cache(final_dev_node)
+
                 with _runtime_slot_lock:
                     for (enc_id, slot_num), state in list(_runtime_slot_state.items()):
                         if state and state.get('logical_device') == final_dev_node:
                             _runtime_slot_state[(enc_id, slot_num)] = None
-                            
+
                             # Broadcast via WebSocket if available
                             if _websocket_manager:
                                 try:
@@ -274,7 +289,7 @@ def udev_event_listener_thread():
                                     })
                                 except Exception as e:
                                     logger.debug(f"Failed to broadcast slot update via WebSocket: {e}")
-                            
+
                             logger.info(f"udev: Device removed from enclosure {enc_id} slot {slot_num}")
                             break
     

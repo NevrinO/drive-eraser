@@ -5,6 +5,7 @@
 import signal
 import threading
 import time
+from flask import jsonify
 from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
 
@@ -95,6 +96,9 @@ init_wipe_db()
 
 # Set WebSocket manager for udev event listener
 udev_listener.set_websocket_manager(socketio)
+
+# Set WebSocket manager for disk_ops (SMART data updates)
+disk_ops.set_websocket_manager(socketio)
 
 # Start udev event listener for real-time device discovery
 udev_listener.start_udev_listener()

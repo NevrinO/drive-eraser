@@ -6,10 +6,16 @@ from contextlib import closing
 from flask import Blueprint, jsonify
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, limiter
 from common import get_config_dir, load_policy, get_db_path
-from disk_ops import discover_drives
+from disk_ops import discover_drives, invalidate_drive_cache
 from disk_utils import format_capacity_bytes
 from routes.admin_routes import require_admin_auth
 from database import load_prior_visit, get_smart_test_history, get_smart_test_status_batch
+from device_discovery import (
+    invalidate_sas_expander_cache,
+    invalidate_scsi_projections_cache,
+    invalidate_master_slot_cache
+)
+from flask import request
 
 drive_bp = Blueprint('drive_routes', __name__)
 
@@ -19,6 +25,21 @@ drive_bp = Blueprint('drive_routes', __name__)
 def get_drives():
     try:
         config_dir = get_config_dir()
+
+        # Check if this is a manual refresh (explicit request for fresh hardware topology)
+        force_refresh = request.args.get("force_refresh", "false").lower() == "true"
+        
+        if force_refresh:
+            # Manual refresh: invalidate all caches including hardware topology
+            # Users clicking "Refresh" expect to see current hardware state
+            invalidate_sas_expander_cache()
+            invalidate_scsi_projections_cache()
+            invalidate_master_slot_cache()
+            invalidate_drive_cache()
+        # Normal polling: do NOT invalidate drive cache
+        # The 600s TTL in _get_cached_drive_payload() handles cache expiration
+        # Drive hot-plug events invalidate cache via udev_listener
+        # Other cache invalidations happen on bay mapping changes, wipe completion, policy changes
 
         running_devices = set()
         with ERASE_JOBS_LOCK:

@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 
 from common import get_config_dir, load_policy, DRIVE_DATA_CACHE_TTL
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
-from smart_parsing import get_smart_data, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
+from smart_parsing import get_smart_data, get_smart_identity, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
 from disk_capabilities import detect_drive_capabilities
 from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map, resolve_multipath_parent
 from database import record_intake_snapshot
@@ -28,6 +28,15 @@ _DRIVE_DATA_CACHE_LOCK = threading.Lock()
 # Cached indefinitely until service restart since the OS drive is a static property
 _OS_BY_PATH_CACHE = {'data': None}
 _OS_BY_PATH_LOCK = threading.Lock()
+
+# WebSocket manager reference (set at startup)
+_websocket_manager = None
+
+def set_websocket_manager(ws_manager):
+    """Set the WebSocket manager for broadcasting SMART data updates."""
+    global _websocket_manager
+    _websocket_manager = ws_manager
+    logging.getLogger(__name__).info("WebSocket manager set for disk_ops")
 
 # Performance: parallel collection settings
 _DISCOVERY_MAX_WORKERS = min(8, os.cpu_count() or 4)
@@ -47,11 +56,20 @@ def get_discovery_max_workers():
 _discovery_interrupted = False
 _discovery_interrupt_lock = threading.Lock()
 
+# Phase 1: Background extended SMART collection thread tracking
+_background_smart_thread = None
+_background_smart_lock = threading.Lock()
+_background_smart_stop_event = threading.Event()
+_shutdown_requested = False
+_shutdown_lock = threading.Lock()
+
 def _handle_discovery_signal(signum, frame):
     """Signal handler for SIGTERM/SIGINT during discovery operations."""
-    global _discovery_interrupted
+    global _discovery_interrupted, _shutdown_requested
     with _discovery_interrupt_lock:
         _discovery_interrupted = True
+    with _shutdown_lock:
+        _shutdown_requested = True
 
 def _check_discovery_interrupted():
     """Check if discovery was interrupted by signal."""
@@ -176,14 +194,25 @@ def get_all_controllers():
     """
     return scan_pci_controllers()
 
-def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, configured_type, passphrase):
+def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, configured_type, passphrase, use_identity_only=False):
     """Collect all expensive per-drive data (SMART, capabilities, marker) for one device.
 
     Runs in a worker thread during parallel discovery. Returns a payload dict that is
     merged into the bay record and cached for DRIVE_DATA_CACHE_TTL seconds.
+
+    Args:
+        dev_node: Device path (e.g., "/dev/sda")
+        resolved_active_path: Resolved by-path symlink
+        configured_active_path: Configured by-path from bay map
+        configured_type: Configured interface type
+        passphrase: Wipe passphrase for marker verification
+        use_identity_only: If True, use fast identity-only SMART collection (smartctl -j -i)
     """
     command_diagnostics = {}
-    smart = get_smart_data(dev_node, command_diagnostics)
+    if use_identity_only:
+        smart = get_smart_identity(dev_node, command_diagnostics)
+    else:
+        smart = get_smart_data(dev_node, command_diagnostics)
     interface_type = detect_interface_type(resolved_active_path or configured_active_path, dev_node, configured_type, smart.get("raw"))
     capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
     marker_status = read_marker_status(dev_node, interface_type, passphrase)
@@ -193,13 +222,21 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         marker_status["is_pristine"] = is_pristine
         marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
 
-    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
-    recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+    # Set health score to null when using identity-only (polling in background)
+    if smart.get("smart_polling"):
+        health_score = None
+        penalty_breakdown = None
+        recommendation = {"status": "UNKNOWN", "comment": "SMART data collection in progress"}
+    else:
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
+        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+
     drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
 
     # Phase 4: Record intake snapshot for tracking drive history
+    # Skip recording when using identity-only (will record after full collection)
     serial = smart.get("serial")
-    if serial:
+    if serial and not smart.get("smart_polling"):
         try:
             record_intake_snapshot(serial, smart, recommendation, health_score=health_score)
         except Exception as e:
@@ -214,7 +251,7 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
             "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
             "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
             "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
-            "penalty_breakdown": penalty_breakdown
+            "penalty_breakdown": penalty_breakdown, "smart_polling": smart.get("smart_polling", False)
         }
     }
 
@@ -282,13 +319,14 @@ def _get_cached_drive_payload(cache_key):
             return entry['data']
     return None
 
-def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map):
+def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map, expander_sas_address=None):
     """Resolve active device path from enclosure slot configuration using master map.
 
     Args:
         slot_config: Slot configuration dict with mappings
         pci_controller: PCI controller address for the enclosure
         master_map: Master slot map from generate_master_slot_map()
+        expander_sas_address: SAS expander WWN (e.g. '0x500056b3...') or None for direct-attach
 
     Returns:
         Tuple of (resolved_device_path, interface_type) or (None, None) if not found
@@ -312,30 +350,24 @@ def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map)
         if not slot_type or not hw_identifier:
             continue
 
-        # Look up in master map by (pci_controller, slot_type, physical_slot_number)
-        for lane in master_map:
-            if (lane.get('pci_controller') == pci_controller and
-                lane.get('slot_type') == slot_type and
-                lane.get('physical_slot_number') == physical_slot):
-                # Found matching lane, now resolve the actual device
-                # For SAS expander: check /dev/disk/by-path for phy-based symlinks
-                # For NVMe: check /sys/block for nvme devices
-                # For SATA: check /dev/disk/by-path for ata-based symlinks
+        # Use persisted mappings directly - do not search master map by physical_slot_number
+        # The master map only contains entries for occupied slots, so it fails for empty bays
+        # Persisted identifiers in bay_map.json are authoritative
+        dev_path = _resolve_device_from_hardware_identifier(
+            pci_controller, slot_type, hw_identifier, physical_slot,
+            expander_sas_address=expander_sas_address
+        )
 
-                dev_path = _resolve_device_from_hardware_identifier(
-                    pci_controller, slot_type, hw_identifier, physical_slot
-                )
-
-                if dev_path:
-                    # Apply MPIO resolution
-                    dev_name = os.path.basename(dev_path)
-                    resolved_path = resolve_multipath_parent(dev_name)
-                    return resolved_path, interface_key
+        if dev_path:
+            # Apply MPIO resolution
+            dev_name = os.path.basename(dev_path)
+            resolved_path = resolve_multipath_parent(dev_name)
+            return resolved_path, interface_key
 
     return None, None
 
 
-def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_identifier, physical_slot):
+def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_identifier, physical_slot, expander_sas_address=None):
     """Resolve actual device path from hardware identifier.
 
     Args:
@@ -343,10 +375,24 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         slot_type: Slot type (sas_expander, sas_direct, motherboard_sata, pcie_nvme)
         hw_identifier: Hardware identifier (e.g., 'phy-0:0:0', '101', 'ata1')
         physical_slot: Physical slot number
+        expander_sas_address: SAS expander WWN (e.g. '0x500056b3...') used to build an
+            exact by-path match, preventing cross-expander slot collisions on the same HBA
 
     Returns:
         Device path string or None if not found
     """
+    # Validate slot_type allowlist
+    if slot_type not in ('sas_expander', 'sas_direct', 'motherboard_sata', 'pcie_nvme'):
+        return None
+
+    # Validate hw_identifier to prevent path traversal when used in os.path.join (Lesson #13)
+    if not isinstance(hw_identifier, str) or not hw_identifier:
+        return None
+    if '..' in hw_identifier or '/' in hw_identifier or '\\' in hw_identifier or '\x00' in hw_identifier:
+        return None
+    if len(hw_identifier) > 100:
+        return None
+
     by_path_dir = '/dev/disk/by-path/'
     if not os.path.exists(by_path_dir):
         return None
@@ -358,12 +404,23 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
 
     if slot_type == 'sas_expander':
         # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
-        pattern = f"pci-{pci_controller}-sas-exp"
-        for entry in by_path_entries:
-            if entry.startswith(pattern) and f"-phy{physical_slot}-" in entry:
-                full_path = os.path.join(by_path_dir, entry)
-                if os.path.islink(full_path):
-                    return os.path.realpath(full_path)
+        # When the expander SAS address is known, build an exact prefix that includes it
+        # so that slots on different expanders behind the same HBA never cross-match.
+        if expander_sas_address:
+            exact_prefix = f"pci-{pci_controller}-sas-exp{expander_sas_address}-phy{physical_slot}-"
+            for entry in by_path_entries:
+                if entry.startswith(exact_prefix):
+                    full_path = os.path.join(by_path_dir, entry)
+                    if os.path.islink(full_path):
+                        return os.path.realpath(full_path)
+        else:
+            # Fallback: no expander address known — match any expander on this controller
+            pattern = f"pci-{pci_controller}-sas-exp"
+            for entry in by_path_entries:
+                if entry.startswith(pattern) and f"-phy{physical_slot}-" in entry:
+                    full_path = os.path.join(by_path_dir, entry)
+                    if os.path.islink(full_path):
+                        return os.path.realpath(full_path)
 
     elif slot_type == 'sas_direct':
         # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
@@ -435,19 +492,19 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
     return None
 
 
-def _collect_pending_serial(pending, passphrase):
+def _collect_pending_serial(pending, passphrase, use_identity_only=False):
     """Serial fallback collection used when the thread pool fails."""
     for item in pending:
         bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
         try:
-            payload = _collect_drive_data(dev_node, resolved_path, configured_path, configured_type, passphrase)
+            payload = _collect_drive_data(dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)
             _store_drive_payload(cache_key, payload)
             _apply_drive_payload(bay_info, payload, is_os_drive)
         except Exception as e:
             logging.getLogger(__name__).warning(f"Drive data collection failed for {dev_node}: {e}")
             _apply_collection_failure(bay_info, dev_node, f"collection_failed: {e}")
 
-def _collect_pending_parallel(pending, passphrase):
+def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
     """Collect drive data for all pending bays in parallel with bounded workers."""
     max_workers = min(get_discovery_max_workers(), len(pending))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
@@ -455,7 +512,7 @@ def _collect_pending_parallel(pending, passphrase):
     try:
         for item in pending:
             bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
-            futures[executor.submit(_collect_drive_data, dev_node, resolved_path, configured_path, configured_type, passphrase)] = item
+            futures[executor.submit(_collect_drive_data, dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)] = item
         remaining = set(futures)
         try:
             for future in as_completed(futures, timeout=_DISCOVERY_OVERALL_TIMEOUT):
@@ -477,6 +534,119 @@ def _collect_pending_parallel(pending, passphrase):
                 _apply_collection_failure(item[0], item[3], "collection_timeout")
     finally:
         executor.shutdown(wait=False)
+
+def _collect_extended_smart_background(drive_list, passphrase):
+    """Background thread to collect extended SMART data for drives with smart_polling: true.
+
+    Iterates through drives with smart_polling: true flag, collects full SMART data
+    using get_smart_data() with -x flag, updates cache, sets smart_polling: false,
+    and broadcasts WebSocket event with updated drive data.
+
+    Args:
+        drive_list: List of (cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number) tuples
+        passphrase: Wipe passphrase for marker verification
+    """
+    logger = logging.getLogger(__name__)
+    for cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number in drive_list:
+        # Check if stop event is set (concurrent discovery cancellation)
+        if _background_smart_stop_event.is_set():
+            logger.info("Background SMART collection stopped due to concurrent discovery")
+            break
+
+        # Check if shutdown was requested (SIGTERM/SIGINT)
+        with _shutdown_lock:
+            if _shutdown_requested:
+                logger.info("Background SMART collection stopped due to shutdown request")
+                break
+
+        try:
+            # Check if device still exists (may have been removed during polling)
+            if not os.path.exists(dev_node):
+                logger.info(f"Device {dev_node} removed during background SMART collection, skipping")
+                continue
+
+            # Collect full extended SMART data
+            command_diagnostics = {}
+            smart = get_smart_data(dev_node, command_diagnostics)
+            interface_type = detect_interface_type(resolved_path or configured_path, dev_node, configured_type, smart.get("raw"))
+            capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
+            marker_status = read_marker_status(dev_node, interface_type, passphrase)
+
+            if marker_status.get("status") == "checksum_valid":
+                is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
+                marker_status["is_pristine"] = is_pristine
+                marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
+
+            health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
+            recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+            drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
+
+            # Record intake snapshot now that we have full data
+            serial = smart.get("serial")
+            if serial:
+                try:
+                    record_intake_snapshot(serial, smart, recommendation, health_score=health_score)
+                except Exception as e:
+                    logger.warning(f"Failed to record intake snapshot for {serial}: {e}")
+
+            # Build full payload with smart_polling: false
+            payload = {
+                "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
+                "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
+                "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
+                "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
+                "smart": {
+                    "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
+                    "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
+                    "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+                    "penalty_breakdown": penalty_breakdown, "smart_polling": False
+                }
+            }
+
+            # Update cache with full data
+            _store_drive_payload(cache_key, payload)
+            logger.info(f"Background extended SMART collection completed for {dev_node}")
+
+            # Broadcast WebSocket event with updated SMART data
+            if _websocket_manager:
+                try:
+                    _websocket_manager.emit('smart_data_updated', {
+                        'event': 'smart_data_updated',
+                        'device': dev_node,
+                        'enclosure_id': enclosure_id,
+                        'slot_number': slot_number,
+                        'smart': payload.get('smart'),
+                        'health_score': payload.get('health_score'),
+                        'recommendation': payload.get('recommendation')
+                    })
+                    logger.debug(f"Broadcasted SMART data update for {dev_node}")
+                except Exception as e:
+                    logger.warning(f"Failed to broadcast SMART data update for {dev_node}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Background extended SMART collection failed for {dev_node}: {e}")
+
+def _start_background_smart_thread(drives_needing_extended_smart, passphrase):
+    """Cancel any running background SMART thread and start a new one for the given drives."""
+    global _background_smart_thread
+    with _background_smart_lock:
+        if _background_smart_thread and _background_smart_thread.is_alive():
+            _background_smart_stop_event.set()
+            _background_smart_thread.join(timeout=5.0)
+            if _background_smart_thread.is_alive():
+                logging.getLogger(__name__).warning("Background SMART thread did not stop in time, skipping new background thread")
+                _background_smart_stop_event.clear()
+                return
+            _background_smart_stop_event.clear()
+        if drives_needing_extended_smart:
+            _background_smart_thread = threading.Thread(
+                target=_collect_extended_smart_background,
+                args=(drives_needing_extended_smart, passphrase),
+                name="extended-smart-collection",
+                daemon=True
+            )
+            _background_smart_thread.start()
+            logging.getLogger(__name__).info(f"Started background extended SMART collection for {len(drives_needing_extended_smart)} drives")
 
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     # Medium #35: Discovery operations are read-only (no device writes/modifications).
@@ -542,6 +712,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
         enclosure_id = enclosure.get("id")
         enclosure_name = enclosure.get("name")
         pci_controller = enclosure.get("pci_controller")
+        expander_sas_address = enclosure.get("expander_sas_address")
         template_id = enclosure.get("template_id")
         slots = enclosure.get("slots", {})
 
@@ -556,12 +727,16 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
             role = slot_config.get("role", "wipe")
             locked = slot_config.get("locked", False)
 
-            # Resolve device from enclosure slot using master map
+            bay_id = f"{enclosure_id}_slot_{slot_num}"
+
+            # Resolve device from enclosure slot using persisted HW identifiers.
+            # Pass expander_sas_address so the by-path lookup is scoped to the correct
+            # expander when multiple expanders share the same PCI controller.
             dev_node, interface_type = _resolve_device_from_enclosure_slot(
-                slot_config, pci_controller, master_map
+                slot_config, pci_controller, master_map,
+                expander_sas_address=expander_sas_address
             )
 
-            bay_id = f"{enclosure_id}_slot_{slot_num}"
 
             bay_info = {
                 "bay": bay_id,
@@ -641,12 +816,30 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
         # Medium #34: Check for interruption before launching expensive collection
         if _check_discovery_interrupted():
             return {"error": "Discovery interrupted by signal"}
-        # Phases 2-4: parallel SMART + capability + marker collection with serial fallback
+        # Phase 1: Use identity-only SMART collection for fast initial discovery
         try:
-            _collect_pending_parallel(pending, passphrase)
+            _collect_pending_parallel(pending, passphrase, use_identity_only=True)
         except Exception as e:
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
-            _collect_pending_serial(pending, passphrase)
+            _collect_pending_serial(pending, passphrase, use_identity_only=True)
+
+    # Phase 1: Start background thread for extended SMART collection
+    # Collect drives with smart_polling: true flag
+    drives_needing_extended_smart = []
+    for bay_info in results:
+        if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
+            dev_node = bay_info.get("device")
+            resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
+            # Use same cache key as initial discovery to ensure cache hit
+            cache_key = (dev_node, dev_node)
+            resolved_path = resolved_by_path or dev_node
+            configured_path = bay_info.get("configured_by_path") or dev_node
+            configured_type = bay_info.get("interface_type")
+            enclosure_id = bay_info.get("enclosure_id")
+            slot_number = bay_info.get("display_number")
+            drives_needing_extended_smart.append((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number))
+
+    _start_background_smart_thread(drives_needing_extended_smart, passphrase)
 
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)
@@ -776,12 +969,31 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
         # Medium #34: Check for interruption before launching expensive collection
         if _check_discovery_interrupted():
             return {"error": "Discovery interrupted by signal"}
-        # Phases 2-4: parallel SMART + capability + marker collection with serial fallback
+        # Phase 1: Use identity-only SMART collection for fast initial discovery
         try:
-            _collect_pending_parallel(pending, passphrase)
+            _collect_pending_parallel(pending, passphrase, use_identity_only=True)
         except Exception as e:
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
-            _collect_pending_serial(pending, passphrase)
+            _collect_pending_serial(pending, passphrase, use_identity_only=True)
+
+    # Phase 1: Start background thread for extended SMART collection
+    # Collect drives with smart_polling: true flag
+    drives_needing_extended_smart = []
+    for bay_info in results:
+        if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
+            dev_node = bay_info.get("device")
+            resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
+            configured_by_path = bay_info.get("configured_by_path") or bay_info.get("configured_by_path_nvme")
+            # Use same cache key as initial discovery to ensure cache hit
+            cache_key = (resolved_by_path or configured_by_path, dev_node)
+            resolved_path = resolved_by_path or dev_node
+            configured_path = configured_by_path or dev_node
+            configured_type = bay_info.get("interface_type")
+            enclosure_id = bay_info.get("enclosure_id")
+            slot_number = bay_info.get("display_number")
+            drives_needing_extended_smart.append((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number))
+
+    _start_background_smart_thread(drives_needing_extended_smart, passphrase)
 
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)

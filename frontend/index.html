@@ -380,6 +380,30 @@
     </div>
   </div>
 
+  <!-- HEALTH GATE WARNING MODAL -->
+  <div id="healthGateWarningModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="healthGateWarningTitle" style="max-width: 600px;">
+      <header class="modal-header">
+        <h3 id="healthGateWarningTitle">Pre-Wipe Health Check Warning</h3>
+        <button type="button" id="healthGateWarningClose" class="close-button" data-close-modal="true">Cancel</button>
+      </header>
+      <div class="modal-content">
+        <div id="healthGateWarningContent" style="margin-bottom: 16px;">
+          <!-- Populated dynamically -->
+        </div>
+        <div id="healthGateOverrideSection" class="hidden" style="margin-top: 16px; padding: 12px; background: var(--color-surface-2); border-radius: 4px;">
+          <label>
+            Justification for Override
+            <input type="text" id="healthGateOverrideJustification" placeholder="Enter reason for overriding health check (e.g., 'Drive for testing only')">
+          </label>
+          <button type="button" id="healthGateOverrideBtn" class="btn btn--warning w-full py-3 mt-2">Override and Proceed</button>
+        </div>
+        <button type="button" id="healthGateCancelBtn" class="btn btn--secondary w-full py-3 mt-4">Cancel Wipe</button>
+      </div>
+    </div>
+  </div>
+
   <!-- GENERAL DETAIL MODAL -->
   <div id="bayDetailModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
@@ -779,6 +803,68 @@
               <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase">
               <small class="text-muted-xs">Passphrase for marker HMAC signing (min 8 characters when strict mode is enabled). Changing this invalidates existing marker verification results.</small>
             </label>
+
+            <div class="modal-section-header">Pre-Wipe Health Gate</div>
+            <label>
+              Enable Health Gate
+              <select id="prewipe_health_gate_enabled" name="prewipe_health_gate_enabled">
+                <option value="true">Enabled (block wipes on failing drives)</option>
+                <option value="false">Disabled (allow all wipes)</option>
+              </select>
+              <small class="text-muted-xs">Prevent starting wipes on drives with critical health issues</small>
+            </label>
+            <label>
+              Strict Mode (No Override)
+              <select id="prewipe_health_gate_strict_mode" name="prewipe_health_gate_strict_mode">
+                <option value="false">Disabled (override allowed)</option>
+                <option value="true">Enabled (no override)</option>
+              </select>
+              <small class="text-muted-xs">When enabled, health gate blocks cannot be overridden even in non-strict audit mode</small>
+            </label>
+            <label>
+              Block DESTROY Drives
+              <select id="prewipe_health_gate_block_destroy" name="prewipe_health_gate_block_destroy">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <small class="text-muted-xs">Block wipes on drives with DESTROY recommendation</small>
+            </label>
+            <label>
+              Block SCRATCH Drives
+              <select id="prewipe_health_gate_block_scratch" name="prewipe_health_gate_block_scratch">
+                <option value="false">Disabled (warning only)</option>
+                <option value="true">Enabled</option>
+              </select>
+              <small class="text-muted-xs">Block wipes on drives with SCRATCH recommendation</small>
+            </label>
+            <label>
+              Block FAILED SMART Drives
+              <select id="prewipe_health_gate_block_failed_smart" name="prewipe_health_gate_block_failed_smart">
+                <option value="true">Enabled</option>
+                <option value="false">Disabled</option>
+              </select>
+              <small class="text-muted-xs">Block wipes on drives with SMART status FAILED</small>
+            </label>
+            <label>
+              Max Pending Sectors
+              <input type="number" id="prewipe_health_gate_max_pending_sectors" name="prewipe_health_gate_max_pending_sectors" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Threshold for pending sectors check (0-1000)</small>
+            </label>
+            <label>
+              Max Reallocated Sectors
+              <input type="number" id="prewipe_health_gate_max_reallocated_sectors" name="prewipe_health_gate_max_reallocated_sectors" min="0" max="1000" step="1">
+              <small class="text-muted-xs">Threshold for reallocated sectors check (0-1000)</small>
+            </label>
+            <label>
+              Max Interface Errors
+              <input type="number" id="prewipe_health_gate_max_interface_errors" name="prewipe_health_gate_max_interface_errors" min="0" max="100000" step="1">
+              <small class="text-muted-xs">Threshold for interface errors check (0-100000)</small>
+            </label>
+            <label>
+              Max Health Score Drop
+              <input type="number" id="prewipe_health_gate_max_health_score_drop" name="prewipe_health_gate_max_health_score_drop" min="0" max="100" step="1">
+              <small class="text-muted-xs">Health score drop threshold for intake history comparison (0-100)</small>
+            </label>
           </div>
           <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>
         </form>
@@ -822,24 +908,16 @@
       <div class="modal-content">
         <!-- Step 1: Controller Selection -->
         <div id="wizardStep1">
-          <h4 class="modal-section-header">Step 1 of 3: Controller Selection</h4>
-          <div id="controllerSelectorContainer">
+          <h4 class="modal-section-header">Step 1 of 2: Configuration</h4>
+          <div id="configurationContainer">
             <!-- Populated dynamically -->
           </div>
         </div>
 
-        <!-- Step 2: Template Selection -->
+        <!-- Step 2: Slot Assignment -->
         <div id="wizardStep2" class="hidden">
-          <h4 class="modal-section-header">Step 2 of 3: Layout & Template Selection</h4>
-          <div id="templateSelectorContainer">
-            <!-- Populated dynamically -->
-          </div>
-        </div>
-
-        <!-- Step 3: Slot Validation -->
-        <div id="wizardStep3" class="hidden">
-          <h4 class="modal-section-header">Step 3 of 3: Verification</h4>
-          <div id="slotValidationContainer">
+          <h4 class="modal-section-header">Step 2 of 2: Slot Assignment</h4>
+          <div id="slotAssignmentContainer">
             <!-- Populated dynamically -->
           </div>
         </div>
@@ -1000,6 +1078,7 @@
     </div>
   </div>
 
+  <script src="/socket.io.min.js" defer></script>
   <script src="/utils.js" defer></script>
   <script src="/auth.js" defer></script>
   <script src="/driveManagement.js" defer></script>
