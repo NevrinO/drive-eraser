@@ -1299,13 +1299,20 @@ def manage_enclosures():
                             sas_hw_id = f"ata{physical_slot}"
                             sas_slot_type = "motherboard_sata"
 
-                        # Use computed arithmetic value - master map only for validation, not override
-                        # Master map only has entries for occupied slots, so it fails for empty bays
-                        slot_data["mappings"]["sas_sata"] = {
-                            "slot_type": sas_slot_type,
-                            "hardware_identifier": sas_hw_id,
-                            "auto_detected": True
-                        }
+                        # Try to confirm against master map, but use computed value if not found
+                        sas_mapping = _auto_detect_mapping(
+                            master_map, pci_controller, expander_sas_address, physical_slot, "sas"
+                        )
+                        if sas_mapping:
+                            # Master map has entry - use its values (they may be more accurate)
+                            slot_data["mappings"]["sas_sata"] = sas_mapping
+                        else:
+                            # Master map has no entry (empty slot) - use computed arithmetic value
+                            slot_data["mappings"]["sas_sata"] = {
+                                "slot_type": sas_slot_type,
+                                "hardware_identifier": sas_hw_id,
+                                "auto_detected": True
+                            }
 
                         # Compute NVMe mapping for hybrid slots
                         if slot_index in hybrid_slots and nvme_start_slot is not None:
@@ -1314,13 +1321,18 @@ def manage_enclosures():
                             # NVMe hardware identifier is the slot folder name in /sys/bus/pci/slots/
                             # For now, use the physical slot number as the identifier
                             nvme_hw_id = str(nvme_slot_num)
-
-                            # Use computed arithmetic value - master map only for validation, not override
-                            slot_data["mappings"]["nvme"] = {
-                                "slot_type": "pcie_nvme",
-                                "hardware_identifier": nvme_hw_id,
-                                "auto_detected": True
-                            }
+                            
+                            nvme_mapping = _auto_detect_mapping(
+                                master_map, pci_controller, None, nvme_slot_num, "nvme"
+                            )
+                            if nvme_mapping:
+                                slot_data["mappings"]["nvme"] = nvme_mapping
+                            else:
+                                slot_data["mappings"]["nvme"] = {
+                                    "slot_type": "pcie_nvme",
+                                    "hardware_identifier": nvme_hw_id,
+                                    "auto_detected": True
+                                }
 
                         enclosure["slots"][slot_key] = slot_data
                 
