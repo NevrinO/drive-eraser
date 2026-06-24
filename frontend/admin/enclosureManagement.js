@@ -4,6 +4,8 @@
 let adminEnclosures = {};
 let availableTemplates = [];
 let masterSlotMap = [];
+let cachedUnmappedDrives = null;
+let cachedUnmappedDrivesTime = 0;
 
 // Load all enclosures from backend
 async function loadEnclosures() {
@@ -88,7 +90,7 @@ function renderEnclosureList(enclosures) {
 }
 
 // Open new enclosure wizard
-function openNewEnclosureWizard() {
+async function openNewEnclosureWizard() {
   const modal = document.getElementById("enclosureWizardModal");
   if (!modal) return;
 
@@ -119,7 +121,7 @@ function openNewEnclosureWizard() {
     modalTitle.textContent = "Add New Enclosure";
   }
 
-  renderWizardStep();
+  await renderWizardStep();
   openModal(modal);
 }
 
@@ -138,7 +140,7 @@ let wizardData = {
 };
 
 // Render current wizard step
-function renderWizardStep() {
+async function renderWizardStep() {
   const step1 = document.getElementById("wizardStep1");
   const step2 = document.getElementById("wizardStep2");
   const prevBtn = document.getElementById("wizardPrevBtn");
@@ -155,7 +157,7 @@ function renderWizardStep() {
     step1.classList.remove("hidden");
     nextBtn.classList.remove("hidden");
     nextBtn.textContent = "Next Step >";
-    renderConfiguration();
+    await renderConfiguration();
   } else if (currentWizardStep === 2) {
     step2.classList.remove("hidden");
     prevBtn.classList.remove("hidden");
@@ -181,9 +183,12 @@ async function renderConfiguration() {
     console.error("Failed to load hardware enclosure info:", e);
   }
 
-  // Group master slot map by PCI controller
+  // Group master slot map by PCI controller (exclude PCIe NVMe slots from controller selection)
   const controllerGroups = {};
   masterSlotMap.forEach(entry => {
+    // Skip PCIe NVMe slots - they're not SAS controllers
+    if (entry.slot_type === 'pcie_nvme') return;
+    
     const key = entry.pci_controller;
     if (!controllerGroups[key]) {
       controllerGroups[key] = {
@@ -291,12 +296,39 @@ async function renderConfiguration() {
     const nvmeSlots = masterSlotMap
       .filter(entry => entry.slot_type === 'pcie_nvme')
       .map(entry => entry.hardware_identifier)
-      .sort();
+      .sort((a, b) => parseInt(a) - parseInt(b));
 
-    nvmeSlots.forEach(slot => {
-      const selected = wizardData.nvme_starting_slot === slot ? 'selected' : '';
-      html += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
-    });
+    if (nvmeSlots.length === 0) {
+      // Fallback: try to get NVMe drives from unmapped drives API
+      try {
+        const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+        if (unmappedResponse.ok) {
+          const unmappedData = await unmappedResponse.json();
+          const nvmeDrives = unmappedData.filter(d => d.by_path && d.by_path.includes("nvme"));
+          
+          if (nvmeDrives.length > 0) {
+            // Use NVMe device paths as fallback identifiers
+            nvmeDrives.forEach(drive => {
+              const selected = wizardData.nvme_starting_slot === drive.by_path ? 'selected' : '';
+              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
+            });
+            html += `<small style="color: #888; display: block; margin-top: 4px;">Using detected NVMe drives (no hot-plug slots found)</small>`;
+          } else {
+            html += `<option value="" disabled>No NVMe drives detected in system</option>`;
+          }
+        } else {
+          html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+        }
+      } catch (e) {
+        console.error("Failed to load unmapped drives for NVMe fallback:", e);
+        html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+      }
+    } else {
+      nvmeSlots.forEach(slot => {
+        const selected = wizardData.nvme_starting_slot === slot ? 'selected' : '';
+        html += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
+      });
+    }
 
     html += `
         </select>
@@ -573,20 +605,40 @@ function renderSlotAssignment() {
       const nvmeSlotType = nvmeMapping.slot_type;
       let nvmeStatus = '<span style="color: #888;">Unconfigured</span>';
       if (nvmeHwId && nvmeSlotType) {
+        // Check against master slot map (PCIe hot-plug slots)
         const nvmeMasterEntry = masterSlotMap.find(e =>
           e.hardware_identifier === nvmeHwId &&
           e.slot_type === nvmeSlotType
         );
+        
+        // If slot exists in master map, show as configured
+        // We can't easily determine drive presence without scanning devices
         if (nvmeMasterEntry) {
-          nvmeStatus = '<span style="color: #4CAF50;">Drive Present</span>';
+          nvmeStatus = '<span style="color: #4CAF50;">Configured</span>';
         } else {
-          nvmeStatus = '<span style="color: #FFA500;">Empty Bay</span>';
+          nvmeStatus = '<span style="color: #FFA500;">Unconfigured</span>';
         }
       }
+
+      // Build NVMe slot dropdown from master slot map
+      const nvmeSlots = masterSlotMap
+        .filter(e => e.slot_type === 'pcie_nvme')
+        .map(e => e.hardware_identifier)
+        .sort((a, b) => parseInt(a) - parseInt(b));
+
+      let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
+      
+      nvmeSlots.forEach(slot => {
+        const selected = nvmeHwId === slot ? 'selected' : '';
+        nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
+      });
+
       html += `
         <tr>
           <td>
-            <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" value="${escapeHtml(nvmeMapping.hardware_identifier)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+            <select class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+              ${nvmeOptions}
+            </select>
           </td>
           <td>${nvmeStatus}</td>
         </tr>
@@ -625,46 +677,59 @@ function renderSlotAssignment() {
     });
   });
 
-  // Bind HW ID input events with format validation
+  // Bind HW ID input events with format validation (for text inputs)
   container.querySelectorAll('.hw-id-input').forEach(input => {
-    input.addEventListener('input', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
-      const interfaceType = e.target.dataset.interface;
-      const slotType = e.target.dataset.slotType;
-      const value = e.target.value;
+    if (input.tagName === 'INPUT') {
+      input.addEventListener('input', (e) => {
+        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const interfaceType = e.target.dataset.interface;
+        const slotType = e.target.dataset.slotType;
+        const value = e.target.value;
 
-      // Validate format based on slot type
-      let isValid = true;
-      if (value) {
-        if (slotType === 'sas_expander') {
-          // Should match phy-0:0:N pattern
-          isValid = /^phy-0:0:\d+$/.test(value);
-        } else if (slotType === 'motherboard_sata') {
-          // Should match ataN pattern
-          isValid = /^ata\d+$/.test(value);
-        } else if (slotType === 'pcie_nvme') {
-          // Should be a number (slot folder name)
-          isValid = /^\d+$/.test(value);
+        // Validate format based on slot type
+        let isValid = true;
+        if (value) {
+          if (slotType === 'sas_expander') {
+            // Should match phy-0:0:N pattern
+            isValid = /^phy-0:0:\d+$/.test(value);
+          } else if (slotType === 'motherboard_sata') {
+            // Should match ataN pattern
+            isValid = /^ata\d+$/.test(value);
+          } else if (slotType === 'pcie_nvme') {
+            // Should be a number (slot folder name)
+            isValid = /^\d+$/.test(value);
+          }
         }
-      }
 
-      // Update visual feedback
-      if (value && !isValid) {
-        input.style.borderColor = '#e74c3c';
-        input.title = `Invalid format for ${slotType}. Expected: ${
-          slotType === 'sas_expander' ? 'phy-0:0:N (e.g., phy-0:0:0)' :
-          slotType === 'motherboard_sata' ? 'ataN (e.g., ata1)' :
-          'number (e.g., 1)'
-        }`;
-      } else {
-        input.style.borderColor = '#444';
-        input.title = '';
-      }
+        // Update visual feedback
+        if (value && !isValid) {
+          input.style.borderColor = '#e74c3c';
+          input.title = `Invalid format for ${slotType}. Expected: ${
+            slotType === 'sas_expander' ? 'phy-0:0:N (e.g., phy-0:0:0)' :
+            slotType === 'motherboard_sata' ? 'ataN (e.g., ata1)' :
+            'number (e.g., 1)'
+          }`;
+        } else {
+          input.style.borderColor = '#444';
+          input.title = '';
+        }
 
-      if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
-        slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
-      }
-    });
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+        }
+      });
+    } else if (input.tagName === 'SELECT') {
+      // For NVMe dropdown, use 'change' event
+      input.addEventListener('change', (e) => {
+        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const interfaceType = e.target.dataset.interface;
+        const value = e.target.value;
+
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+        }
+      });
+    }
   });
 
   // Store slots in wizard data for save
@@ -980,7 +1045,7 @@ async function editEnclosure(enclosureId) {
     modalTitle.textContent = "Edit Enclosure";
   }
 
-  renderWizardStep();
+  await renderWizardStep();
   openModal(modal);
 }
 

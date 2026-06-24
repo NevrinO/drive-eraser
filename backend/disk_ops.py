@@ -442,8 +442,21 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
 
     elif slot_type == 'pcie_nvme':
         # For NVMe, match PCI address between device and slot
-        # Hardware identifier is the slot folder name (e.g., '101') in /sys/bus/pci/slots/
-        # Each slot has an 'address' file containing the PCI address
+        # Hardware identifier can be:
+        # 1. Slot folder name (e.g., '168') in /sys/bus/pci/slots/
+        # 2. Full by-path (e.g., 'pci-0000:18:00.0-nvme-1') for fallback
+        
+        # Check if hw_identifier is a full by-path (fallback format)
+        if hw_identifier.startswith('pci-') and 'nvme' in hw_identifier:
+            # Direct by-path match - return the device if it exists
+            by_path_dir = '/dev/disk/by-path'
+            if os.path.exists(by_path_dir):
+                full_path = os.path.join(by_path_dir, hw_identifier)
+                if os.path.islink(full_path):
+                    return os.path.realpath(full_path)
+            return None
+        
+        # Otherwise, treat as slot number and use PCI slot matching
         pci_slots_base = "/sys/bus/pci/slots"
         slot_address_file = os.path.join(pci_slots_base, hw_identifier, 'address')
         
@@ -473,18 +486,23 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
                         real_path = os.path.realpath(sys_path)
                         
                         # Traverse up to find the PCI device directory
-                        # Path structure: /sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/nvme/nvme0/nvme0n1
-                        # We need to find the PCI device directory (e.g., 0000:01:00.0)
+                        # Path structure: /sys/devices/pci0000:17/0000:17:02.0/0000:18:00.0/nvme/nvme0/nvme0n1
+                        # We need to find the LAST PCI device directory (the actual NVMe controller, not the bridge)
                         path_parts = real_path.split('/')
                         device_pci_addr = None
                         
-                        for i, part in enumerate(path_parts):
+                        for part in reversed(path_parts):
                             # PCI device addresses match pattern: xxxx:xx:xx.x
                             if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
                                 device_pci_addr = part
                                 break
                         
-                        if device_pci_addr and device_pci_addr == expected_pci_addr:
+                        # Normalize PCI addresses for comparison (strip function number if present)
+                        # Slot addresses may be "0000:18:00" while device addresses are "0000:18:00.0"
+                        normalized_device = device_pci_addr.split('.')[0] if device_pci_addr else None
+                        normalized_expected = expected_pci_addr.split('.')[0] if expected_pci_addr else None
+                        
+                        if normalized_device and normalized_device == normalized_expected:
                             return f"/dev/{dev_name}"
             except (OSError, IOError):
                 pass

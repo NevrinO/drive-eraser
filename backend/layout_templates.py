@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import tempfile
 import hashlib
 from threading import Lock
@@ -358,6 +359,11 @@ def validate_template(template):
     if not isinstance(template["id"], str) or not template["id"].strip():
         return "Template id must be a non-empty string"
     
+    # Validate template ID format (lowercase, numbers, hyphens, underscores only)
+    id_pattern = r"^[a-z0-9_-]+$"
+    if not re.match(id_pattern, template["id"]):
+        return "Template id must contain only lowercase letters, numbers, hyphens, and underscores"
+    
     if not isinstance(template["name"], str) or not template["name"].strip():
         return "Template name must be a non-empty string"
     
@@ -431,6 +437,44 @@ def validate_template(template):
                 seen_positions.add(pos_key)
             except (ValueError, TypeError):
                 return "skip_positions row and col must be integers"
+    
+    # Validate hybrid_slots if present
+    hybrid_slots = template.get("hybrid_slots")
+    if hybrid_slots is not None:
+        if not isinstance(hybrid_slots, list):
+            return "hybrid_slots must be an array"
+        # Enforce size limit to prevent DoS (Lesson #5)
+        if len(hybrid_slots) > 128:
+            return f"hybrid_slots array too large (max 128 entries, got {len(hybrid_slots)})"
+        
+        # If grid fields are present, validate range and duplicates
+        if has_grid:
+            seen_slots = set()
+            for slot in hybrid_slots:
+                try:
+                    slot_num = int(slot)
+                    if slot_num < 1 or slot_num > (rows * cols):
+                        return f"hybrid_slots entry {slot_num} out of bounds (1-{rows * cols})"
+                    # Check for duplicates
+                    if slot_num in seen_slots:
+                        return f"Duplicate hybrid_slots entry: {slot_num}"
+                    seen_slots.add(slot_num)
+                except (ValueError, TypeError):
+                    return "hybrid_slots entries must be integers"
+        else:
+            # If no grid, just validate type and duplicates
+            seen_slots = set()
+            for slot in hybrid_slots:
+                try:
+                    slot_num = int(slot)
+                    if slot_num < 0:
+                        return f"hybrid_slots entry {slot_num} must be non-negative"
+                    # Check for duplicates
+                    if slot_num in seen_slots:
+                        return f"Duplicate hybrid_slots entry: {slot_num}"
+                    seen_slots.add(slot_num)
+                except (ValueError, TypeError):
+                    return "hybrid_slots entries must be integers"
     
     return None
 
