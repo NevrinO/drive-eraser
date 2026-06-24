@@ -88,7 +88,7 @@ function renderEnclosureList(enclosures) {
 }
 
 // Open new enclosure wizard
-function openNewEnclosureWizard() {
+async function openNewEnclosureWizard() {
   const modal = document.getElementById("enclosureWizardModal");
   if (!modal) return;
 
@@ -119,7 +119,7 @@ function openNewEnclosureWizard() {
     modalTitle.textContent = "Add New Enclosure";
   }
 
-  renderWizardStep();
+  await renderWizardStep();
   openModal(modal);
 }
 
@@ -138,7 +138,7 @@ let wizardData = {
 };
 
 // Render current wizard step
-function renderWizardStep() {
+async function renderWizardStep() {
   const step1 = document.getElementById("wizardStep1");
   const step2 = document.getElementById("wizardStep2");
   const prevBtn = document.getElementById("wizardPrevBtn");
@@ -160,7 +160,7 @@ function renderWizardStep() {
     step2.classList.remove("hidden");
     prevBtn.classList.remove("hidden");
     saveBtn.classList.remove("hidden");
-    renderSlotAssignment();
+    await renderSlotAssignment();
   }
 }
 
@@ -294,17 +294,36 @@ async function renderConfiguration() {
       .sort((a, b) => parseInt(a) - parseInt(b));
 
     if (nvmeSlots.length === 0) {
-      // Debug: show what slot types are available
-      const availableTypes = [...new Set(masterSlotMap.map(e => e.slot_type))];
-      console.log('Available slot types in master slot map:', availableTypes);
-      console.log('Master slot map entries:', masterSlotMap);
-      html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+      // Fallback: try to get NVMe drives from unmapped drives API
+      try {
+        const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+        if (unmappedResponse.ok) {
+          const unmappedData = await unmappedResponse.json();
+          const nvmeDrives = unmappedData.filter(d => d.by_path && d.by_path.includes("nvme"));
+          
+          if (nvmeDrives.length > 0) {
+            // Use NVMe device paths as fallback identifiers
+            nvmeDrives.forEach(drive => {
+              const selected = wizardData.nvme_starting_slot === drive.by_path ? 'selected' : '';
+              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
+            });
+            html += `<small style="color: #888; display: block; margin-top: 4px;">Using detected NVMe drives (no hot-plug slots found)</small>`;
+          } else {
+            html += `<option value="" disabled>No NVMe drives detected in system</option>`;
+          }
+        } else {
+          html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+        }
+      } catch (e) {
+        console.error("Failed to load unmapped drives for NVMe fallback:", e);
+        html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+      }
+    } else {
+      nvmeSlots.forEach(slot => {
+        const selected = wizardData.nvme_starting_slot === slot ? 'selected' : '';
+        html += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
+      });
     }
-
-    nvmeSlots.forEach(slot => {
-      const selected = wizardData.nvme_starting_slot === slot ? 'selected' : '';
-      html += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
-    });
 
     html += `
         </select>
@@ -418,7 +437,7 @@ function buildTraversalPositions(rows, cols, traversal, slotCount) {
 
 // Render slot validation (Step 3)
 // Render slot assignment step with live recalc and editable HW identifiers
-function renderSlotAssignment() {
+async function renderSlotAssignment() {
   const container = document.getElementById("slotAssignmentContainer");
   if (!container) return;
 
@@ -599,12 +618,30 @@ function renderSlotAssignment() {
         .sort((a, b) => parseInt(a) - parseInt(b));
 
       let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
-      nvmeSlots.forEach(slot => {
-        const selected = nvmeHwId === slot ? 'selected' : '';
-        const slotEntry = masterSlotMap.find(e => e.hardware_identifier === slot && e.slot_type === 'pcie_nvme');
-        const hasDrive = slotEntry ? ' (Drive Present)' : ' (Empty)';
-        nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}${hasDrive}</option>`;
-      });
+      
+      if (nvmeSlots.length === 0) {
+        // Fallback: use unmapped drives
+        try {
+          const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+          if (unmappedResponse.ok) {
+            const unmappedData = await unmappedResponse.json();
+            const nvmeDrives = unmappedData.filter(d => d.by_path && d.by_path.includes("nvme"));
+            nvmeDrives.forEach(drive => {
+              const selected = nvmeHwId === drive.by_path ? 'selected' : '';
+              nvmeOptions += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
+            });
+          }
+        } catch (e) {
+          console.error("Failed to load unmapped drives for NVMe fallback:", e);
+        }
+      } else {
+        nvmeSlots.forEach(slot => {
+          const selected = nvmeHwId === slot ? 'selected' : '';
+          const slotEntry = masterSlotMap.find(e => e.hardware_identifier === slot && e.slot_type === 'pcie_nvme');
+          const hasDrive = slotEntry ? ' (Drive Present)' : ' (Empty)';
+          nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}${hasDrive}</option>`;
+        });
+      }
 
       html += `
         <tr>
@@ -624,9 +661,9 @@ function renderSlotAssignment() {
 
   // Bind starting slot input for live recalc
   // Use 'change' instead of 'input' to prevent re-rendering while typing multi-digit numbers
-  document.getElementById("wizardStartingSlotLive").addEventListener("change", (e) => {
+  document.getElementById("wizardStartingSlotLive").addEventListener("change", async (e) => {
     wizardData.starting_slot_number = parseInt(e.target.value) || 0;
-    renderSlotAssignment(); // Re-render with new starting slot
+    await renderSlotAssignment(); // Re-render with new starting slot
   });
 
   // Bind label input events
@@ -731,12 +768,12 @@ document.getElementById("wizardNextBtn")?.addEventListener("click", () => {
     }
   }
   currentWizardStep++;
-  renderWizardStep();
+  await renderWizardStep();
 });
 
-document.getElementById("wizardPrevBtn")?.addEventListener("click", () => {
+document.getElementById("wizardPrevBtn")?.addEventListener("click", async () => {
   currentWizardStep--;
-  renderWizardStep();
+  await renderWizardStep();
 });
 
 async function handleSaveEnclosure() {
@@ -1018,7 +1055,7 @@ async function editEnclosure(enclosureId) {
     modalTitle.textContent = "Edit Enclosure";
   }
 
-  renderWizardStep();
+  await renderWizardStep();
   openModal(modal);
 }
 
