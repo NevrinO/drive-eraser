@@ -291,7 +291,15 @@ async function renderConfiguration() {
     const nvmeSlots = masterSlotMap
       .filter(entry => entry.slot_type === 'pcie_nvme')
       .map(entry => entry.hardware_identifier)
-      .sort();
+      .sort((a, b) => parseInt(a) - parseInt(b));
+
+    if (nvmeSlots.length === 0) {
+      // Debug: show what slot types are available
+      const availableTypes = [...new Set(masterSlotMap.map(e => e.slot_type))];
+      console.log('Available slot types in master slot map:', availableTypes);
+      console.log('Master slot map entries:', masterSlotMap);
+      html += `<option value="" disabled>No NVMe slots detected in system</option>`;
+    }
 
     nvmeSlots.forEach(slot => {
       const selected = wizardData.nvme_starting_slot === slot ? 'selected' : '';
