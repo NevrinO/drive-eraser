@@ -361,6 +361,19 @@ function renderSasSpecific(sasData) {
     html += `<div class="kv"><span>Non-Medium Errors:</span><span>${sasData.non_medium_errors}</span></div>`;
   }
 
+  // Display start/stop cycle counter
+  if (sasData.start_stop_cycle_counter) {
+    html += renderSasStartStopCounter(sasData.start_stop_cycle_counter);
+  }
+
+  // Display SAS port PHY information
+  if (sasData.sas_port_0) {
+    html += renderSasPortInfo(sasData.sas_port_0, "Port 0");
+  }
+  if (sasData.sas_port_1) {
+    html += renderSasPortInfo(sasData.sas_port_1, "Port 1");
+  }
+
   // Parse and display error counter log as a table
   if (sasData.error_counter_log) {
     html += renderSasErrorCounterLog(sasData.error_counter_log);
@@ -372,6 +385,88 @@ function renderSasSpecific(sasData) {
   }
 
   return html || '<p>No SAS-specific data available.</p>';
+}
+
+function renderSasStartStopCounter(counterData) {
+  if (!counterData || typeof counterData !== 'object') {
+    return '<p class="info-text">Start/Stop Cycle Counter: Not available</p>';
+  }
+
+  let html = '<h5>Start/Stop Cycle Counter</h5>';
+
+  const year = counterData.year_of_manufacture;
+  const week = counterData.week_of_manufacture;
+  if (year && week) {
+    html += `<div class="kv"><span>Manufactured:</span><span>Week ${week} of ${year}</span></div>`;
+  }
+
+  const specifiedCycles = counterData.specified_cycle_count_over_device_lifetime;
+  const accumulatedCycles = counterData.accumulated_start_stop_cycles;
+  if (specifiedCycles !== undefined && accumulatedCycles !== undefined) {
+    const percentage = specifiedCycles > 0 ? ((accumulatedCycles / specifiedCycles) * 100).toFixed(1) : 'N/A';
+    html += `<div class="kv"><span>Start/Stop Cycles:</span><span>${accumulatedCycles.toLocaleString()} / ${specifiedCycles.toLocaleString()} (${percentage}%)</span></div>`;
+  }
+
+  const specifiedLoadUnload = counterData.specified_load_unload_count_over_device_lifetime;
+  const accumulatedLoadUnload = counterData.accumulated_load_unload_cycles;
+  if (specifiedLoadUnload !== undefined && accumulatedLoadUnload !== undefined) {
+    const percentage = specifiedLoadUnload > 0 ? ((accumulatedLoadUnload / specifiedLoadUnload) * 100).toFixed(1) : 'N/A';
+    html += `<div class="kv"><span>Load/Unload Cycles:</span><span>${accumulatedLoadUnload.toLocaleString()} / ${specifiedLoadUnload.toLocaleString()} (${percentage}%)</span></div>`;
+  }
+
+  return html;
+}
+
+function renderSasPortInfo(portData, portName) {
+  if (!portData || typeof portData !== 'object') {
+    return '';
+  }
+
+  let html = `<h5>SAS ${portName}</h5>`;
+
+  const phyData = portData.phy_0;
+  if (!phyData) {
+    html += '<p class="info-text">No PHY data available</p>';
+    return html;
+  }
+
+  const linkRate = phyData.negotiated_logical_link_rate || 'Unknown';
+  const deviceType = phyData.attached_device_type || 'Unknown';
+  const sasAddress = phyData.sas_address || 'Unknown';
+  const invalidDwordCount = phyData.invalid_dword_count !== undefined ? phyData.invalid_dword_count : '-';
+  const runningDisparityErrorCount = phyData.running_disparity_error_count !== undefined ? phyData.running_disparity_error_count : '-';
+  const lossOfDwordSyncCount = phyData.loss_of_dword_synchronization_count !== undefined ? phyData.loss_of_dword_synchronization_count : '-';
+  const phyResetProblemCount = phyData.phy_reset_problem_count !== undefined ? phyData.phy_reset_problem_count : '-';
+
+  html += `
+    <div class="kv"><span>Link Rate:</span><span>${escapeHtml(linkRate)}</span></div>
+    <div class="kv"><span>Attached Device:</span><span>${escapeHtml(deviceType)}</span></div>
+    <div class="kv"><span>SAS Address:</span><span>${escapeHtml(sasAddress)}</span></div>
+  `;
+
+  html += '<h6>PHY Error Counters</h6>';
+  html += `
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Invalid DWords</th>
+          <th>Running Disparity Errors</th>
+          <th>Loss of DWord Sync</th>
+          <th>PHY Reset Problems</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="${invalidDwordCount > 0 ? 'row-warning' : ''}">${invalidDwordCount}</td>
+          <td class="${runningDisparityErrorCount > 0 ? 'row-warning' : ''}">${runningDisparityErrorCount}</td>
+          <td class="${lossOfDwordSyncCount > 0 ? 'row-warning' : ''}">${lossOfDwordSyncCount}</td>
+          <td class="${phyResetProblemCount > 0 ? 'row-warning' : ''}">${phyResetProblemCount}</td>
+        </tr>
+      </tbody>
+    </table>
+  `;
+
+  return html;
 }
 
 function renderSasErrorCounterLog(errorLog) {
@@ -443,29 +538,40 @@ function renderSasBackgroundScanLog(scanLog) {
   // Parse scan status
   const statusObj = scanLog.status;
   let scanStatus = 'Unknown';
+  let scanProgress = '-';
+  let numScans = '-';
+  let numMediumScans = '-';
+
   if (typeof statusObj === 'string') {
     scanStatus = statusObj;
   } else if (statusObj && typeof statusObj === 'object') {
     scanStatus = statusObj.string || 'Unknown';
+    scanProgress = statusObj.scan_progress !== undefined ? statusObj.scan_progress : '-';
+    numScans = statusObj.number_scans_performed !== undefined ? statusObj.number_scans_performed : '-';
+    numMediumScans = statusObj.number_medium_scans_performed !== undefined ? statusObj.number_medium_scans_performed : '-';
   }
 
-  // Parse scan progress (if available)
-  let scanProgress = '-';
-  if (scanLog.scan_progress !== undefined) {
-    scanProgress = scanLog.scan_progress + '%';
+  // Also check for these fields at the top level (some smartctl versions put them there)
+  if (scanProgress === '-' && scanLog.scan_progress !== undefined) {
+    scanProgress = scanLog.scan_progress;
   }
-
-  // Parse number of scans performed
-  let numScans = '-';
-  if (scanLog.number_scans_performed !== undefined) {
+  if (numScans === '-' && scanLog.number_scans_performed !== undefined) {
     numScans = scanLog.number_scans_performed;
+  }
+
+  // Format progress as percentage if it's a number
+  if (typeof scanProgress === 'number') {
+    scanProgress = scanProgress + '%';
   }
 
   html += `
     <div class="kv"><span>Scan Status:</span><span>${escapeHtml(scanStatus)}</span></div>
-    <div class="kv"><span>Scan Progress:</span><span>${scanProgress}</span></div>
-    <div class="kv"><span>Number of Scans Performed:</span><span>${numScans}</span></div>
+    <div class="kv"><span>Scan Progress:</span><span>${escapeHtml(scanProgress)}</span></div>
+    <div class="kv"><span>Total Scans Performed:</span><span>${numScans}</span></div>
   `;
+  if (numMediumScans !== '-') {
+    html += `<div class="kv"><span>Medium Scans Performed:</span><span>${numMediumScans}</span></div>`;
+  }
 
   // Parse scan event table if present
   const scanTable = scanLog.table;
@@ -743,13 +849,5 @@ async function pollSmartTestStatus(device, testType) {
 
   // Poll every 5 seconds
   smartTestPollingInterval = setInterval(updateStatus, 5000);
-}
-
-// Helper function to escape HTML
-function escapeHtml(text) {
-  if (text === null || text === undefined) return '';
-  const div = document.createElement('div');
-  div.textContent = String(text);
-  return div.innerHTML;
 }
 // --- END OF FILE frontend/smartDeepDive.js ---

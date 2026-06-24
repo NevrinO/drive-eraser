@@ -2209,7 +2209,7 @@ def get_smart_details(device):
             if len(nvme_results) > MAX_SELF_TEST_LOGS:
                 result["truncated"] = True
         
-        # Handle SCSI/SAS self-test logs (via SCSI Informational Exceptions)
+        # Handle SCSI/SAS self-test logs (via SCSI Informational Exceptions or scsi_self_test_N)
         elif "scsi_ie" in raw_json:
             scsi_ie = raw_json["scsi_ie"]
             scsi_string = scsi_ie.get("string", "unknown")
@@ -2227,8 +2227,45 @@ def get_smart_details(device):
                 "ambiguous": False,
                 "log_index": 0
             })
-        else:
-            logger.debug(f"Device {device}: No self-test log found in SMART data (checked ata_smart_self_test_log, nvme_self_test_log, scsi_ie)")
+        
+        # Handle SAS self-test logs (scsi_self_test_0, scsi_self_test_1, etc.)
+        # Some SAS drives report self-tests in this format instead of scsi_ie
+        sas_self_test_count = 0
+        for i in range(20):  # Check for scsi_self_test_0 through scsi_self_test_19
+            test_key = f"scsi_self_test_{i}"
+            if test_key in raw_json:
+                # Stop processing if we've reached the limit
+                if sas_self_test_count >= MAX_SELF_TEST_LOGS:
+                    result["truncated"] = True
+                    break
+                
+                sas_self_test_count += 1
+                test_data = raw_json[test_key]
+                test_code = test_data.get("code", {}).get("string", "unknown")
+                test_result = test_data.get("result", {}).get("string", "unknown")
+                test_hours = test_data.get("power_on_time", {}).get("hours")
+                
+                # Determine if test passed (result value 0 = completed successfully)
+                result_value = test_data.get("result", {}).get("value")
+                passed = result_value == 0
+                
+                result["self_test_logs"].append({
+                    "type": test_code,
+                    "status": test_result,
+                    "passed": passed,
+                    "remaining": 0,
+                    "lba": None,
+                    "hours": test_hours,
+                    "corrected_hours": test_hours,  # SAS hours don't rollover like ATA
+                    "rollover_corrected": False,
+                    "ambiguous": False,
+                    "log_index": i
+                })
+        
+        if sas_self_test_count > 0:
+            logger.debug(f"Device {device}: Found {sas_self_test_count} SAS self-test log entries")
+        elif "scsi_ie" not in raw_json:
+            logger.debug(f"Device {device}: No self-test log found in SMART data (checked ata_smart_self_test_log, nvme_self_test_log, scsi_ie, scsi_self_test_N)")
         
         # Include current POH for context
         result["current_power_on_hours"] = current_poh
@@ -2261,9 +2298,12 @@ def get_smart_details(device):
         if "scsi_grown_defect_list" in raw_json or "scsi_error_counter_log" in raw_json:
             sas_data = {
                 "grown_defect_list": raw_json.get("scsi_grown_defect_list"),
-                "background_scan_log": raw_json.get("scsi_background_scan_log"),
+                "background_scan_log": raw_json.get("scsi_background_scan_log") or raw_json.get("scsi_background_scan"),
                 "error_counter_log": raw_json.get("scsi_error_counter_log"),
-                "non_medium_errors": raw_json.get("scsi_non_medium_error_count")
+                "non_medium_errors": raw_json.get("scsi_non_medium_error_count"),
+                "start_stop_cycle_counter": raw_json.get("scsi_start_stop_cycle_counter"),
+                "sas_port_0": raw_json.get("scsi_sas_port_0"),
+                "sas_port_1": raw_json.get("scsi_sas_port_1")
             }
             sas_json = json.dumps(sas_data)
             if len(sas_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
