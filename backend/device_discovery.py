@@ -603,21 +603,44 @@ def get_enclosure_hardware_info() -> List[Dict]:
             continue
 
         # Read vendor and model from sysfs
+        # Try multiple locations: enclosure directory, device directory, and resolved device path
         vendor = None
         model = None
-        vendor_file = os.path.join(device_path, "vendor")
-        model_file = os.path.join(device_path, "model")
 
+        # Possible locations for vendor/model files
+        vendor_paths = [
+            os.path.join(enc_path, "vendor"),
+            os.path.join(device_path, "vendor"),
+        ]
+        model_paths = [
+            os.path.join(enc_path, "model"),
+            os.path.join(device_path, "model"),
+        ]
+
+        # Try resolved device path if device is a symlink
         try:
-            with open(vendor_file, 'r') as f:
-                vendor = f.read().strip()
+            if os.path.islink(device_path):
+                real_device_path = os.path.realpath(device_path)
+                vendor_paths.append(os.path.join(real_device_path, "vendor"))
+                model_paths.append(os.path.join(real_device_path, "model"))
         except (OSError, IOError):
             pass
-        try:
-            with open(model_file, 'r') as f:
-                model = f.read().strip()
-        except (OSError, IOError):
-            pass
+
+        for vendor_file in vendor_paths:
+            try:
+                with open(vendor_file, 'r') as f:
+                    vendor = f.read().strip()
+                    break
+            except (OSError, IOError):
+                continue
+
+        for model_file in model_paths:
+            try:
+                with open(model_file, 'r') as f:
+                    model = f.read().strip()
+                    break
+            except (OSError, IOError):
+                continue
 
         # Count total and occupied slots
         total_slots = 0
@@ -649,6 +672,7 @@ def get_enclosure_hardware_info() -> List[Dict]:
             "total_slots": total_slots,
             "occupied_slots": occupied_slots
         })
+        logging.debug(f"Enclosure hardware info: pci={pci_controller}, vendor={vendor}, model={model}, total={total_slots}, occupied={occupied_slots}")
 
     return hardware_info
 
@@ -979,13 +1003,12 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
         except (OSError, IOError) as e:
             logging.warning(f"Error scanning sas_phy for SAS expanders: {e}")
 
-    # Fall back to /dev/disk/by-path for SAS expander detection when sas_phy didn't find
-    # any actual expander entries (i.e., no entries with expander_sas_address set).
-    # This handles cases where /sys/class/sas_phy exists but the expander directory
-    # format doesn't match our regex patterns, or older kernels without sas_phy.
-    has_expander_entries = any(e.get('expander_sas_address') for e in master_map)
+    # Fall back to /dev/disk/by-path for SAS expander detection to supplement sas_phy scan.
+    # The sas_phy scan may not find expander entries due to sysfs path format differences,
+    # so we always run the by-path scan to ensure expander entries are present.
+    # Deduplication via _seen_sas_phy prevents duplicates.
     by_path_base = "/dev/disk/by-path"  # defined here for use by all subsequent scans
-    if not has_expander_entries and os.path.exists(by_path_base):
+    if os.path.exists(by_path_base):
         try:
             by_path_entries = os.listdir(by_path_base)
             # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0

@@ -176,6 +176,7 @@ async function renderConfiguration() {
     if (response.ok) {
       const data = await response.json();
       hardwareInfo = data.hardware_info || [];
+      console.log("Hardware enclosure info received:", hardwareInfo);
     }
   } catch (e) {
     console.error("Failed to load hardware enclosure info:", e);
@@ -219,6 +220,10 @@ async function renderConfiguration() {
       : group.pci_controller;
     const occupiedBadge = hwInfo ? ` <span style="background: #4a90e2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${hwInfo.occupied_slots} drives</span>` : '';
 
+    // Count total slots for this controller from master map
+    const totalSlots = masterSlotMap.filter(e => e.pci_controller === group.pci_controller).length;
+    const totalBadge = totalSlots > 0 ? ` <span style="background: #666; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${totalSlots} slots</span>` : '';
+
     if (expanders.length > 0) {
       expanders.forEach(expander => {
         const isSelected = wizardData.pci_controller === group.pci_controller && wizardData.expander_sas_address === expander;
@@ -226,7 +231,7 @@ async function renderConfiguration() {
         html += `
           <label class="radio-option">
             <input type="radio" name="controller" value="${escapeHtml(group.pci_controller)}" data-expander="${escapeHtml(expander)}" ${isSelected ? 'checked' : ''} ${disabled}>
-            <span>${escapeHtml(controllerLabel)} — SAS Expander (${escapeHtml(expander)})${occupiedBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
+            <span>${escapeHtml(controllerLabel)} — SAS Expander (${escapeHtml(expander)})${occupiedBadge}${totalBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
           </label>
         `;
       });
@@ -236,13 +241,22 @@ async function renderConfiguration() {
       html += `
         <label class="radio-option">
           <input type="radio" name="controller" value="${escapeHtml(group.pci_controller)}" data-expander="" ${isSelected ? 'checked' : ''} ${disabled}>
-          <span>${escapeHtml(controllerLabel)} — Direct-attached (${group.slot_type})${occupiedBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
+          <span>${escapeHtml(controllerLabel)} — Direct-attached (${group.slot_type})${occupiedBadge}${totalBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
         </label>
       `;
     }
   });
 
   html += `</div>`;
+
+  // Add hint about controller identification
+  html += `
+    <div style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-top: 12px; border-left: 3px solid #4a90e2;">
+      <p style="margin: 0; font-size: 0.85rem; color: #aaa;">
+        <strong>Tip:</strong> To identify which controller corresponds to your physical enclosure, insert a test drive into a bay and check which controller shows an increase in the "drives" count above.
+      </p>
+    </div>
+  `;
 
   html += `
     <div class="form-group">
@@ -561,7 +575,8 @@ function renderSlotAssignment() {
   container.innerHTML = html;
 
   // Bind starting slot input for live recalc
-  document.getElementById("wizardStartingSlotLive").addEventListener("input", (e) => {
+  // Use 'change' instead of 'input' to prevent re-rendering while typing multi-digit numbers
+  document.getElementById("wizardStartingSlotLive").addEventListener("change", (e) => {
     wizardData.starting_slot_number = parseInt(e.target.value) || 0;
     renderSlotAssignment(); // Re-render with new starting slot
   });
