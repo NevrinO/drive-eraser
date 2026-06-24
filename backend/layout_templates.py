@@ -432,6 +432,44 @@ def validate_template(template):
             except (ValueError, TypeError):
                 return "skip_positions row and col must be integers"
     
+    # Validate hybrid_slots if present
+    hybrid_slots = template.get("hybrid_slots")
+    if hybrid_slots is not None:
+        if not isinstance(hybrid_slots, list):
+            return "hybrid_slots must be an array"
+        # Enforce size limit to prevent DoS (Lesson #5)
+        if len(hybrid_slots) > 128:
+            return f"hybrid_slots array too large (max 128 entries, got {len(hybrid_slots)})"
+        
+        # If grid fields are present, validate range and duplicates
+        if has_grid:
+            seen_slots = set()
+            for slot in hybrid_slots:
+                try:
+                    slot_num = int(slot)
+                    if slot_num < 1 or slot_num > (rows * cols):
+                        return f"hybrid_slots entry {slot_num} out of bounds (1-{rows * cols})"
+                    # Check for duplicates
+                    if slot_num in seen_slots:
+                        return f"Duplicate hybrid_slots entry: {slot_num}"
+                    seen_slots.add(slot_num)
+                except (ValueError, TypeError):
+                    return "hybrid_slots entries must be integers"
+        else:
+            # If no grid, just validate type and duplicates
+            seen_slots = set()
+            for slot in hybrid_slots:
+                try:
+                    slot_num = int(slot)
+                    if slot_num < 0:
+                        return f"hybrid_slots entry {slot_num} must be non-negative"
+                    # Check for duplicates
+                    if slot_num in seen_slots:
+                        return f"Duplicate hybrid_slots entry: {slot_num}"
+                    seen_slots.add(slot_num)
+                except (ValueError, TypeError):
+                    return "hybrid_slots entries must be integers"
+    
     return None
 
 

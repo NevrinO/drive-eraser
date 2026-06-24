@@ -5,7 +5,7 @@
 let createTemplateBtn, exportTemplatesBtn, importTemplatesBtn, templateImportFile;
 let templateList, templateStatus, templateModal, templateModalTitle, templateModalClose, templateModalError;
 let templateForm, templateFormSubmit, templateId, templateName, templateVendor;
-let templateBayCount, templateRows, templateCols, templateTraversal, templateSkipPositions;
+let templateBayCount, templateRows, templateCols, templateTraversal, templateSkipPositions, templateHybridSlots;
 
 // Template preview elements
 let templatePreviewModal, templatePreviewTitle, templatePreviewClose;
@@ -37,6 +37,7 @@ function initializeTemplateManagement() {
   templateCols = document.getElementById("templateCols");
   templateTraversal = document.getElementById("templateTraversal");
   templateSkipPositions = document.getElementById("templateSkipPositions");
+  templateHybridSlots = document.getElementById("templateHybridSlots");
 
   // Template preview elements
   templatePreviewModal = document.getElementById("templatePreviewModal");
@@ -52,7 +53,7 @@ function initializeTemplateManagement() {
       !templateModal || !templateModalTitle || !templateModalClose || !templateModalError ||
       !templateForm || !templateFormSubmit || !templateId || !templateName ||
       !templateVendor || !templateBayCount || !templateRows || !templateCols ||
-      !templateTraversal || !templateSkipPositions ||
+      !templateTraversal || !templateSkipPositions || !templateHybridSlots ||
       !templatePreviewModal || !templatePreviewTitle || !templatePreviewClose ||
       !templatePreviewInfo || !templatePreviewGrid || !previewAnimateBtn || !previewResetBtn) {
     console.error("Critical: One or more template management elements not found in DOM");
@@ -83,6 +84,25 @@ function initializeTemplateManagement() {
         const cols = parseInt(templateCols.value, 10);
         const skipPositions = skipBayNumbers.length > 0 ? bayNumbersToRowCol(skipBayNumbers, cols) : [];
 
+        const hybridSlotsStr = templateHybridSlots.value.trim();
+        const hybridBayNumbers = hybridSlotsStr ? hybridSlotsStr.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)) : [];
+        
+        // Validate hybrid_slots
+        if (hybridBayNumbers.length > 0) {
+          const gridSize = parseInt(templateRows.value, 10) * parseInt(templateCols.value, 10);
+          if (hybridBayNumbers.some(bayNum => bayNum < 1 || bayNum > gridSize)) {
+            throw new Error("Hybrid slots must be between 1 and grid size (rows × columns)");
+          }
+          // Check for duplicates
+          const uniqueHybridSlots = new Set(hybridBayNumbers);
+          if (uniqueHybridSlots.size !== hybridBayNumbers.length) {
+            throw new Error("Hybrid slots cannot contain duplicate numbers");
+          }
+          if (hybridBayNumbers.length > 128) {
+            throw new Error("Hybrid slots cannot exceed 128 items");
+          }
+        }
+
         const templateData = {
           id: templateId.value.trim(),
           name: templateName.value.trim(),
@@ -91,7 +111,8 @@ function initializeTemplateManagement() {
           rows: parseInt(templateRows.value, 10),
           cols: parseInt(templateCols.value, 10),
           traversal_preset: templateTraversal.value,
-          skip_positions: skipPositions
+          skip_positions: skipPositions,
+          hybrid_slots: hybridBayNumbers
         };
 
         if (!templateData.id) {
@@ -370,6 +391,9 @@ function openTemplateModal(template = null) {
     const rows = template.rows || 1;
     const skipBayNumbers = template.skip_positions ? rowColToBayNumbers(template.skip_positions, cols, "top_left_across_then_down", rows) : [];
     templateSkipPositions.value = skipBayNumbers.length > 0 ? skipBayNumbers.join(",") : "";
+    // Hybrid slots are already bay numbers
+    const hybridBayNumbers = template.hybrid_slots || [];
+    templateHybridSlots.value = hybridBayNumbers.length > 0 ? hybridBayNumbers.join(",") : "";
   } else {
     templateId.value = "";
     templateId.disabled = false;
@@ -380,6 +404,7 @@ function openTemplateModal(template = null) {
     templateCols.value = 4;
     templateTraversal.value = "top_left_down_then_across";
     templateSkipPositions.value = "";
+    templateHybridSlots.value = "";
   }
 
   templateModal.classList.add("open");
@@ -786,6 +811,7 @@ function openTemplatePreview(template) {
       <div><strong>Grid:</strong> ${template.rows || 1} × ${template.cols || 1}</div>
       <div><strong>Traversal:</strong> ${escapeHtml(template.traversal_preset || "top_left_down_then_across")}</div>
       <div style="grid-column: span 2;"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? skipBayNumbers.join(", ") : "None"}</div>
+      <div style="grid-column: span 2;"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? template.hybrid_slots.join(", ") : "None"}</div>
     </div>
   `;
 

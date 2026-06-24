@@ -314,6 +314,14 @@ function renderAuditHistory(auditHistory, liveSelfTestLogs, currentPoh, device) 
       let testType = test.type || 'Unknown';
       if (test.type === 'scsi_ie') {
         testType = 'SCSI Informational Exceptions';
+      } else if (typeof test.type === 'number') {
+        // NVMe self-test_num values
+        const nvmeTestTypes = {
+          0: 'Short Operation',
+          1: 'Extended Operation',
+          2: 'Vendor Specific'
+        };
+        testType = nvmeTestTypes[test.type] || `Test ${test.type}`;
       }
 
       return `
@@ -604,19 +612,172 @@ function renderSasBackgroundScanLog(scanLog) {
 function renderNvmeSpecific(nvmeData) {
   let html = '';
 
+  // Parse and display health information log
   if (nvmeData.health_log) {
-    html += `
-      <div class="kv"><span>Health Log:</span><span>${escapeHtml(JSON.stringify(nvmeData.health_log, null, 2))}</span></div>
-    `;
+    html += renderNvmeHealthLog(nvmeData.health_log);
   }
 
+  // Parse and display error log
   if (nvmeData.error_log) {
-    html += `
-      <div class="kv"><span>Error Log:</span><span>${escapeHtml(JSON.stringify(nvmeData.error_log, null, 2))}</span></div>
-    `;
+    html += renderNvmeErrorLog(nvmeData.error_log);
   }
 
   return html || '<p>No NVMe-specific data available.</p>';
+}
+
+function renderNvmeHealthLog(healthLog) {
+  if (!healthLog || typeof healthLog !== 'object') {
+    return '<p class="info-text">NVMe Health Log: Not available</p>';
+  }
+
+  let html = '<h5>NVMe Health Information</h5>';
+
+  // Critical warning is a bitmask
+  const criticalWarning = healthLog.critical_warning !== undefined ? healthLog.critical_warning : 0;
+  const warningBits = [];
+  if (criticalWarning & 0x01) warningBits.push('Available Spare Space');
+  if (criticalWarning & 0x02) warningBits.push('Temperature');
+  if (criticalWarning & 0x04) warningBits.push('Device Reliability');
+  if (criticalWarning & 0x08) warningBits.push('Read-Only');
+  if (criticalWarning & 0x10) warningBits.push('Volatile Memory Backup');
+  
+  const warningDisplay = warningBits.length > 0 ? warningBits.join(', ') : 'None';
+  const warningClass = criticalWarning > 0 ? 'row-warning' : '';
+
+  html += `<div class="kv"><span>Critical Warning:</span><span class="${warningClass}">${warningDisplay} (0x${criticalWarning.toString(16).padStart(2, '0')})</span></div>`;
+
+  // Temperature sensors
+  const temperature = healthLog.temperature !== undefined ? healthLog.temperature + '°C' : '-';
+  const tempSensors = healthLog.temperature_sensors;
+  let tempSensorDisplay = '-';
+  if (tempSensors && Array.isArray(tempSensors) && tempSensors.length > 0) {
+    tempSensorDisplay = tempSensors.map(s => s + '°C').join(', ');
+  }
+  html += `<div class="kv"><span>Temperature:</span><span>${escapeHtml(temperature)}</span></div>`;
+  if (tempSensorDisplay !== '-') {
+    html += `<div class="kv"><span>Temperature Sensors:</span><span>${escapeHtml(tempSensorDisplay)}</span></div>`;
+  }
+
+  // Available spare
+  const availableSpare = healthLog.available_spare !== undefined ? healthLog.available_spare + '%' : '-';
+  const availableSpareThreshold = healthLog.available_spare_threshold !== undefined ? healthLog.available_spare_threshold + '%' : '-';
+  const spareClass = (healthLog.available_spare !== undefined && healthLog.available_spare_threshold !== undefined && 
+                      healthLog.available_spare < healthLog.available_spare_threshold) ? 'row-warning' : '';
+  html += `<div class="kv"><span>Available Spare:</span><span class="${spareClass}">${availableSpare} (threshold: ${availableSpareThreshold})</span></div>`;
+
+  // Percentage used
+  const percentageUsed = healthLog.percentage_used !== undefined ? healthLog.percentage_used + '%' : '-';
+  const usedClass = (healthLog.percentage_used !== undefined && healthLog.percentage_used > 90) ? 'row-warning' : '';
+  html += `<div class="kv"><span>Percentage Used:</span><span class="${usedClass}">${percentageUsed}</span></div>`;
+
+  // Data units read/written
+  const dataUnitsRead = healthLog.data_units_read !== undefined ? formatDataUnits(healthLog.data_units_read) : '-';
+  const dataUnitsWritten = healthLog.data_units_written !== undefined ? formatDataUnits(healthLog.data_units_written) : '-';
+  html += `<div class="kv"><span>Data Read:</span><span>${escapeHtml(dataUnitsRead)}</span></div>`;
+  html += `<div class="kv"><span>Data Written:</span><span>${escapeHtml(dataUnitsWritten)}</span></div>`;
+
+  // Media and data integrity errors
+  const mediaErrors = healthLog.media_errors !== undefined ? healthLog.media_errors.toLocaleString() : '-';
+  const numErrLogEntries = healthLog.num_err_log_entries !== undefined ? healthLog.num_err_log_entries.toLocaleString() : '-';
+  const mediaErrorsClass = (healthLog.media_errors !== undefined && healthLog.media_errors > 0) ? 'row-warning' : '';
+  html += `<div class="kv"><span>Media Errors:</span><span class="${mediaErrorsClass}">${mediaErrors}</span></div>`;
+  html += `<div class="kv"><span>Error Log Entries:</span><span>${numErrLogEntries}</span></div>`;
+
+  // Power cycles and power on hours
+  const powerCycles = healthLog.power_cycles !== undefined ? healthLog.power_cycles.toLocaleString() : '-';
+  const powerOnHours = healthLog.power_on_hours !== undefined ? healthLog.power_on_hours.toLocaleString() : '-';
+  html += `<div class="kv"><span>Power Cycles:</span><span>${powerCycles}</span></div>`;
+  html += `<div class="kv"><span>Power-On Hours:</span><span>${powerOnHours}</span></div>`;
+
+  // Controller busy time
+  const controllerBusyTime = healthLog.controller_busy_time !== undefined ? formatMinutes(healthLog.controller_busy_time) : '-';
+  html += `<div class="kv"><span>Controller Busy Time:</span><span>${escapeHtml(controllerBusyTime)}</span></div>`;
+
+  return html;
+}
+
+function renderNvmeErrorLog(errorLog) {
+  if (!errorLog || typeof errorLog !== 'object') {
+    return '<p class="info-text">NVMe Error Log: Not available</p>';
+  }
+
+  // Check if it's an array of error entries
+  if (Array.isArray(errorLog)) {
+    if (errorLog.length === 0) {
+      return '<p class="info-text">NVMe Error Log: No entries</p>';
+    }
+
+    let html = '<h5>NVMe Error Log Entries</h5>';
+    html += '<table class="data-table">';
+    html += '<thead><tr><th>Entry</th><th>Error Count</th><th>SQID</th><th>CID</th><th>Status</th><th>LBA</th><th>NSID</th><th>Command</th></tr></thead>';
+    html += '<tbody>';
+
+    errorLog.forEach((entry, idx) => {
+      const errorCount = entry.error_count !== undefined ? entry.error_count.toLocaleString() : '-';
+      const sqid = entry.sqid !== undefined ? entry.sqid : '-';
+      const cid = entry.cid !== undefined ? entry.cid : '-';
+      const status = entry.status !== undefined ? '0x' + entry.status.toString(16) : '-';
+      const lba = entry.lba !== undefined ? entry.lba : '-';
+      const nsid = entry.nsid !== undefined ? entry.nsid : '-';
+      const command = entry.command_name || entry.command || '-';
+
+      html += `
+        <tr>
+          <td>${idx + 1}</td>
+          <td>${errorCount}</td>
+          <td>${sqid}</td>
+          <td>${cid}</td>
+          <td>${status}</td>
+          <td>${lba}</td>
+          <td>${nsid}</td>
+          <td>${escapeHtml(command)}</td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+    return html;
+  }
+
+  // If it's a single object or unknown format, display as raw JSON
+  return `
+    <h5>NVMe Error Log</h5>
+    <pre class="terminal-pre">${escapeHtml(JSON.stringify(errorLog, null, 2))}</pre>
+  `;
+}
+
+function formatDataUnits(units) {
+  // smartctl reports data units in 512-byte units
+  // Convert to human-readable format
+  if (units === undefined || units === null) return '-';
+  
+  const bytes = units * 512;
+  const gb = bytes / (1024 * 1024 * 1024);
+  const tb = gb / 1024;
+  
+  if (tb >= 1) {
+    return tb.toFixed(2) + ' TB';
+  } else if (gb >= 1) {
+    return gb.toFixed(2) + ' GB';
+  } else {
+    return bytes.toLocaleString() + ' bytes';
+  }
+}
+
+function formatMinutes(minutes) {
+  if (minutes === undefined || minutes === null) return '-';
+  
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const remainingHours = hours % 24;
+  
+  if (days > 0) {
+    return `${days}d ${remainingHours}h`;
+  } else if (hours > 0) {
+    return `${hours}h`;
+  } else {
+    return `${minutes}m`;
+  }
 }
 
 function renderDeviceStatistics(deviceStats) {

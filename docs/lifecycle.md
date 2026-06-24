@@ -598,6 +598,26 @@ When a drive is dual-ported under MPIO, the system automatically resolves both p
 7. **Manual Override**: Correct any incorrect mappings before saving
 8. **Multi-Enclosure**: Repeat for additional enclosures as needed
 
+### Hybrid NVMe Bay Configuration
+
+Some enclosures support both SAS/SATA and NVMe drives in the same physical slot (hybrid bays). To configure hybrid bays:
+
+1. **Template Configuration**: In the Template Management panel, specify which physical slots are hybrid using the `hybrid_slots` field (comma-separated bay numbers, e.g., "1,5,9").
+2. **Enclosure Mapping**: When creating an enclosure from a hybrid template, the system will:
+   - Display both SAS/SATA and NVMe mapping options for hybrid slots
+   - Allow auto-incrementing NVMe slot numbers for sequential PCIe slot mapping
+   - Store separate hardware identifiers for each interface type
+3. **Drive Detection**: During discovery, the system:
+   - Detects which interface type is present in each hybrid slot
+   - Updates the `auto_detected` flag for the active interface
+   - Falls back to the configured mapping if auto-detection fails
+4. **UI Display**: Hybrid slots show the active interface type based on the detected drive
+
+**Example**: A 16-bay enclosure with slots 1, 5, 9, and 13 configured as hybrid:
+- Slot 1 can accept either a SAS drive (via SAS expander) or an NVMe drive (via PCIe slot 0)
+- When an NVMe drive is inserted in slot 1, the system detects it at `/sys/bus/pci/slots/0` and maps it accordingly
+- When a SAS drive is inserted, the system detects it via the SAS expander phy path
+
 ---
 
 ## Error Handling
