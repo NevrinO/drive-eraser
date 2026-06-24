@@ -703,8 +703,8 @@ def get_enclosure_hardware_info() -> List[Dict]:
             try:
                 with open(status_file, 'r') as f:
                     status = f.read().strip()
-                    # Status file may contain "0" (empty) or "1" (present), or other values
-                    if status and status != "0":
+                    # Status file contains "unknown" when drive is present, "not installed" when empty
+                    if status and status != "not installed":
                         occupied_slots += 1
                         continue
             except (OSError, IOError):
