@@ -556,6 +556,103 @@ def is_enclosure_device(scsi_device_path: str, device_type_cache: Optional[Dict[
         return False
 
 
+def get_enclosure_hardware_info() -> List[Dict]:
+    """Collect SES hardware info for each PCI controller.
+
+    Scans /sys/class/enclosure to collect vendor, model, total_slots, and occupied_slots
+    for each enclosure controller. Used by the enclosure wizard to identify enclosures.
+
+    Returns:
+        List of dictionaries with hardware info per controller:
+        - pci_controller: PCI address of the controller
+        - vendor: Vendor name from sysfs
+        - model: Model name from sysfs
+        - total_slots: Total slot count from SES
+        - occupied_slots: Count of slots with drives present
+    """
+    enclosure_base = "/sys/class/enclosure"
+    METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
+    hardware_info = []
+
+    # Attempt the operation directly; handle errors from the actual operation (Lesson #6)
+    try:
+        enc_ids = os.listdir(enclosure_base)
+    except (OSError, IOError):
+        logging.debug(f"Failed to list enclosure directory: {enclosure_base}")
+        return hardware_info
+
+    for enc_id in enc_ids:
+        enc_path = os.path.join(enclosure_base, enc_id)
+        device_path = os.path.join(enc_path, "device")
+
+        # Extract PCI controller from device link
+        pci_controller = None
+        try:
+            if os.path.islink(device_path):
+                real_path = os.path.realpath(device_path)
+                # Path format: /sys/devices/pci0000:00/0000:00:1f.2/...
+                # Extract the PCI device directory
+                for part in real_path.split('/'):
+                    if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
+                        pci_controller = part
+                        break
+        except (OSError, IOError):
+            pass
+
+        if not pci_controller:
+            continue
+
+        # Read vendor and model from sysfs
+        vendor = None
+        model = None
+        vendor_file = os.path.join(device_path, "vendor")
+        model_file = os.path.join(device_path, "model")
+
+        try:
+            with open(vendor_file, 'r') as f:
+                vendor = f.read().strip()
+        except (OSError, IOError):
+            pass
+        try:
+            with open(model_file, 'r') as f:
+                model = f.read().strip()
+        except (OSError, IOError):
+            pass
+
+        # Count total and occupied slots
+        total_slots = 0
+        occupied_slots = 0
+
+        try:
+            slot_ids = os.listdir(enc_path)
+        except (OSError, IOError):
+            continue
+
+        for slot_id in slot_ids:
+            if slot_id in METADATA_DIRS:
+                continue
+            slot_path = os.path.join(enc_path, slot_id)
+            total_slots += 1
+
+            # Check if slot has a device (drive present)
+            device_link = os.path.join(slot_path, "device")
+            try:
+                if os.path.islink(device_link) or os.path.exists(device_link):
+                    occupied_slots += 1
+            except (OSError, IOError):
+                pass
+
+        hardware_info.append({
+            "pci_controller": pci_controller,
+            "vendor": vendor,
+            "model": model,
+            "total_slots": total_slots,
+            "occupied_slots": occupied_slots
+        })
+
+    return hardware_info
+
+
 def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
     """Query enclosure metadata to get the maximum slot number.
 

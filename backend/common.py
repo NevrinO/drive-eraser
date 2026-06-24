@@ -461,8 +461,8 @@ def save_bay_map(bay_map_data, config_dir=None):
         f.flush()
         os.fsync(f.fileno())
     
-    # Atomic rename (POSIX guarantees this is atomic)
-    os.rename(temp_path, bay_map_path)
+    # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
+    os.replace(temp_path, bay_map_path)
 
 def load_bay_map(config_dir=None):
     """

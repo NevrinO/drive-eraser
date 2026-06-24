@@ -141,14 +141,12 @@ let wizardData = {
 function renderWizardStep() {
   const step1 = document.getElementById("wizardStep1");
   const step2 = document.getElementById("wizardStep2");
-  const step3 = document.getElementById("wizardStep3");
   const prevBtn = document.getElementById("wizardPrevBtn");
   const nextBtn = document.getElementById("wizardNextBtn");
   const saveBtn = document.getElementById("wizardSaveBtn");
 
   step1.classList.add("hidden");
   step2.classList.add("hidden");
-  step3.classList.add("hidden");
   prevBtn.classList.add("hidden");
   nextBtn.classList.add("hidden");
   saveBtn.classList.add("hidden");
@@ -157,25 +155,31 @@ function renderWizardStep() {
     step1.classList.remove("hidden");
     nextBtn.classList.remove("hidden");
     nextBtn.textContent = "Next Step >";
-    renderControllerSelector();
+    renderConfiguration();
   } else if (currentWizardStep === 2) {
     step2.classList.remove("hidden");
     prevBtn.classList.remove("hidden");
-    nextBtn.classList.remove("hidden");
-    nextBtn.textContent = "Next Step >";
-    renderTemplateSelector();
-  } else if (currentWizardStep === 3) {
-    step3.classList.remove("hidden");
-    prevBtn.classList.remove("hidden");
     saveBtn.classList.remove("hidden");
-    renderSlotValidation();
+    renderSlotAssignment();
   }
 }
 
-// Render controller/expander selector (Step 1)
-function renderControllerSelector() {
-  const container = document.getElementById("controllerSelectorContainer");
+// Render configuration step (combines controller and template selection)
+async function renderConfiguration() {
+  const container = document.getElementById("configurationContainer");
   if (!container) return;
+
+  // Load hardware enclosure info for human-readable controller names
+  let hardwareInfo = [];
+  try {
+    const response = await safeFetch("/api/admin/hardware-enclosure-info");
+    if (response.ok) {
+      const data = await response.json();
+      hardwareInfo = data.hardware_info || [];
+    }
+  } catch (e) {
+    console.error("Failed to load hardware enclosure info:", e);
+  }
 
   // Group master slot map by PCI controller
   const controllerGroups = {};
@@ -203,15 +207,18 @@ function renderControllerSelector() {
       <input type="number" id="wizardDisplayOrder" value="${wizardData.display_order}" min="0">
     </div>
     <div class="form-group">
-      <label>Starting Slot Number (optional)</label>
-      <input type="number" id="wizardStartingSlot" value="${wizardData.starting_slot_number || ''}" min="0" placeholder="Leave empty for 0">
-    </div>
-    <div class="form-group">
       <label>Select Physical Controller / Connection</label>
   `;
 
   Object.values(controllerGroups).forEach(group => {
     const expanders = Array.from(group.expanders);
+    // Find hardware info for this controller
+    const hwInfo = hardwareInfo.find(h => h.pci_controller === group.pci_controller);
+    const controllerLabel = hwInfo && hwInfo.vendor && hwInfo.model
+      ? `${hwInfo.vendor} ${hwInfo.model}`
+      : group.pci_controller;
+    const occupiedBadge = hwInfo ? ` <span style="background: #4a90e2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${hwInfo.occupied_slots} drives</span>` : '';
+
     if (expanders.length > 0) {
       expanders.forEach(expander => {
         const isSelected = wizardData.pci_controller === group.pci_controller && wizardData.expander_sas_address === expander;
@@ -219,7 +226,7 @@ function renderControllerSelector() {
         html += `
           <label class="radio-option">
             <input type="radio" name="controller" value="${escapeHtml(group.pci_controller)}" data-expander="${escapeHtml(expander)}" ${isSelected ? 'checked' : ''} ${disabled}>
-            <span>[${escapeHtml(group.pci_controller)}] HBA via Expander (${escapeHtml(expander)})${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
+            <span>${escapeHtml(controllerLabel)} — SAS Expander (${escapeHtml(expander)})${occupiedBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
           </label>
         `;
       });
@@ -229,39 +236,15 @@ function renderControllerSelector() {
       html += `
         <label class="radio-option">
           <input type="radio" name="controller" value="${escapeHtml(group.pci_controller)}" data-expander="" ${isSelected ? 'checked' : ''} ${disabled}>
-          <span>[${escapeHtml(group.pci_controller)}] Direct-attached HBA (${group.slot_type})${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
+          <span>${escapeHtml(controllerLabel)} — Direct-attached (${group.slot_type})${occupiedBadge}${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</span>
         </label>
       `;
     }
   });
 
   html += `</div>`;
-  container.innerHTML = html;
 
-  // Bind events
-  document.getElementById("wizardEnclosureName").addEventListener("input", (e) => {
-    wizardData.name = e.target.value;
-  });
-  document.getElementById("wizardDisplayOrder").addEventListener("input", (e) => {
-    wizardData.display_order = parseInt(e.target.value) || 0;
-  });
-  document.getElementById("wizardStartingSlot").addEventListener("input", (e) => {
-    wizardData.starting_slot_number = e.target.value ? parseInt(e.target.value) : null;
-  });
-  container.querySelectorAll("input[name='controller']").forEach(radio => {
-    radio.addEventListener("change", (e) => {
-      wizardData.pci_controller = e.target.value;
-      wizardData.expander_sas_address = e.target.dataset.expander || null;
-    });
-  });
-}
-
-// Render template selector (Step 2)
-function renderTemplateSelector() {
-  const container = document.getElementById("templateSelectorContainer");
-  if (!container) return;
-
-  let html = `
+  html += `
     <div class="form-group">
       <label>Layout Template${isEditMode ? ' <em>(cannot change in edit mode)</em>' : ''}</label>
       <select id="wizardTemplateSelect" ${isEditMode ? 'disabled' : ''}>
@@ -313,9 +296,21 @@ function renderTemplateSelector() {
   container.innerHTML = html;
 
   // Bind events
+  document.getElementById("wizardEnclosureName").addEventListener("input", (e) => {
+    wizardData.name = e.target.value;
+  });
+  document.getElementById("wizardDisplayOrder").addEventListener("input", (e) => {
+    wizardData.display_order = parseInt(e.target.value) || 0;
+  });
+  container.querySelectorAll("input[name='controller']").forEach(radio => {
+    radio.addEventListener("change", (e) => {
+      wizardData.pci_controller = e.target.value;
+      wizardData.expander_sas_address = e.target.dataset.expander || null;
+    });
+  });
   document.getElementById("wizardTemplateSelect").addEventListener("change", (e) => {
     wizardData.template_id = e.target.value;
-    renderTemplateSelector(); // Re-render to show/hide NVMe options
+    renderConfiguration(); // Re-render to show/hide NVMe options
   });
 
   const nvmeSelect = document.getElementById("wizardNvmeStartSlot");
@@ -377,8 +372,9 @@ function buildTraversalPositions(rows, cols, traversal, slotCount) {
 }
 
 // Render slot validation (Step 3)
-async function renderSlotValidation() {
-  const container = document.getElementById("slotValidationContainer");
+// Render slot assignment step with live recalc and editable HW identifiers
+function renderSlotAssignment() {
+  const container = document.getElementById("slotAssignmentContainer");
   if (!container) return;
 
   const template = availableTemplates.find(t => t.id === wizardData.template_id);
@@ -387,23 +383,30 @@ async function renderSlotValidation() {
     return;
   }
 
-  // Build slot mapping based on template and auto-detection
-  // Note: We don't fetch current drives for occupancy because the enclosure
-  // doesn't exist in bay_map.json yet. After saving, drives will be properly discovered.
+  // Initialize starting slot if not set
+  if (wizardData.starting_slot_number === null || wizardData.starting_slot_number === undefined) {
+    wizardData.starting_slot_number = 0;
+  }
+
+  // Build slot mapping with arithmetic HW identifier computation
   const slots = [];
-  const startingSlot = wizardData.starting_slot_number ? parseInt(wizardData.starting_slot_number, 10) : 0;
+  const startingSlot = parseInt(wizardData.starting_slot_number, 10) || 0;
   const rows = template.rows || 1;
   const cols = template.cols || 1;
   const traversal = template.traversal_preset || "top_left_down_then_across";
 
-  // Build traversal positions if template has grid layout
-  // Otherwise use linear iteration for simple slot_count-only templates
+  // Build traversal positions
   let positions;
   if (rows > 0 && cols > 0 && SUPPORTED_TRAVERSALS.includes(traversal)) {
     positions = buildTraversalPositions(rows, cols, traversal, template.slot_count);
   } else {
-    // Fallback to linear iteration for templates without grid layout
     positions = Array.from({ length: template.slot_count }, (_, i) => ({ row: i, col: 0 }));
+  }
+
+  // When editing an existing enclosure, load saved slot data so custom HW IDs are preserved
+  let savedSlots = null;
+  if (isEditMode && editEnclosureId && adminEnclosures[editEnclosureId]) {
+    savedSlots = adminEnclosures[editEnclosureId].slots || null;
   }
 
   for (let slotIndex = 0; slotIndex < positions.length; slotIndex++) {
@@ -411,72 +414,72 @@ async function renderSlotValidation() {
     const isHybrid = template.hybrid_slots && template.hybrid_slots.includes(slotIndex);
     const physicalSlot = startingSlot + slotIndex;
 
-    // Auto-detect SAS/SATA mapping (mirrors backend _auto_detect_mapping logic)
-    let sasMapping = null;
-    const sasEntry = masterSlotMap.find(entry => {
-      if (entry.pci_controller !== wizardData.pci_controller) return false;
-      if (entry.physical_slot_number !== physicalSlot) return false;
-      const sasTypes = ['sas_expander', 'sas_direct', 'motherboard_sata'];
-      if (!sasTypes.includes(entry.slot_type)) return false;
-      // For expander connections, verify expander address matches
-      if (entry.slot_type === 'sas_expander') {
-        return entry.expander_sas_address === wizardData.expander_sas_address;
-      }
-      // For direct/motherboard connections, expander_sas_address should be null/undefined
-      return !entry.expander_sas_address;
-    });
-    if (sasEntry) {
-      sasMapping = {
-        slot_type: sasEntry.slot_type,
-        hardware_identifier: sasEntry.hardware_identifier,
-        auto_detected: true
-      };
+    // Compute HW identifiers arithmetically (mirrors backend logic)
+    let sasHwId, sasSlotType;
+    if (wizardData.expander_sas_address) {
+      sasHwId = `phy-0:0:${physicalSlot}`;
+      sasSlotType = "sas_expander";
+    } else {
+      sasHwId = `ata${physicalSlot}`;
+      sasSlotType = "motherboard_sata";
     }
 
-    // Auto-detect NVMe mapping for hybrid slots
-    let nvmeMapping = null;
+    // Compute NVMe HW identifier for hybrid slots
+    let nvmeHwId = null;
     if (isHybrid && wizardData.nvme_starting_slot) {
       const nvmeStartingSlot = parseInt(wizardData.nvme_starting_slot, 10);
       if (!isNaN(nvmeStartingSlot)) {
         const nvmeOffset = template.hybrid_slots.indexOf(slotIndex);
         const nvmeSlotNum = nvmeStartingSlot + nvmeOffset;
-        const nvmeEntry = masterSlotMap.find(entry =>
-          entry.pci_controller === wizardData.pci_controller &&
-          entry.slot_type === 'pcie_nvme' &&
-          entry.hardware_identifier === String(nvmeSlotNum)
-        );
-        if (nvmeEntry) {
-          nvmeMapping = {
-            slot_type: nvmeEntry.slot_type,
-            hardware_identifier: nvmeEntry.hardware_identifier,
-            auto_detected: true
-          };
-        }
+        nvmeHwId = String(nvmeSlotNum);
       }
     }
 
+    const slotKey = String(slotIndex);
+    const savedSlot = savedSlots && savedSlots[slotKey] ? savedSlots[slotKey] : null;
+    const savedSasMapping = savedSlot && savedSlot.mappings && savedSlot.mappings.sas_sata;
+    const savedNvmeMapping = savedSlot && savedSlot.mappings && savedSlot.mappings.nvme;
+
     slots.push({
       physical_slot_number: physicalSlot,
-      label: `Bay ${slotIndex}`,
-      role: template.default_role || "wipe",
-      locked: false,
+      label: savedSlot ? savedSlot.label : `Bay ${slotIndex}`,
+      role: savedSlot ? savedSlot.role : (template.default_role || "wipe"),
+      locked: savedSlot ? savedSlot.locked : false,
       mappings: {
-        sas_sata: sasMapping,
-        nvme: nvmeMapping
+        sas_sata: savedSasMapping ? {
+          slot_type: savedSasMapping.slot_type || sasSlotType,
+          hardware_identifier: savedSasMapping.hardware_identifier || sasHwId,
+          auto_detected: savedSasMapping.auto_detected !== undefined ? savedSasMapping.auto_detected : true
+        } : {
+          slot_type: sasSlotType,
+          hardware_identifier: sasHwId,
+          auto_detected: true
+        },
+        nvme: savedNvmeMapping ? {
+          slot_type: savedNvmeMapping.slot_type || "pcie_nvme",
+          hardware_identifier: savedNvmeMapping.hardware_identifier || nvmeHwId,
+          auto_detected: savedNvmeMapping.auto_detected !== undefined ? savedNvmeMapping.auto_detected : true
+        } : (nvmeHwId ? {
+          slot_type: "pcie_nvme",
+          hardware_identifier: nvmeHwId,
+          auto_detected: true
+        } : null)
       }
     });
   }
 
   let html = `
-    <p style="margin-bottom: 12px;">Please verify your physical layout matches the auto-detected hardware mappings below:</p>
-    <p style="margin-bottom: 12px; font-size: 0.85rem; color: #888;">Note: Drive occupancy will be shown after saving the enclosure.</p>
+    <div class="form-group" style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+      <label style="font-weight: bold;">Starting Slot Number</label>
+      <input type="number" id="wizardStartingSlotLive" value="${wizardData.starting_slot_number}" min="0" style="width: 100px; padding: 4px; background: #333; border: 1px solid #555; color: #fff;">
+      <small style="color: #888; display: block; margin-top: 4px;">Changing this will live-update the slot table below.</small>
+    </div>
     <table class="slot-validation-table">
       <thead>
         <tr>
-          <th>Slot</th>
+          <th>Slot #</th>
           <th>Label</th>
           <th>Role</th>
-          <th>Type</th>
           <th>HW Identifier</th>
           <th>Status</th>
         </tr>
@@ -487,6 +490,7 @@ async function renderSlotValidation() {
   slots.forEach((slot, index) => {
     const sasMapping = slot.mappings.sas_sata;
     const nvmeMapping = slot.mappings.nvme;
+    const isConfigured = sasMapping && sasMapping.hardware_identifier;
 
     html += `
       <tr>
@@ -501,18 +505,20 @@ async function renderSlotValidation() {
             <option value="reserved" ${slot.role === 'reserved' ? 'selected' : ''}>Reserved</option>
           </select>
         </td>
-        <td>SAS/SATA</td>
-        <td>${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : '<em>None</em>'}</td>
-        <td>${sasMapping ? '<span style="color: #4CAF50;">Mapped</span>' : '<span style="color: #888;">Unmapped</span>'}</td>
+        <td>
+          <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+        </td>
+        <td>${isConfigured ? '<span style="color: #4CAF50;">Configured</span>' : '<span style="color: #888;">Unconfigured</span>'}</td>
       </tr>
     `;
 
     if (nvmeMapping) {
       html += `
         <tr>
-          <td>NVMe</td>
-          <td>${escapeHtml(nvmeMapping.hardware_identifier)}</td>
-          <td><span style="color: #4CAF50;">Mapped</span></td>
+          <td>
+            <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" value="${escapeHtml(nvmeMapping.hardware_identifier)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+          </td>
+          <td><span style="color: #4CAF50;">Configured</span></td>
         </tr>
       `;
     }
@@ -521,7 +527,13 @@ async function renderSlotValidation() {
   html += `</tbody></table>`;
   container.innerHTML = html;
 
-  // Bind label input events to update slots array
+  // Bind starting slot input for live recalc
+  document.getElementById("wizardStartingSlotLive").addEventListener("input", (e) => {
+    wizardData.starting_slot_number = parseInt(e.target.value) || 0;
+    renderSlotAssignment(); // Re-render with new starting slot
+  });
+
+  // Bind label input events
   container.querySelectorAll('.slot-label-input').forEach(input => {
     input.addEventListener('input', (e) => {
       const slotIndex = parseInt(e.target.dataset.slotIndex);
@@ -531,17 +543,61 @@ async function renderSlotValidation() {
     });
   });
 
-  // Bind role select events to update slots array
+  // Bind role select events
   container.querySelectorAll('.slot-role-select').forEach(select => {
     select.addEventListener('change', (e) => {
       const slotIndex = parseInt(e.target.dataset.slotIndex);
       if (slots[slotIndex]) {
         slots[slotIndex].role = e.target.value;
-        // Auto-lock OS drives
         slots[slotIndex].locked = e.target.value === 'os';
       }
     });
   });
+
+  // Bind HW ID input events with format validation
+  container.querySelectorAll('.hw-id-input').forEach(input => {
+    input.addEventListener('input', (e) => {
+      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const interfaceType = e.target.dataset.interface;
+      const slotType = e.target.dataset.slotType;
+      const value = e.target.value;
+
+      // Validate format based on slot type
+      let isValid = true;
+      if (value) {
+        if (slotType === 'sas_expander') {
+          // Should match phy-0:0:N pattern
+          isValid = /^phy-0:0:\d+$/.test(value);
+        } else if (slotType === 'motherboard_sata') {
+          // Should match ataN pattern
+          isValid = /^ata\d+$/.test(value);
+        } else if (slotType === 'pcie_nvme') {
+          // Should be a number (slot folder name)
+          isValid = /^\d+$/.test(value);
+        }
+      }
+
+      // Update visual feedback
+      if (value && !isValid) {
+        input.style.borderColor = '#e74c3c';
+        input.title = `Invalid format for ${slotType}. Expected: ${
+          slotType === 'sas_expander' ? 'phy-0:0:N (e.g., phy-0:0:0)' :
+          slotType === 'motherboard_sata' ? 'ataN (e.g., ata1)' :
+          'number (e.g., 1)'
+        }`;
+      } else {
+        input.style.borderColor = '#444';
+        input.title = '';
+      }
+
+      if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+        slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+      }
+    });
+  });
+
+  // Store slots in wizard data for save
+  wizardData.slots = slots;
 }
 
 // Wizard navigation
@@ -560,8 +616,6 @@ document.getElementById("wizardNextBtn")?.addEventListener("click", () => {
       alert("Please select a controller.");
       return;
     }
-  }
-  if (currentWizardStep === 2) {
     if (!wizardData.template_id) {
       alert("Please select a template.");
       return;
@@ -586,25 +640,56 @@ async function handleSaveEnclosure() {
       return;
     }
 
-    // Get custom labels and roles from the slot validation table
-    const container = document.getElementById("slotValidationContainer");
-    const customLabels = {};
-    const customRoles = {};
+    // Get slot mappings from the slot assignment table
+    const container = document.getElementById("slotAssignmentContainer");
+    const slotMappings = {};
+    
     container.querySelectorAll('.slot-label-input').forEach(input => {
       const slotIndex = parseInt(input.dataset.slotIndex);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for label input");
         return;
       }
-      customLabels[String(slotIndex)] = input.value;
+      const slotKey = String(slotIndex);
+      if (!slotMappings[slotKey]) {
+        slotMappings[slotKey] = {};
+      }
+      slotMappings[slotKey].label = input.value;
     });
+    
     container.querySelectorAll('.slot-role-select').forEach(select => {
       const slotIndex = parseInt(select.dataset.slotIndex);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for role select");
         return;
       }
-      customRoles[String(slotIndex)] = select.value;
+      const slotKey = String(slotIndex);
+      if (slotMappings[slotKey]) {
+        slotMappings[slotKey].role = select.value;
+        slotMappings[slotKey].locked = select.value === 'os';
+      }
+    });
+    
+    // Add HW identifiers to slot mappings
+    container.querySelectorAll('.hw-id-input').forEach(input => {
+      const slotIndex = parseInt(input.dataset.slotIndex);
+      const interfaceType = input.dataset.interface;
+      const slotType = input.dataset.slotType;
+      if (isNaN(slotIndex)) {
+        console.error("Invalid slot index for HW ID input");
+        return;
+      }
+      const slotKey = String(slotIndex);
+      if (!slotMappings[slotKey]) {
+        slotMappings[slotKey] = {};
+      }
+      if (!slotMappings[slotKey].mappings) {
+        slotMappings[slotKey].mappings = {};
+      }
+      slotMappings[slotKey].mappings[interfaceType] = {
+        slot_type: slotType,
+        hardware_identifier: input.value
+      };
     });
 
     const payload = {
@@ -617,8 +702,7 @@ async function handleSaveEnclosure() {
       auto_map_slots: true,
       nvme_start_slot: wizardData.nvme_starting_slot,
       starting_slot_number: wizardData.starting_slot_number,
-      custom_labels: customLabels,
-      custom_roles: customRoles
+      slot_mappings: slotMappings
     };
 
     const response = await safeFetch("/api/admin/enclosures", {
@@ -659,25 +743,56 @@ async function handleEditEnclosure() {
       return;
     }
 
-    // Get custom labels and roles from the slot validation table
-    const container = document.getElementById("slotValidationContainer");
-    const customLabels = {};
-    const customRoles = {};
+    // Get slot mappings from the slot assignment table
+    const container = document.getElementById("slotAssignmentContainer");
+    const slotMappings = {};
+    
     container.querySelectorAll('.slot-label-input').forEach(input => {
       const slotIndex = parseInt(input.dataset.slotIndex);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for label input");
         return;
       }
-      customLabels[String(slotIndex)] = input.value;
+      const slotKey = String(slotIndex);
+      if (!slotMappings[slotKey]) {
+        slotMappings[slotKey] = {};
+      }
+      slotMappings[slotKey].label = input.value;
     });
+    
     container.querySelectorAll('.slot-role-select').forEach(select => {
       const slotIndex = parseInt(select.dataset.slotIndex);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for role select");
         return;
       }
-      customRoles[String(slotIndex)] = select.value;
+      const slotKey = String(slotIndex);
+      if (slotMappings[slotKey]) {
+        slotMappings[slotKey].role = select.value;
+        slotMappings[slotKey].locked = select.value === 'os';
+      }
+    });
+    
+    // Add HW identifiers to slot mappings
+    container.querySelectorAll('.hw-id-input').forEach(input => {
+      const slotIndex = parseInt(input.dataset.slotIndex);
+      const interfaceType = input.dataset.interface;
+      const slotType = input.dataset.slotType;
+      if (isNaN(slotIndex)) {
+        console.error("Invalid slot index for HW ID input");
+        return;
+      }
+      const slotKey = String(slotIndex);
+      if (!slotMappings[slotKey]) {
+        slotMappings[slotKey] = {};
+      }
+      if (!slotMappings[slotKey].mappings) {
+        slotMappings[slotKey].mappings = {};
+      }
+      slotMappings[slotKey].mappings[interfaceType] = {
+        slot_type: slotType,
+        hardware_identifier: input.value
+      };
     });
 
     const payload = {
@@ -687,8 +802,8 @@ async function handleEditEnclosure() {
       expander_sas_address: wizardData.expander_sas_address,
       display_order: wizardData.display_order,
       nvme_start_slot: wizardData.nvme_starting_slot,
-      custom_labels: customLabels,
-      custom_roles: customRoles
+      starting_slot_number: wizardData.starting_slot_number,
+      slot_mappings: slotMappings
     };
 
     const response = await safeFetch(`/api/admin/enclosures/${editEnclosureId}`, {

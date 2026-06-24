@@ -349,25 +349,18 @@ def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map)
         if not slot_type or not hw_identifier:
             continue
 
-        # Look up in master map by (pci_controller, slot_type, physical_slot_number)
-        for lane in master_map:
-            if (lane.get('pci_controller') == pci_controller and
-                lane.get('slot_type') == slot_type and
-                lane.get('physical_slot_number') == physical_slot):
-                # Found matching lane, now resolve the actual device
-                # For SAS expander: check /dev/disk/by-path for phy-based symlinks
-                # For NVMe: check /sys/block for nvme devices
-                # For SATA: check /dev/disk/by-path for ata-based symlinks
+        # Use persisted mappings directly - do not search master map by physical_slot_number
+        # The master map only contains entries for occupied slots, so it fails for empty bays
+        # Persisted identifiers in bay_map.json are authoritative
+        dev_path = _resolve_device_from_hardware_identifier(
+            pci_controller, slot_type, hw_identifier, physical_slot
+        )
 
-                dev_path = _resolve_device_from_hardware_identifier(
-                    pci_controller, slot_type, hw_identifier, physical_slot
-                )
-
-                if dev_path:
-                    # Apply MPIO resolution
-                    dev_name = os.path.basename(dev_path)
-                    resolved_path = resolve_multipath_parent(dev_name)
-                    return resolved_path, interface_key
+        if dev_path:
+            # Apply MPIO resolution
+            dev_name = os.path.basename(dev_path)
+            resolved_path = resolve_multipath_parent(dev_name)
+            return resolved_path, interface_key
 
     return None, None
 
@@ -384,6 +377,18 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
     Returns:
         Device path string or None if not found
     """
+    # Validate slot_type allowlist
+    if slot_type not in ('sas_expander', 'sas_direct', 'motherboard_sata', 'pcie_nvme'):
+        return None
+
+    # Validate hw_identifier to prevent path traversal when used in os.path.join (Lesson #13)
+    if not isinstance(hw_identifier, str) or not hw_identifier:
+        return None
+    if '..' in hw_identifier or '/' in hw_identifier or '\\' in hw_identifier or '\x00' in hw_identifier:
+        return None
+    if len(hw_identifier) > 100:
+        return None
+
     by_path_dir = '/dev/disk/by-path/'
     if not os.path.exists(by_path_dir):
         return None
@@ -713,31 +718,6 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
                 slot_config, pci_controller, master_map
             )
 
-            # Auto-detection fallback for slots with empty mappings
-            # If slot has no mappings or mappings failed to resolve, try to auto-detect
-            if not dev_node:
-                mappings = slot_config.get("mappings", {})
-                if not mappings:
-                    logging.getLogger(__name__).info(f"Slot {bay_id} has no mappings, attempting auto-detection")
-                    # Try to find a device by physical slot number in master map
-                    for slot_lane in master_map:
-                        if slot_lane.get("physical_slot_number") == physical_slot:
-                            pci_controller_lane = slot_lane.get("pci_controller")
-                            slot_type = slot_lane.get("slot_type")
-                            hw_identifier = slot_lane.get("hardware_identifier")
-
-                            logging.getLogger(__name__).info(f"Auto-detection for slot {bay_id}: matched slot_lane - pci={pci_controller_lane}, type={slot_type}, hw_id={hw_identifier}")
-
-                            if pci_controller_lane and slot_type and hw_identifier is not None:
-                                auto_device_path = _resolve_device_from_hardware_identifier(
-                                    pci_controller_lane, slot_type, hw_identifier, physical_slot
-                                )
-                                logging.getLogger(__name__).info(f"Auto-detection for slot {bay_id}: resolved device_path={auto_device_path}")
-                                if auto_device_path:
-                                    dev_node = auto_device_path
-                                    interface_type = slot_type
-                                    logging.getLogger(__name__).info(f"Auto-detected drive for slot {bay_id}: {dev_node}")
-                                    break
 
             bay_info = {
                 "bay": bay_id,
