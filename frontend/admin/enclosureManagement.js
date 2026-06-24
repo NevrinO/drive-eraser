@@ -4,6 +4,8 @@
 let adminEnclosures = {};
 let availableTemplates = [];
 let masterSlotMap = [];
+let cachedUnmappedDrives = null;
+let cachedUnmappedDrivesTime = 0;
 
 // Load all enclosures from backend
 async function loadEnclosures() {
@@ -181,9 +183,12 @@ async function renderConfiguration() {
     console.error("Failed to load hardware enclosure info:", e);
   }
 
-  // Group master slot map by PCI controller
+  // Group master slot map by PCI controller (exclude PCIe NVMe slots from controller selection)
   const controllerGroups = {};
   masterSlotMap.forEach(entry => {
+    // Skip PCIe NVMe slots - they're not SAS controllers
+    if (entry.slot_type === 'pcie_nvme') return;
+    
     const key = entry.pci_controller;
     if (!controllerGroups[key]) {
       controllerGroups[key] = {
@@ -452,15 +457,22 @@ async function renderSlotAssignment() {
     wizardData.starting_slot_number = 0;
   }
 
-  // Fetch unmapped drives once for NVMe fallback
+  // Fetch unmapped drives once for NVMe fallback (with 30s cache)
   let unmappedDrives = [];
-  try {
-    const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
-    if (unmappedResponse.ok) {
-      unmappedDrives = await unmappedResponse.json();
+  const now = Date.now();
+  if (cachedUnmappedDrives && (now - cachedUnmappedDrivesTime) < 30000) {
+    unmappedDrives = cachedUnmappedDrives;
+  } else {
+    try {
+      const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
+      if (unmappedResponse.ok) {
+        unmappedDrives = await unmappedResponse.json();
+        cachedUnmappedDrives = unmappedDrives;
+        cachedUnmappedDrivesTime = now;
+      }
+    } catch (e) {
+      console.error("Failed to load unmapped drives for NVMe fallback:", e);
     }
-  } catch (e) {
-    console.error("Failed to load unmapped drives for NVMe fallback:", e);
   }
 
   // Build slot mapping with arithmetic HW identifier computation
@@ -611,11 +623,15 @@ async function renderSlotAssignment() {
       const nvmeSlotType = nvmeMapping.slot_type;
       let nvmeStatus = '<span style="color: #888;">Unconfigured</span>';
       if (nvmeHwId && nvmeSlotType) {
+        // Check against master slot map first (for hot-plug slots)
         const nvmeMasterEntry = masterSlotMap.find(e =>
           e.hardware_identifier === nvmeHwId &&
           e.slot_type === nvmeSlotType
         );
-        if (nvmeMasterEntry) {
+        // If not in master map, check against unmapped drives (for fallback)
+        const nvmeDrive = unmappedDrives.find(d => d.by_path === nvmeHwId);
+        
+        if (nvmeMasterEntry || nvmeDrive) {
           nvmeStatus = '<span style="color: #4CAF50;">Drive Present</span>';
         } else {
           nvmeStatus = '<span style="color: #FFA500;">Empty Bay</span>';

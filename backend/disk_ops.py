@@ -442,8 +442,21 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
 
     elif slot_type == 'pcie_nvme':
         # For NVMe, match PCI address between device and slot
-        # Hardware identifier is the slot folder name (e.g., '101') in /sys/bus/pci/slots/
-        # Each slot has an 'address' file containing the PCI address
+        # Hardware identifier can be:
+        # 1. Slot folder name (e.g., '168') in /sys/bus/pci/slots/
+        # 2. Full by-path (e.g., 'pci-0000:18:00.0-nvme-1') for fallback
+        
+        # Check if hw_identifier is a full by-path (fallback format)
+        if hw_identifier.startswith('pci-') and 'nvme' in hw_identifier:
+            # Direct by-path match - return the device if it exists
+            by_path_dir = '/dev/disk/by-path'
+            if os.path.exists(by_path_dir):
+                full_path = os.path.join(by_path_dir, hw_identifier)
+                if os.path.islink(full_path):
+                    return os.path.realpath(full_path)
+            return None
+        
+        # Otherwise, treat as slot number and use PCI slot matching
         pci_slots_base = "/sys/bus/pci/slots"
         slot_address_file = os.path.join(pci_slots_base, hw_identifier, 'address')
         
