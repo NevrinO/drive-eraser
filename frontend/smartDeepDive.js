@@ -308,9 +308,15 @@ function renderAuditHistory(auditHistory, liveSelfTestLogs, currentPoh, device) 
         hoursDisplay = '-';
       }
 
+      // Format test type for better readability
+      let testType = test.type || 'Unknown';
+      if (test.type === 'scsi_ie') {
+        testType = 'SCSI Informational Exceptions';
+      }
+
       return `
         <tr>
-          <td>${escapeHtml(test.type || 'Unknown')}</td>
+          <td>${escapeHtml(testType)}</td>
           <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
           <td>${test.remaining !== undefined && test.remaining !== null && test.remaining !== 'null' ? test.remaining + '%' : '-'}</td>
           <td>${test.lba || '-'}</td>
@@ -353,19 +359,138 @@ function renderSasSpecific(sasData) {
     html += `<div class="kv"><span>Non-Medium Errors:</span><span>${sasData.non_medium_errors}</span></div>`;
   }
 
-  if (sasData.background_scan_log) {
-    html += `
-      <div class="kv"><span>Background Scan Status:</span><span>${escapeHtml(JSON.stringify(sasData.background_scan_log, null, 2))}</span></div>
-    `;
+  // Parse and display error counter log as a table
+  if (sasData.error_counter_log) {
+    html += renderSasErrorCounterLog(sasData.error_counter_log);
   }
 
-  if (sasData.error_counter_log) {
-    html += `
-      <div class="kv"><span>Error Counter Log:</span><span>${escapeHtml(JSON.stringify(sasData.error_counter_log, null, 2))}</span></div>
-    `;
+  // Parse and display background scan log
+  if (sasData.background_scan_log) {
+    html += renderSasBackgroundScanLog(sasData.background_scan_log);
   }
 
   return html || '<p>No SAS-specific data available.</p>';
+}
+
+function renderSasErrorCounterLog(errorLog) {
+  if (!errorLog || typeof errorLog !== 'object') {
+    return '<p class="info-text">Error Counter Log: Not available</p>';
+  }
+
+  const sections = ['read', 'write', 'verify'];
+  let hasData = false;
+  let rows = '';
+
+  sections.forEach(section => {
+    const data = errorLog[section];
+    if (data && typeof data === 'object') {
+      hasData = true;
+      const errorsEccFast = data.errors_corrected_by_eccfast !== undefined ? data.errors_corrected_by_eccfast : '-';
+      const errorsEccDelayed = data.errors_corrected_by_eccdelayed !== undefined ? data.errors_corrected_by_eccdelayed : '-';
+      const errorsRereadsRewrites = data.errors_corrected_by_rereads_rewrites !== undefined ? data.errors_corrected_by_rereads_rewrites : '-';
+      const totalErrorsCorrected = data.total_errors_corrected !== undefined ? data.total_errors_corrected : '-';
+      const gigabytesProcessed = data.gigabytes_processed !== undefined ? data.gigabytes_processed : '-';
+      const totalUncorrectable = data.total_uncorrectable_errors !== undefined ? data.total_uncorrectable_errors : '-';
+
+      rows += `
+        <tr>
+          <td><strong>${section.toUpperCase()}</strong></td>
+          <td>${errorsEccFast}</td>
+          <td>${errorsEccDelayed}</td>
+          <td>${errorsRereadsRewrites}</td>
+          <td>${totalErrorsCorrected}</td>
+          <td>${gigabytesProcessed}</td>
+          <td class="${totalUncorrectable > 0 ? 'row-warning' : ''}">${totalUncorrectable}</td>
+        </tr>
+      `;
+    }
+  });
+
+  if (!hasData) {
+    return '<p class="info-text">Error Counter Log: No data available</p>';
+  }
+
+  return `
+    <h5>Error Counter Log</h5>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Operation</th>
+          <th>Errors Corrected (ECC Fast)</th>
+          <th>Errors Corrected (ECC Delayed)</th>
+          <th>Errors Corrected (Rereads/Rewrites)</th>
+          <th>Total Errors Corrected</th>
+          <th>GB Processed</th>
+          <th>Total Uncorrectable Errors</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderSasBackgroundScanLog(scanLog) {
+  if (!scanLog || typeof scanLog !== 'object') {
+    return '<p class="info-text">Background Scan Log: Not available</p>';
+  }
+
+  let html = '<h5>Background Scan Log</h5>';
+
+  // Parse scan status
+  const statusObj = scanLog.status;
+  let scanStatus = 'Unknown';
+  if (typeof statusObj === 'string') {
+    scanStatus = statusObj;
+  } else if (statusObj && typeof statusObj === 'object') {
+    scanStatus = statusObj.string || 'Unknown';
+  }
+
+  // Parse scan progress (if available)
+  let scanProgress = '-';
+  if (scanLog.scan_progress !== undefined) {
+    scanProgress = scanLog.scan_progress + '%';
+  }
+
+  // Parse number of scans performed
+  let numScans = '-';
+  if (scanLog.number_scans_performed !== undefined) {
+    numScans = scanLog.number_scans_performed;
+  }
+
+  html += `
+    <div class="kv"><span>Scan Status:</span><span>${escapeHtml(scanStatus)}</span></div>
+    <div class="kv"><span>Scan Progress:</span><span>${scanProgress}</span></div>
+    <div class="kv"><span>Number of Scans Performed:</span><span>${numScans}</span></div>
+  `;
+
+  // Parse scan event table if present
+  const scanTable = scanLog.table;
+  if (scanTable && Array.isArray(scanTable) && scanTable.length > 0) {
+    html += '<h6>Scan Events</h6>';
+    html += '<table class="data-table">';
+    html += '<thead><tr><th>LBA</th><th>Status</th></tr></thead>';
+    html += '<tbody>';
+
+    scanTable.forEach(entry => {
+      const lba = entry.lba !== undefined ? entry.lba : '-';
+      const status = entry.status || 'Unknown';
+      const statusLower = String(status).toLowerCase();
+      const rowClass = (statusLower.includes('failed') || statusLower.includes('error')) ? 'row-warning' : '';
+
+      html += `
+        <tr class="${rowClass}">
+          <td>${lba}</td>
+          <td>${escapeHtml(status)}</td>
+        </tr>
+      `;
+    });
+
+    html += '</tbody></table>';
+  }
+
+  return html;
 }
 
 function renderNvmeSpecific(nvmeData) {
