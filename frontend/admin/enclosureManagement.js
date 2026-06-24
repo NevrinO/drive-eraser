@@ -157,12 +157,12 @@ async function renderWizardStep() {
     step1.classList.remove("hidden");
     nextBtn.classList.remove("hidden");
     nextBtn.textContent = "Next Step >";
-    renderConfiguration();
+    await renderConfiguration();
   } else if (currentWizardStep === 2) {
     step2.classList.remove("hidden");
     prevBtn.classList.remove("hidden");
     saveBtn.classList.remove("hidden");
-    await renderSlotAssignment();
+    renderSlotAssignment();
   }
 }
 
@@ -442,7 +442,7 @@ function buildTraversalPositions(rows, cols, traversal, slotCount) {
 
 // Render slot validation (Step 3)
 // Render slot assignment step with live recalc and editable HW identifiers
-async function renderSlotAssignment() {
+function renderSlotAssignment() {
   const container = document.getElementById("slotAssignmentContainer");
   if (!container) return;
 
@@ -455,24 +455,6 @@ async function renderSlotAssignment() {
   // Initialize starting slot if not set
   if (wizardData.starting_slot_number === null || wizardData.starting_slot_number === undefined) {
     wizardData.starting_slot_number = 0;
-  }
-
-  // Fetch unmapped drives once for NVMe fallback (with 30s cache)
-  let unmappedDrives = [];
-  const now = Date.now();
-  if (cachedUnmappedDrives && (now - cachedUnmappedDrivesTime) < 30000) {
-    unmappedDrives = cachedUnmappedDrives;
-  } else {
-    try {
-      const unmappedResponse = await safeFetch("/api/admin/unmapped-drives");
-      if (unmappedResponse.ok) {
-        unmappedDrives = await unmappedResponse.json();
-        cachedUnmappedDrives = unmappedDrives;
-        cachedUnmappedDrivesTime = now;
-      }
-    } catch (e) {
-      console.error("Failed to load unmapped drives for NVMe fallback:", e);
-    }
   }
 
   // Build slot mapping with arithmetic HW identifier computation
@@ -623,18 +605,18 @@ async function renderSlotAssignment() {
       const nvmeSlotType = nvmeMapping.slot_type;
       let nvmeStatus = '<span style="color: #888;">Unconfigured</span>';
       if (nvmeHwId && nvmeSlotType) {
-        // Check against master slot map first (for hot-plug slots)
+        // Check against master slot map (PCIe hot-plug slots)
         const nvmeMasterEntry = masterSlotMap.find(e =>
           e.hardware_identifier === nvmeHwId &&
           e.slot_type === nvmeSlotType
         );
-        // If not in master map, check against unmapped drives (for fallback)
-        const nvmeDrive = unmappedDrives.find(d => d.by_path === nvmeHwId);
         
-        if (nvmeMasterEntry || nvmeDrive) {
-          nvmeStatus = '<span style="color: #4CAF50;">Drive Present</span>';
+        // If slot exists in master map, show as configured
+        // We can't easily determine drive presence without scanning devices
+        if (nvmeMasterEntry) {
+          nvmeStatus = '<span style="color: #4CAF50;">Configured</span>';
         } else {
-          nvmeStatus = '<span style="color: #FFA500;">Empty Bay</span>';
+          nvmeStatus = '<span style="color: #FFA500;">Unconfigured</span>';
         }
       }
 
@@ -646,21 +628,10 @@ async function renderSlotAssignment() {
 
       let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
       
-      if (nvmeSlots.length === 0) {
-        // Fallback: use pre-fetched unmapped drives
-        const nvmeDrives = unmappedDrives.filter(d => d.by_path && d.by_path.includes("nvme"));
-        nvmeDrives.forEach(drive => {
-          const selected = nvmeHwId === drive.by_path ? 'selected' : '';
-          nvmeOptions += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
-        });
-      } else {
-        nvmeSlots.forEach(slot => {
-          const selected = nvmeHwId === slot ? 'selected' : '';
-          const slotEntry = masterSlotMap.find(e => e.hardware_identifier === slot && e.slot_type === 'pcie_nvme');
-          const hasDrive = slotEntry ? ' (Drive Present)' : ' (Empty)';
-          nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}${hasDrive}</option>`;
-        });
-      }
+      nvmeSlots.forEach(slot => {
+        const selected = nvmeHwId === slot ? 'selected' : '';
+        nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
+      });
 
       html += `
         <tr>
@@ -680,9 +651,9 @@ async function renderSlotAssignment() {
 
   // Bind starting slot input for live recalc
   // Use 'change' instead of 'input' to prevent re-rendering while typing multi-digit numbers
-  document.getElementById("wizardStartingSlotLive").addEventListener("change", async (e) => {
+  document.getElementById("wizardStartingSlotLive").addEventListener("change", (e) => {
     wizardData.starting_slot_number = parseInt(e.target.value) || 0;
-    await renderSlotAssignment(); // Re-render with new starting slot
+    renderSlotAssignment(); // Re-render with new starting slot
   });
 
   // Bind label input events
@@ -766,7 +737,7 @@ async function renderSlotAssignment() {
 }
 
 // Wizard navigation
-document.getElementById("wizardNextBtn")?.addEventListener("click", async () => {
+document.getElementById("wizardNextBtn")?.addEventListener("click", () => {
   if (currentWizardStep === 1) {
     const trimmedName = (wizardData.name || "").trim();
     if (!trimmedName) {
@@ -787,12 +758,12 @@ document.getElementById("wizardNextBtn")?.addEventListener("click", async () => 
     }
   }
   currentWizardStep++;
-  await renderWizardStep();
+  renderWizardStep();
 });
 
-document.getElementById("wizardPrevBtn")?.addEventListener("click", async () => {
+document.getElementById("wizardPrevBtn")?.addEventListener("click", () => {
   currentWizardStep--;
-  await renderWizardStep();
+  renderWizardStep();
 });
 
 async function handleSaveEnclosure() {
