@@ -403,6 +403,35 @@ function renderSlotAssignment() {
     positions = Array.from({ length: template.slot_count }, (_, i) => ({ row: i, col: 0 }));
   }
 
+  // Filter master slot map to get available hardware identifiers for selected controller
+  const availableHwIds = [];
+  masterSlotMap.forEach(entry => {
+    if (entry.pci_controller === wizardData.pci_controller) {
+      // Match expander address if specified
+      if (wizardData.expander_sas_address) {
+        if (entry.expander_sas_address === wizardData.expander_sas_address) {
+          availableHwIds.push({
+            hardware_identifier: entry.hardware_identifier,
+            slot_type: entry.slot_type,
+            physical_slot_number: entry.physical_slot_number
+          });
+        }
+      } else {
+        // No expander - match direct/motherboard SATA
+        if (!entry.expander_sas_address && entry.slot_type !== 'sas_expander') {
+          availableHwIds.push({
+            hardware_identifier: entry.hardware_identifier,
+            slot_type: entry.slot_type,
+            physical_slot_number: entry.physical_slot_number
+          });
+        }
+      }
+    }
+  });
+
+  // Sort by physical slot number for predictable ordering
+  availableHwIds.sort((a, b) => a.physical_slot_number - b.physical_slot_number);
+
   // When editing an existing enclosure, load saved slot data so custom HW IDs are preserved
   let savedSlots = null;
   if (isEditMode && editEnclosureId && adminEnclosures[editEnclosureId]) {
@@ -492,6 +521,19 @@ function renderSlotAssignment() {
     const nvmeMapping = slot.mappings.nvme;
     const isConfigured = sasMapping && sasMapping.hardware_identifier;
 
+    // Build dropdown options for SAS/SATA
+    let sasDropdownOptions = `<option value="">-- Select --</option>`;
+    availableHwIds.forEach(hw => {
+      const selected = sasMapping && sasMapping.hardware_identifier === hw.hardware_identifier ? 'selected' : '';
+      sasDropdownOptions += `<option value="${escapeHtml(hw.hardware_identifier)}" data-slot-type="${escapeHtml(hw.slot_type)}" ${selected}>${escapeHtml(hw.hardware_identifier)} (Slot ${hw.physical_slot_number})</option>`;
+    });
+    // Add custom option for manual entry
+    const isCustomSas = sasMapping && sasMapping.hardware_identifier && !availableHwIds.some(hw => hw.hardware_identifier === sasMapping.hardware_identifier);
+    if (isCustomSas) {
+      sasDropdownOptions += `<option value="${escapeHtml(sasMapping.hardware_identifier)}" data-slot-type="${escapeHtml(sasMapping.slot_type)}" selected>${escapeHtml(sasMapping.hardware_identifier)} (Custom)</option>`;
+    }
+    sasDropdownOptions += `<option value="__custom__">-- Custom --</option>`;
+
     html += `
       <tr>
         <td rowspan="${nvmeMapping ? 2 : 1}"><strong>${slot.physical_slot_number}</strong></td>
@@ -506,17 +548,40 @@ function renderSlotAssignment() {
           </select>
         </td>
         <td>
-          <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+          <div class="hw-id-container" data-slot-index="${index}" data-interface="sas_sata">
+            <select class="hw-id-select" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+              ${sasDropdownOptions}
+            </select>
+            <input type="text" class="hw-id-input hw-id-custom" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${isCustomSas ? escapeHtml(sasMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff; display: ${isCustomSas ? 'block' : 'none'}; margin-top: 4px;">
+          </div>
         </td>
         <td>${isConfigured ? '<span style="color: #4CAF50;">Configured</span>' : '<span style="color: #888;">Unconfigured</span>'}</td>
       </tr>
     `;
 
     if (nvmeMapping) {
+      // Build dropdown options for NVMe
+      let nvmeDropdownOptions = `<option value="">-- Select --</option>`;
+      const nvmeAvailable = availableHwIds.filter(hw => hw.slot_type === 'pcie_nvme');
+      nvmeAvailable.forEach(hw => {
+        const selected = nvmeMapping.hardware_identifier === hw.hardware_identifier ? 'selected' : '';
+        nvmeDropdownOptions += `<option value="${escapeHtml(hw.hardware_identifier)}" data-slot-type="pcie_nvme" ${selected}>${escapeHtml(hw.hardware_identifier)} (Slot ${hw.physical_slot_number})</option>`;
+      });
+      const isCustomNvme = nvmeMapping.hardware_identifier && !nvmeAvailable.some(hw => hw.hardware_identifier === nvmeMapping.hardware_identifier);
+      if (isCustomNvme) {
+        nvmeDropdownOptions += `<option value="${escapeHtml(nvmeMapping.hardware_identifier)}" data-slot-type="pcie_nvme" selected>${escapeHtml(nvmeMapping.hardware_identifier)} (Custom)</option>`;
+      }
+      nvmeDropdownOptions += `<option value="__custom__">-- Custom --</option>`;
+
       html += `
         <tr>
           <td>
-            <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" value="${escapeHtml(nvmeMapping.hardware_identifier)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+            <div class="hw-id-container" data-slot-index="${index}" data-interface="nvme">
+              <select class="hw-id-select" data-slot-index="${index}" data-interface="nvme" data-slot-type="pcie_nvme" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+                ${nvmeDropdownOptions}
+              </select>
+              <input type="text" class="hw-id-input hw-id-custom" data-slot-index="${index}" data-interface="nvme" data-slot-type="pcie_nvme" value="${isCustomNvme ? escapeHtml(nvmeMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff; display: ${isCustomNvme ? 'block' : 'none'}; margin-top: 4px;">
+            </div>
           </td>
           <td><span style="color: #4CAF50;">Configured</span></td>
         </tr>
@@ -554,8 +619,40 @@ function renderSlotAssignment() {
     });
   });
 
-  // Bind HW ID input events with format validation
-  container.querySelectorAll('.hw-id-input').forEach(input => {
+  // Bind HW ID dropdown events
+  container.querySelectorAll('.hw-id-select').forEach(select => {
+    select.addEventListener('change', (e) => {
+      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const interfaceType = e.target.dataset.interface;
+      const value = e.target.value;
+      const container = e.target.closest('.hw-id-container');
+      const customInput = container.querySelector('.hw-id-custom');
+
+      if (value === '__custom__') {
+        // Show custom input field
+        customInput.style.display = 'block';
+        customInput.focus();
+        // Clear the value in slots until user types
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = '';
+        }
+      } else {
+        // Hide custom input field
+        customInput.style.display = 'none';
+        customInput.value = '';
+        // Update slot type from dropdown option
+        const selectedOption = e.target.options[e.target.selectedIndex];
+        const slotType = selectedOption.dataset.slotType;
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+          slots[slotIndex].mappings[interfaceType].slot_type = slotType;
+        }
+      }
+    });
+  });
+
+  // Bind HW ID custom input events
+  container.querySelectorAll('.hw-id-custom').forEach(input => {
     input.addEventListener('input', (e) => {
       const slotIndex = parseInt(e.target.dataset.slotIndex);
       const interfaceType = e.target.dataset.interface;
@@ -566,13 +663,10 @@ function renderSlotAssignment() {
       let isValid = true;
       if (value) {
         if (slotType === 'sas_expander') {
-          // Should match phy-0:0:N pattern
           isValid = /^phy-0:0:\d+$/.test(value);
         } else if (slotType === 'motherboard_sata') {
-          // Should match ataN pattern
           isValid = /^ata\d+$/.test(value);
         } else if (slotType === 'pcie_nvme') {
-          // Should be a number (slot folder name)
           isValid = /^\d+$/.test(value);
         }
       }
@@ -669,14 +763,13 @@ async function handleSaveEnclosure() {
         slotMappings[slotKey].locked = select.value === 'os';
       }
     });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
+
+    // Add HW identifiers to slot mappings from dropdown/select
+    container.querySelectorAll('.hw-id-container').forEach(containerEl => {
+      const slotIndex = parseInt(containerEl.dataset.slotIndex);
+      const interfaceType = containerEl.dataset.interface;
       if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
+        console.error("Invalid slot index for HW ID container");
         return;
       }
       const slotKey = String(slotIndex);
@@ -686,9 +779,22 @@ async function handleSaveEnclosure() {
       if (!slotMappings[slotKey].mappings) {
         slotMappings[slotKey].mappings = {};
       }
+
+      const select = containerEl.querySelector('.hw-id-select');
+      const customInput = containerEl.querySelector('.hw-id-custom');
+      const selectedOption = select.options[select.selectedIndex];
+      const slotType = selectedOption.dataset.slotType;
+
+      let hwId = '';
+      if (select.value === '__custom__') {
+        hwId = customInput.value;
+      } else {
+        hwId = select.value;
+      }
+
       slotMappings[slotKey].mappings[interfaceType] = {
         slot_type: slotType,
-        hardware_identifier: input.value
+        hardware_identifier: hwId
       };
     });
 
@@ -772,14 +878,13 @@ async function handleEditEnclosure() {
         slotMappings[slotKey].locked = select.value === 'os';
       }
     });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
+
+    // Add HW identifiers to slot mappings from dropdown/select
+    container.querySelectorAll('.hw-id-container').forEach(containerEl => {
+      const slotIndex = parseInt(containerEl.dataset.slotIndex);
+      const interfaceType = containerEl.dataset.interface;
       if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
+        console.error("Invalid slot index for HW ID container");
         return;
       }
       const slotKey = String(slotIndex);
@@ -789,9 +894,22 @@ async function handleEditEnclosure() {
       if (!slotMappings[slotKey].mappings) {
         slotMappings[slotKey].mappings = {};
       }
+
+      const select = containerEl.querySelector('.hw-id-select');
+      const customInput = containerEl.querySelector('.hw-id-custom');
+      const selectedOption = select.options[select.selectedIndex];
+      const slotType = selectedOption.dataset.slotType;
+
+      let hwId = '';
+      if (select.value === '__custom__') {
+        hwId = customInput.value;
+      } else {
+        hwId = select.value;
+      }
+
       slotMappings[slotKey].mappings[interfaceType] = {
         slot_type: slotType,
-        hardware_identifier: input.value
+        hardware_identifier: hwId
       };
     });
 
