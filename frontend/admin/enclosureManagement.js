@@ -583,10 +583,27 @@ function renderSlotAssignment() {
           nvmeStatus = '<span style="color: #FFA500;">Empty Bay</span>';
         }
       }
+
+      // Build NVMe slot dropdown from master slot map
+      const nvmeSlots = masterSlotMap
+        .filter(e => e.slot_type === 'pcie_nvme')
+        .map(e => e.hardware_identifier)
+        .sort((a, b) => parseInt(a) - parseInt(b));
+
+      let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
+      nvmeSlots.forEach(slot => {
+        const selected = nvmeHwId === slot ? 'selected' : '';
+        const slotEntry = masterSlotMap.find(e => e.hardware_identifier === slot && e.slot_type === 'pcie_nvme');
+        const hasDrive = slotEntry ? ' (Drive Present)' : ' (Empty)';
+        nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}${hasDrive}</option>`;
+      });
+
       html += `
         <tr>
           <td>
-            <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" value="${escapeHtml(nvmeMapping.hardware_identifier)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+            <select class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+              ${nvmeOptions}
+            </select>
           </td>
           <td>${nvmeStatus}</td>
         </tr>
@@ -625,46 +642,59 @@ function renderSlotAssignment() {
     });
   });
 
-  // Bind HW ID input events with format validation
+  // Bind HW ID input events with format validation (for text inputs)
   container.querySelectorAll('.hw-id-input').forEach(input => {
-    input.addEventListener('input', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
-      const interfaceType = e.target.dataset.interface;
-      const slotType = e.target.dataset.slotType;
-      const value = e.target.value;
+    if (input.tagName === 'INPUT') {
+      input.addEventListener('input', (e) => {
+        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const interfaceType = e.target.dataset.interface;
+        const slotType = e.target.dataset.slotType;
+        const value = e.target.value;
 
-      // Validate format based on slot type
-      let isValid = true;
-      if (value) {
-        if (slotType === 'sas_expander') {
-          // Should match phy-0:0:N pattern
-          isValid = /^phy-0:0:\d+$/.test(value);
-        } else if (slotType === 'motherboard_sata') {
-          // Should match ataN pattern
-          isValid = /^ata\d+$/.test(value);
-        } else if (slotType === 'pcie_nvme') {
-          // Should be a number (slot folder name)
-          isValid = /^\d+$/.test(value);
+        // Validate format based on slot type
+        let isValid = true;
+        if (value) {
+          if (slotType === 'sas_expander') {
+            // Should match phy-0:0:N pattern
+            isValid = /^phy-0:0:\d+$/.test(value);
+          } else if (slotType === 'motherboard_sata') {
+            // Should match ataN pattern
+            isValid = /^ata\d+$/.test(value);
+          } else if (slotType === 'pcie_nvme') {
+            // Should be a number (slot folder name)
+            isValid = /^\d+$/.test(value);
+          }
         }
-      }
 
-      // Update visual feedback
-      if (value && !isValid) {
-        input.style.borderColor = '#e74c3c';
-        input.title = `Invalid format for ${slotType}. Expected: ${
-          slotType === 'sas_expander' ? 'phy-0:0:N (e.g., phy-0:0:0)' :
-          slotType === 'motherboard_sata' ? 'ataN (e.g., ata1)' :
-          'number (e.g., 1)'
-        }`;
-      } else {
-        input.style.borderColor = '#444';
-        input.title = '';
-      }
+        // Update visual feedback
+        if (value && !isValid) {
+          input.style.borderColor = '#e74c3c';
+          input.title = `Invalid format for ${slotType}. Expected: ${
+            slotType === 'sas_expander' ? 'phy-0:0:N (e.g., phy-0:0:0)' :
+            slotType === 'motherboard_sata' ? 'ataN (e.g., ata1)' :
+            'number (e.g., 1)'
+          }`;
+        } else {
+          input.style.borderColor = '#444';
+          input.title = '';
+        }
 
-      if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
-        slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
-      }
-    });
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+        }
+      });
+    } else if (input.tagName === 'SELECT') {
+      // For NVMe dropdown, use 'change' event
+      input.addEventListener('change', (e) => {
+        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const interfaceType = e.target.dataset.interface;
+        const value = e.target.value;
+
+        if (slots[slotIndex] && slots[slotIndex].mappings[interfaceType]) {
+          slots[slotIndex].mappings[interfaceType].hardware_identifier = value;
+        }
+      });
+    }
   });
 
   // Store slots in wizard data for save
