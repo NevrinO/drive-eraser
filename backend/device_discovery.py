@@ -693,10 +693,14 @@ def get_enclosure_hardware_info() -> List[Dict]:
             device_link = os.path.join(slot_path, "device")
             try:
                 if os.path.islink(device_link):
-                    # Resolve the symlink and check if it points to a block device
+                    # Resolve the symlink and check if it points to a block device or SCSI device
                     real_path = os.path.realpath(device_link)
                     # Block devices have a "block" subdirectory in their sysfs path
+                    # SAS drives show up as SCSI devices (scsi_disk:...) in the path
                     if os.path.exists(os.path.join(real_path, "block")):
+                        occupied_slots += 1
+                    elif "scsi_disk:" in real_path or "target" in real_path:
+                        # SAS/SCSI device detected
                         occupied_slots += 1
             except (OSError, IOError):
                 pass
