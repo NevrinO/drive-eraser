@@ -319,13 +319,14 @@ def _get_cached_drive_payload(cache_key):
             return entry['data']
     return None
 
-def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map):
+def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map, expander_sas_address=None):
     """Resolve active device path from enclosure slot configuration using master map.
 
     Args:
         slot_config: Slot configuration dict with mappings
         pci_controller: PCI controller address for the enclosure
         master_map: Master slot map from generate_master_slot_map()
+        expander_sas_address: SAS expander WWN (e.g. '0x500056b3...') or None for direct-attach
 
     Returns:
         Tuple of (resolved_device_path, interface_type) or (None, None) if not found
@@ -353,7 +354,8 @@ def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map)
         # The master map only contains entries for occupied slots, so it fails for empty bays
         # Persisted identifiers in bay_map.json are authoritative
         dev_path = _resolve_device_from_hardware_identifier(
-            pci_controller, slot_type, hw_identifier, physical_slot
+            pci_controller, slot_type, hw_identifier, physical_slot,
+            expander_sas_address=expander_sas_address
         )
 
         if dev_path:
@@ -365,7 +367,7 @@ def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map)
     return None, None
 
 
-def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_identifier, physical_slot):
+def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_identifier, physical_slot, expander_sas_address=None):
     """Resolve actual device path from hardware identifier.
 
     Args:
@@ -373,6 +375,8 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         slot_type: Slot type (sas_expander, sas_direct, motherboard_sata, pcie_nvme)
         hw_identifier: Hardware identifier (e.g., 'phy-0:0:0', '101', 'ata1')
         physical_slot: Physical slot number
+        expander_sas_address: SAS expander WWN (e.g. '0x500056b3...') used to build an
+            exact by-path match, preventing cross-expander slot collisions on the same HBA
 
     Returns:
         Device path string or None if not found
@@ -400,12 +404,23 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
 
     if slot_type == 'sas_expander':
         # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
-        pattern = f"pci-{pci_controller}-sas-exp"
-        for entry in by_path_entries:
-            if entry.startswith(pattern) and f"-phy{physical_slot}-" in entry:
-                full_path = os.path.join(by_path_dir, entry)
-                if os.path.islink(full_path):
-                    return os.path.realpath(full_path)
+        # When the expander SAS address is known, build an exact prefix that includes it
+        # so that slots on different expanders behind the same HBA never cross-match.
+        if expander_sas_address:
+            exact_prefix = f"pci-{pci_controller}-sas-exp{expander_sas_address}-phy{physical_slot}-"
+            for entry in by_path_entries:
+                if entry.startswith(exact_prefix):
+                    full_path = os.path.join(by_path_dir, entry)
+                    if os.path.islink(full_path):
+                        return os.path.realpath(full_path)
+        else:
+            # Fallback: no expander address known — match any expander on this controller
+            pattern = f"pci-{pci_controller}-sas-exp"
+            for entry in by_path_entries:
+                if entry.startswith(pattern) and f"-phy{physical_slot}-" in entry:
+                    full_path = os.path.join(by_path_dir, entry)
+                    if os.path.islink(full_path):
+                        return os.path.realpath(full_path)
 
     elif slot_type == 'sas_direct':
         # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
@@ -697,6 +712,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
         enclosure_id = enclosure.get("id")
         enclosure_name = enclosure.get("name")
         pci_controller = enclosure.get("pci_controller")
+        expander_sas_address = enclosure.get("expander_sas_address")
         template_id = enclosure.get("template_id")
         slots = enclosure.get("slots", {})
 
@@ -713,9 +729,12 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
 
             bay_id = f"{enclosure_id}_slot_{slot_num}"
 
-            # Resolve device from enclosure slot using master map
+            # Resolve device from enclosure slot using persisted HW identifiers.
+            # Pass expander_sas_address so the by-path lookup is scoped to the correct
+            # expander when multiple expanders share the same PCI controller.
             dev_node, interface_type = _resolve_device_from_enclosure_slot(
-                slot_config, pci_controller, master_map
+                slot_config, pci_controller, master_map,
+                expander_sas_address=expander_sas_address
             )
 
 

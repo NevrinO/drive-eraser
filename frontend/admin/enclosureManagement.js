@@ -699,7 +699,6 @@ async function handleSaveEnclosure() {
       pci_controller: wizardData.pci_controller,
       expander_sas_address: wizardData.expander_sas_address,
       display_order: wizardData.display_order,
-      auto_map_slots: true,
       nvme_start_slot: wizardData.nvme_starting_slot,
       starting_slot_number: wizardData.starting_slot_number,
       slot_mappings: slotMappings

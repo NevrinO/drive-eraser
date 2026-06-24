@@ -1284,55 +1284,40 @@ def manage_enclosures():
                             "mappings": {}
                         }
 
-                        # Compute HW identifiers arithmetically instead of searching master map
-                        # Master map only has entries for occupied slots, so it fails for empty bays
-                        # For SAS expander: phy-0:0:{physical_slot}
-                        # For motherboard_sata: ata{physical_slot}
-                        # For SAS direct: use by-path pattern matching
+                        # Compute HW identifiers arithmetically from the controller type.
+                        # The master map only contains entries for currently occupied slots,
+                        # so it cannot fill empty bays. Worse, searching it by physical slot
+                        # number can match drives from other controllers that happen to share
+                        # that slot number, producing non-sequential, random-looking results
+                        # (e.g. ata1/ata2 between phy-0:0:0 and phy-0:0:3 on a SAS expander).
+                        # Always derive the identifier from the controller pattern instead.
                         if expander_sas_address:
                             # SAS expander connection
                             sas_hw_id = f"phy-0:0:{physical_slot}"
                             sas_slot_type = "sas_expander"
                         else:
-                            # Direct SAS or motherboard SATA - determine from controller type
-                            # Default to motherboard_sata for direct connections
+                            # Direct SAS or motherboard SATA - default to motherboard_sata
                             sas_hw_id = f"ata{physical_slot}"
                             sas_slot_type = "motherboard_sata"
 
-                        # Try to confirm against master map, but use computed value if not found
-                        sas_mapping = _auto_detect_mapping(
-                            master_map, pci_controller, expander_sas_address, physical_slot, "sas"
-                        )
-                        if sas_mapping:
-                            # Master map has entry - use its values (they may be more accurate)
-                            slot_data["mappings"]["sas_sata"] = sas_mapping
-                        else:
-                            # Master map has no entry (empty slot) - use computed arithmetic value
-                            slot_data["mappings"]["sas_sata"] = {
-                                "slot_type": sas_slot_type,
-                                "hardware_identifier": sas_hw_id,
-                                "auto_detected": True
-                            }
+                        slot_data["mappings"]["sas_sata"] = {
+                            "slot_type": sas_slot_type,
+                            "hardware_identifier": sas_hw_id,
+                            "auto_detected": True
+                        }
 
                         # Compute NVMe mapping for hybrid slots
                         if slot_index in hybrid_slots and nvme_start_slot is not None:
                             nvme_offset = hybrid_slots.index(slot_index)
                             nvme_slot_num = int(nvme_start_slot) + nvme_offset
                             # NVMe hardware identifier is the slot folder name in /sys/bus/pci/slots/
-                            # For now, use the physical slot number as the identifier
                             nvme_hw_id = str(nvme_slot_num)
-                            
-                            nvme_mapping = _auto_detect_mapping(
-                                master_map, pci_controller, None, nvme_slot_num, "nvme"
-                            )
-                            if nvme_mapping:
-                                slot_data["mappings"]["nvme"] = nvme_mapping
-                            else:
-                                slot_data["mappings"]["nvme"] = {
-                                    "slot_type": "pcie_nvme",
-                                    "hardware_identifier": nvme_hw_id,
-                                    "auto_detected": True
-                                }
+
+                            slot_data["mappings"]["nvme"] = {
+                                "slot_type": "pcie_nvme",
+                                "hardware_identifier": nvme_hw_id,
+                                "auto_detected": True
+                            }
 
                         enclosure["slots"][slot_key] = slot_data
                 
@@ -2547,51 +2532,3 @@ def get_smart_test_status_endpoint(device):
         return jsonify({"error": str(e)}), 500
 
 
-def _auto_detect_mapping(master_map, pci_controller, expander_sas_address, slot_num, interface_type):
-    """Auto-detect hardware identifier from master map for a given slot.
-    
-    Args:
-        master_map: Master slot map from generate_master_slot_map()
-        pci_controller: PCI address of the controller
-        expander_sas_address: SAS expander address (null for direct/NVMe)
-        slot_num: Physical slot number
-        interface_type: "sas" or "nvme"
-        
-    Returns:
-        Mapping dictionary or None if not found
-    """
-    for entry in master_map:
-        if (entry["pci_controller"] == pci_controller and
-            entry["physical_slot_number"] == slot_num):
-            
-            # Match SAS devices (both expander and direct)
-            if interface_type == "sas":
-                # Match entries with SAS slot types (sas_expander, sas_direct, motherboard_sata)
-                if entry["slot_type"] in ("sas_expander", "sas_direct", "motherboard_sata"):
-                    # For expander connections, verify expander address matches
-                    if entry["slot_type"] == "sas_expander":
-                        if entry["expander_sas_address"] == expander_sas_address:
-                            return {
-                                "slot_type": entry["slot_type"],
-                                "hardware_identifier": entry["hardware_identifier"],
-                                "auto_detected": True
-                            }
-                    # For direct/motherboard connections, expander_sas_address should be None
-                    else:
-                        if expander_sas_address is None:
-                            return {
-                                "slot_type": entry["slot_type"],
-                                "hardware_identifier": entry["hardware_identifier"],
-                                "auto_detected": True
-                            }
-            
-            # Match NVMe slots (no expander)
-            elif interface_type == "nvme":
-                if entry["slot_type"] == "pcie_nvme" and entry["expander_sas_address"] is None:
-                    return {
-                        "slot_type": entry["slot_type"],
-                        "hardware_identifier": entry["hardware_identifier"],
-                        "auto_detected": True
-                    }
-    
-    return None
