@@ -142,13 +142,15 @@ function renderSmartDetails(data, device, serial, interfaceType) {
     </div>
   `;
 
-  // Attributes tab
-  html += `
-    <div class="detail-section">
-      <h4>SMART Attributes</h4>
-      ${renderAttributesTable(data.attributes)}
-    </div>
-  `;
+  // Attributes tab (only for non-SAS drives - SAS uses different log structure)
+  if (!isSas) {
+    html += `
+      <div class="detail-section">
+        <h4>SMART Attributes</h4>
+        ${renderAttributesTable(data.attributes)}
+      </div>
+    `;
+  }
 
   // Self-test logs tab
   html += `
