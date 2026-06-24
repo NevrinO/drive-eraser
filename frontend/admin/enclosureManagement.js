@@ -492,7 +492,24 @@ function renderSlotAssignment() {
   slots.forEach((slot, index) => {
     const sasMapping = slot.mappings.sas_sata;
     const nvmeMapping = slot.mappings.nvme;
-    const isConfigured = sasMapping && sasMapping.hardware_identifier;
+    const hwId = sasMapping ? sasMapping.hardware_identifier : null;
+    const slotType = sasMapping ? sasMapping.slot_type : null;
+
+    // Check if drive is present by matching against master slot map
+    let status = '<span style="color: #888;">Unconfigured</span>';
+    if (hwId && slotType) {
+      const masterEntry = masterSlotMap.find(e =>
+        e.hardware_identifier === hwId &&
+        e.slot_type === slotType &&
+        e.pci_controller === wizardData.pci_controller &&
+        (wizardData.expander_sas_address ? e.expander_sas_address === wizardData.expander_sas_address : !e.expander_sas_address)
+      );
+      if (masterEntry) {
+        status = '<span style="color: #4CAF50;">Drive Present</span>';
+      } else {
+        status = '<span style="color: #FFA500;">Empty Bay</span>';
+      }
+    }
 
     html += `
       <tr>
@@ -510,17 +527,31 @@ function renderSlotAssignment() {
         <td>
           <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
         </td>
-        <td>${isConfigured ? '<span style="color: #4CAF50;">Configured</span>' : '<span style="color: #888;">Unconfigured</span>'}</td>
+        <td>${status}</td>
       </tr>
     `;
 
     if (nvmeMapping) {
+      const nvmeHwId = nvmeMapping.hardware_identifier;
+      const nvmeSlotType = nvmeMapping.slot_type;
+      let nvmeStatus = '<span style="color: #888;">Unconfigured</span>';
+      if (nvmeHwId && nvmeSlotType) {
+        const nvmeMasterEntry = masterSlotMap.find(e =>
+          e.hardware_identifier === nvmeHwId &&
+          e.slot_type === nvmeSlotType
+        );
+        if (nvmeMasterEntry) {
+          nvmeStatus = '<span style="color: #4CAF50;">Drive Present</span>';
+        } else {
+          nvmeStatus = '<span style="color: #FFA500;">Empty Bay</span>';
+        }
+      }
       html += `
         <tr>
           <td>
             <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" value="${escapeHtml(nvmeMapping.hardware_identifier)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
           </td>
-          <td><span style="color: #4CAF50;">Configured</span></td>
+          <td>${nvmeStatus}</td>
         </tr>
       `;
     }
