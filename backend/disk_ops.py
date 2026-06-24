@@ -486,12 +486,12 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
                         real_path = os.path.realpath(sys_path)
                         
                         # Traverse up to find the PCI device directory
-                        # Path structure: /sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/nvme/nvme0/nvme0n1
-                        # We need to find the PCI device directory (e.g., 0000:01:00.0)
+                        # Path structure: /sys/devices/pci0000:17/0000:17:02.0/0000:18:00.0/nvme/nvme0/nvme0n1
+                        # We need to find the LAST PCI device directory (the actual NVMe controller, not the bridge)
                         path_parts = real_path.split('/')
                         device_pci_addr = None
                         
-                        for i, part in enumerate(path_parts):
+                        for part in reversed(path_parts):
                             # PCI device addresses match pattern: xxxx:xx:xx.x
                             if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
                                 device_pci_addr = part
