@@ -691,11 +691,13 @@ def get_enclosure_hardware_info() -> List[Dict]:
                 continue
             slot_path = os.path.join(enc_path, slot_id)
 
-            # Check if this is a slot directory (has a "device" symlink)
+            # Check if this is a slot directory (must be a directory)
             if not os.path.isdir(slot_path):
+                logging.debug(f"Skipping {slot_id}: not a directory")
                 continue
 
             total_slots += 1
+            logging.debug(f"Counted slot: {slot_id}")
 
             # Check if slot has a device (drive present)
             # Try multiple methods: status file, device symlink target existence
