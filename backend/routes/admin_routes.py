@@ -68,7 +68,7 @@ admin_bp = Blueprint('admin_routes', __name__)
 # Device name validation patterns following lesson #9 and #15
 # Use \Z (not $) for strict end-of-string anchor to prevent "/dev/sda\n" bypass
 # Lesson #91: Use specific patterns matching actual system naming conventions
-_SATA_DEVICE_RE = re.compile(r'^sd[a-z][0-9]*\Z')
+_SATA_DEVICE_RE = re.compile(r'^sd[a-z]+[0-9]*\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 

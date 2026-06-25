@@ -555,7 +555,7 @@ def validate_device_path(device):
 
     # Validate against strict regex patterns (lesson #16: use \Z for strict end anchor)
     # Lesson #91: Use specific patterns matching actual system naming conventions
-    sata_pattern = re.compile(r'^sd[a-z][0-9]*\Z')
+    sata_pattern = re.compile(r'^sd[a-z]+[0-9]*\Z')
     nvme_pattern = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 
     return bool(sata_pattern.match(device_name) or nvme_pattern.match(device_name))

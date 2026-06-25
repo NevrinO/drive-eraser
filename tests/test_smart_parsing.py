@@ -703,6 +703,88 @@ class TestPreWipeHealthGate:
         assert result["health_score"] == 95
         assert result["recommendation"] == "USED_GOOD"
 
+    @patch('smart_parsing.get_smart_data')
+    @patch('smart_parsing.calculate_drive_health_score')
+    @patch('smart_parsing.get_drive_recommendation')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_multi_letter_sata_device_passes_validation(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
+        """Regression: /dev/sdac and /dev/sdbt must not be blocked as invalid_device_path."""
+        from smart_parsing import pre_wipe_health_gate
+
+        mock_get_smart_data.return_value = {
+            "status": "PASSED",
+            "pending_sectors": 0,
+            "reallocated_sectors": 0,
+            "interface_errors": 0,
+            "raw": None
+        }
+        mock_calculate_health.return_value = (95, {})
+        mock_get_drive_recommendation.return_value = {"status": "USED_GOOD", "comment": "Healthy"}
+        mock_get_triage_thresholds.return_value = {
+            "health_score_destroy_threshold": 30,
+            "sas_grown_defect_fail_threshold": 10000
+        }
+
+        policy = {
+            "prewipe_health_gate_enabled": True,
+            "prewipe_health_gate_strict_mode": False,
+            "prewipe_health_gate_block_destroy": True,
+            "prewipe_health_gate_block_scratch": False,
+            "prewipe_health_gate_block_failed_smart": True,
+            "prewipe_health_gate_max_pending_sectors": 10,
+            "prewipe_health_gate_max_reallocated_sectors": 5,
+            "prewipe_health_gate_max_interface_errors": 100,
+            "prewipe_health_gate_max_health_score_drop": 20
+        }
+
+        for device in ["/dev/sdac", "/dev/sdbt", "/dev/sdaa"]:
+            result = pre_wipe_health_gate(device, "sata", policy)
+            assert result["block_reason"] != "invalid_device_path", f"{device} rejected as invalid_device_path"
+
+
+class TestValidateDevicePath:
+    """Test device path validation in smart_parsing (regression for multi-letter SCSI names)."""
+
+    def test_valid_sata_multi_letter(self):
+        """Multi-letter SCSI device names beyond /dev/sdz must be accepted."""
+        from smart_parsing import validate_device_path
+        valid_paths = [
+            "/dev/sdaa",
+            "/dev/sdac",
+            "/dev/sdbt",
+            "/dev/sdaz",
+            "/dev/sdba",
+        ]
+        for path in valid_paths:
+            assert validate_device_path(path) is True, f"Valid path rejected: {path}"
+
+    def test_valid_sata_partitions(self):
+        """SATA partitions with multi-letter base names must be accepted."""
+        from smart_parsing import validate_device_path
+        assert validate_device_path("/dev/sdac1") is True
+        assert validate_device_path("/dev/sdbt12") is True
+
+    def test_valid_nvme(self):
+        """NVMe device names must be accepted."""
+        from smart_parsing import validate_device_path
+        assert validate_device_path("/dev/nvme0n1") is True
+        assert validate_device_path("/dev/nvme0n1p1") is True
+
+    def test_invalid_paths(self):
+        """Path traversal, newlines, and malformed paths must still be rejected."""
+        from smart_parsing import validate_device_path
+        invalid_paths = [
+            "/dev/../etc/passwd",
+            "/dev/sda\n",
+            "/dev/sda\r",
+            "/dev/sda*",
+            "dev/sda",
+            "",
+            "   ",
+        ]
+        for path in invalid_paths:
+            assert validate_device_path(path) is False, f"Invalid path accepted: {repr(path)}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

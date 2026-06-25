@@ -555,6 +555,39 @@ class TestAdminRoutes:
                     assert data["enclosure"]["slots"]["0"]["physical_slot_number"] == 0
                     mock_save.assert_called_once()
 
+    def test_is_valid_device_name_multi_letter_sata(self, app):
+        """Regression: multi-letter SATA device names must be accepted by is_valid_device_name."""
+        from routes.admin_routes import is_valid_device_name
+        valid_names = ["sdac", "sdbt", "sdaa", "sdaz", "sdba"]
+        for name in valid_names:
+            assert is_valid_device_name(name) is True, f"Valid name rejected: {name}"
+
+    def test_is_valid_device_name_sata_partitions(self, app):
+        """SATA partitions with multi-letter base names must be accepted."""
+        from routes.admin_routes import is_valid_device_name
+        assert is_valid_device_name("sdac1") is True
+        assert is_valid_device_name("sdbt12") is True
+
+    def test_is_valid_device_name_nvme(self, app):
+        """NVMe device names must be accepted."""
+        from routes.admin_routes import is_valid_device_name
+        assert is_valid_device_name("nvme0n1") is True
+        assert is_valid_device_name("nvme0n1p1") is True
+
+    def test_is_valid_device_name_invalid(self, app):
+        """Path traversal, newlines, and malformed names must be rejected."""
+        from routes.admin_routes import is_valid_device_name
+        invalid_names = [
+            "../etc/passwd",
+            "sda\n",
+            "sda\r",
+            "sda*",
+            "",
+            "   ",
+        ]
+        for name in invalid_names:
+            assert is_valid_device_name(name) is False, f"Invalid name accepted: {repr(name)}"
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
