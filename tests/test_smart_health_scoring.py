@@ -603,13 +603,16 @@ class TestSASFields:
                 "write": {"total_uncorrectable_errors": 5},
                 "verify": {"total_uncorrectable_errors": 2}
             },
-            "scsi_self_test_log": {
+            "scsi_background_scan_log": {
+                "status": {
+                    "string": "completed"
+                },
                 "table": [
-                    {"status": "Completed without error", "lba": 1000},
-                    {"status": "Completed without error", "lba": 2000},
-                    {"status": "Completed: read failure", "lba": 3000},
-                    {"status": "Completed: read failure", "lba": 3000},
-                    {"status": "Completed: read failure", "lba": 3000}
+                    {"lba": 1000, "status": "Completed without error"},
+                    {"lba": 2000, "status": "Completed without error"},
+                    {"lba": 3000, "status": "Completed: read failure"},
+                    {"lba": 3000, "status": "Completed: read failure"},
+                    {"lba": 3000, "status": "Completed: read failure"}
                 ]
             }
         })

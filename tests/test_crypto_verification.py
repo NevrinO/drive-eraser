@@ -22,7 +22,7 @@ class TestResolveVerifyCommandPath:
 
     def test_delegates_to_disk_utils(self):
         """Test that resolve_verify_command_path delegates to disk_utils."""
-        with patch('crypto_verification.resolve_command_path', return_value='/usr/bin/dd'):
+        with patch('disk_utils.get_command_path', return_value='/usr/bin/dd'):
             from crypto_verification import resolve_verify_command_path
             result = resolve_verify_command_path("dd")
             assert result == '/usr/bin/dd'
@@ -628,7 +628,7 @@ class TestVerifyCryptoHashComparison:
                         result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
                         assert result["ok"] is False
                         assert result["error"] == "crypto_comparison_read_failed"
-                        assert mock_sleep.call_count == 4  # 4 retries with delays
+                        assert mock_sleep.call_count == 3  # 3 sleep calls between 4 attempts
 
     def test_read_success_after_retry(self):
         """Test that read success after retry works."""

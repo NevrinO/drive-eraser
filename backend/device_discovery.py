@@ -15,7 +15,7 @@ import logging
 _DEVICE_PATH_RE = re.compile(r'^/dev(/[a-zA-Z0-9_\-:.]+)+\Z')
 
 # PCI address validation - strict format: domain:bus:device.function (e.g., 0000:00:1f.2)
-# Also accepts incomplete addresses without device.function (e.g., 0000:18:00) for some PCIe slot implementations
+# Function number is optional for some PCIe slot implementations (e.g., 0000:18:00)
 _PCI_ADDRESS_RE = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(\.[0-9a-fA-F])?\Z')
 
 # Cache for PCI controller scan results to avoid redundant subprocess calls

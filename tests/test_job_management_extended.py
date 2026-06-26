@@ -789,19 +789,21 @@ class TestRunEraseJob:
         
         with patch('job_management.send_slack_notification'):
             with patch('job_management.persist_job'):
-                with patch('job_management.capture_before_state', return_value={"ok": True}):
-                    with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
-                        with patch('job_management.get_active_logs_dir', return_value=tempfile.gettempdir()):
-                            with patch('job_management.verification_for_method', return_value={"ok": True}):
-                                with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
-                                    with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
-                                        with patch('subprocess.Popen') as mock_popen:
-                                            mock_process = MagicMock()
-                                            mock_process.poll.return_value = 0
-                                            mock_process.returncode = 0
-                                            mock_popen.return_value = mock_process
-                                            
-                                            run_erase_job(job_id)
+                with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                    with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                        with patch('job_management.capture_before_state', return_value={"ok": True}):
+                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
+                                with patch('job_management.get_active_logs_dir', return_value=tempfile.gettempdir()):
+                                    with patch('job_management.verification_for_method', return_value={"ok": True}):
+                                        with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
+                                            with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
+                                                with patch('subprocess.Popen') as mock_popen:
+                                                    mock_process = MagicMock()
+                                                    mock_process.poll.return_value = 0
+                                                    mock_process.returncode = 0
+                                                    mock_popen.return_value = mock_process
+                                                    
+                                                    run_erase_job(job_id)
         
         with ERASE_JOBS_LOCK:
             assert ERASE_JOBS[job_id]["status"] in {"running", "completed", "failed"}
@@ -830,19 +832,21 @@ class TestRunEraseJob:
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch('job_management.send_slack_notification'):
                 with patch('job_management.persist_job'):
-                    with patch('job_management.capture_before_state', return_value={"ok": True}):
-                        with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
-                            with patch('job_management.get_active_logs_dir', return_value=tmpdir):
-                                with patch('job_management.verification_for_method', return_value={"ok": True}):
-                                    with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
-                                        with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
-                                            with patch('subprocess.Popen') as mock_popen:
-                                                mock_process = MagicMock()
-                                                mock_process.poll.return_value = 0
-                                                mock_process.returncode = 0
-                                                mock_popen.return_value = mock_process
-                                                
-                                                run_erase_job(job_id)
+                    with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                        with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                            with patch('job_management.capture_before_state', return_value={"ok": True}):
+                                with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
+                                    with patch('job_management.get_active_logs_dir', return_value=tmpdir):
+                                        with patch('job_management.verification_for_method', return_value={"ok": True}):
+                                            with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
+                                                with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
+                                                    with patch('subprocess.Popen') as mock_popen:
+                                                        mock_process = MagicMock()
+                                                        mock_process.poll.return_value = 0
+                                                        mock_process.returncode = 0
+                                                        mock_popen.return_value = mock_process
+                                                        
+                                                        run_erase_job(job_id)
         
         with ERASE_JOBS_LOCK:
             assert ERASE_JOBS[job_id]["status"] in {"completed", "failed"}
@@ -870,12 +874,14 @@ class TestRunEraseJob:
         
         with patch('job_management.send_slack_notification'):
             with patch('job_management.persist_job'):
-                with patch('job_management.capture_before_state', return_value={"ok": True}):
-                    with patch('job_management.resolve_verify_command_path', return_value=None):
-                        with patch('job_management.finalize_failed_job') as mock_finalize:
-                            run_erase_job(job_id)
-                            mock_finalize.assert_called_once()
-                            assert "hdparm_not_available" in mock_finalize.call_args[0][1]
+                with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                    with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                        with patch('job_management.capture_before_state', return_value={"ok": True}):
+                            with patch('job_management.resolve_verify_command_path', return_value=None):
+                                with patch('job_management.finalize_failed_job') as mock_finalize:
+                                    run_erase_job(job_id)
+                                    mock_finalize.assert_called_once()
+                                    assert "hdparm_not_available" in mock_finalize.call_args[0][1]
 
     def test_run_erase_job_interrupted_during_erase(self):
         """Test that run_erase_job handles interruption during erase."""
@@ -906,15 +912,17 @@ class TestRunEraseJob:
             with tempfile.TemporaryDirectory() as tmpdir:
                 with patch('job_management.send_slack_notification'):
                     with patch('job_management.persist_job'):
-                        with patch('job_management.capture_before_state', return_value={"ok": True}):
-                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
-                                with patch('job_management.get_active_logs_dir', return_value=tmpdir):
-                                    with patch('subprocess.Popen') as mock_popen:
-                                        mock_process = MagicMock()
-                                        mock_process.poll.return_value = None  # Still running
-                                        mock_popen.return_value = mock_process
-                                        
-                                        run_erase_job(job_id)
+                        with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                            with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                                with patch('job_management.capture_before_state', return_value={"ok": True}):
+                                    with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
+                                        with patch('job_management.get_active_logs_dir', return_value=tmpdir):
+                                            with patch('subprocess.Popen') as mock_popen:
+                                                mock_process = MagicMock()
+                                                mock_process.poll.return_value = None  # Still running
+                                                mock_popen.return_value = mock_process
+                                                
+                                                run_erase_job(job_id)
             
             with ERASE_JOBS_LOCK:
                 assert ERASE_JOBS[job_id]["status"] == "interrupted"
@@ -944,13 +952,15 @@ class TestRunEraseJob:
         
         with patch('job_management.send_slack_notification'):
             with patch('job_management.persist_job'):
-                with patch('job_management.capture_before_state', return_value={"ok": True}):
-                    with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
-                        with patch('job_management.get_active_logs_dir', return_value="/nonexistent/path"):
-                            with patch('job_management.finalize_failed_job') as mock_finalize:
-                                run_erase_job(job_id)
-                                mock_finalize.assert_called_once()
-                                assert "log_file_creation_failed" in mock_finalize.call_args[0][1]
+                with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                    with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                        with patch('job_management.capture_before_state', return_value={"ok": True}):
+                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["dd", "if=/dev/zero"]}):
+                                with patch('job_management.get_active_logs_dir', return_value="/nonexistent/path"):
+                                    with patch('job_management.finalize_failed_job') as mock_finalize:
+                                        run_erase_job(job_id)
+                                        mock_finalize.assert_called_once()
+                                        assert "log_file_creation_failed" in mock_finalize.call_args[0][1]
 
     def test_run_erase_job_nvme_crypto_method(self):
         """Test NVMe crypto erase method."""
@@ -977,20 +987,22 @@ class TestRunEraseJob:
             with patch('time.sleep'):
                 with patch('job_management.send_slack_notification'):
                     with patch('job_management.persist_job'):
-                        with patch('job_management.capture_before_state', return_value={"ok": True}):
-                            with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["nvme", "sanitize", "/dev/nvme0", "--sanact", "4"]}):
-                                with patch('job_management.get_active_logs_dir', return_value=tmpdir):
-                                    with patch('job_management.verification_for_method', return_value={"ok": True}):
-                                        with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
-                                            with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
-                                                with patch('job_management.verify_nvme_sanitize', return_value={"ok": True}):
-                                                    with patch('subprocess.Popen') as mock_popen:
-                                                        mock_process = MagicMock()
-                                                        mock_process.poll.return_value = 0
-                                                        mock_process.returncode = 0
-                                                        mock_popen.return_value = mock_process
-                                                        
-                                                        run_erase_job(job_id)
+                        with patch('job_management.get_smart_data', return_value={"status": "PASSED"}):
+                            with patch('job_management.pre_wipe_health_gate', return_value={"ok": True, "blocked": False}):
+                                with patch('job_management.capture_before_state', return_value={"ok": True}):
+                                    with patch('job_management.prepare_erase_command', return_value={"ok": True, "command": ["nvme", "sanitize", "/dev/nvme0", "--sanact", "4"]}):
+                                        with patch('job_management.get_active_logs_dir', return_value=tmpdir):
+                                            with patch('job_management.verification_for_method', return_value={"ok": True}):
+                                                with patch('job_management.write_marker_and_verify', return_value={"ok": True}):
+                                                    with patch('job_management.load_policy', return_value={"post_erase_marker": False}):
+                                                        with patch('job_management.verify_nvme_sanitize', return_value={"ok": True}):
+                                                            with patch('subprocess.Popen') as mock_popen:
+                                                                mock_process = MagicMock()
+                                                                mock_process.poll.return_value = 0
+                                                                mock_process.returncode = 0
+                                                                mock_popen.return_value = mock_process
+                                                                
+                                                                run_erase_job(job_id)
         
         with ERASE_JOBS_LOCK:
             assert ERASE_JOBS[job_id]["status"] in {"completed", "failed"}

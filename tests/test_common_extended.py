@@ -197,24 +197,24 @@ class TestValidatePolicy:
 
     def test_validate_policy_strict_audit_requires_passphrase(self):
         """Test that strict_audit_mode requires non-empty passphrase."""
-        from common import validate_policy
-        policy = {"strict_audit_mode": True, "wipe_passphrase": ""}
-        with pytest.raises(ValueError, match="wipe_passphrase is empty"):
-            validate_policy(policy)
+        from common import validate_strict_audit_requirements
+        is_valid, error_msg = validate_strict_audit_requirements(True, "")
+        assert is_valid is False
+        assert "non-empty" in error_msg
 
     def test_validate_policy_strict_audit_passphrase_min_length(self):
         """Test that passphrase minimum length is enforced."""
-        from common import validate_policy
-        policy = {"strict_audit_mode": True, "wipe_passphrase": "short"}
-        with pytest.raises(ValueError, match="too weak"):
-            validate_policy(policy)
+        from common import validate_strict_audit_requirements
+        is_valid, error_msg = validate_strict_audit_requirements(True, "short")
+        assert is_valid is False
+        assert "at least 8 characters" in error_msg
 
     def test_validate_policy_strict_audit_whitespace_passphrase(self):
         """Test that whitespace-only passphrase is rejected."""
-        from common import validate_policy
-        policy = {"strict_audit_mode": True, "wipe_passphrase": "   "}
-        with pytest.raises(ValueError, match="wipe_passphrase is empty"):
-            validate_policy(policy)
+        from common import validate_strict_audit_requirements
+        is_valid, error_msg = validate_strict_audit_requirements(True, "   ")
+        assert is_valid is False
+        assert "non-empty" in error_msg
 
     def test_validate_policy_strict_audit_valid_passphrase(self):
         """Test that valid passphrase passes validation."""

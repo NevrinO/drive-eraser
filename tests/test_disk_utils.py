@@ -485,43 +485,49 @@ class TestCommandResolution:
 
     def test_command_path_caching(self):
         """Test that command paths are cached with TTL."""
-        # Patch resolve_command_path at the module level
         import disk_utils
-        original_resolve = disk_utils.resolve_command_path
-        call_count = [0]
-
-        def mock_resolve(command_name, candidates, env_var):
-            call_count[0] += 1
-            return '/usr/bin/smartctl'
-
-        disk_utils.resolve_command_path = mock_resolve
-
+        # Mock _COMMAND_CONFIG to ensure command is configured
+        original_config = disk_utils._COMMAND_CONFIG.copy()
+        original_cache = disk_utils._COMMAND_RESOLUTION_CACHE.copy()
+        disk_utils._COMMAND_CONFIG['smartctl'] = (['/usr/sbin/smartctl', '/usr/bin/smartctl'], 'SMARTCTL_PATH')
+        disk_utils._COMMAND_RESOLUTION_CACHE.clear()
         try:
-            # First call should resolve
-            result1 = get_command_path("smartctl")
-            assert result1 == '/usr/bin/smartctl'
-            assert call_count[0] == 1
+            # Patch resolve_command_path at the module level where get_command_path calls it
+            with patch('disk_utils.resolve_command_path') as mock_resolve:
+                call_count = [0]
 
-            # Second call should use cache
-            result2 = get_command_path("smartctl")
-            assert result2 == '/usr/bin/smartctl'
-            assert call_count[0] == 1  # No additional call
+                def mock_resolve_impl(command_name, candidates, env_var):
+                    call_count[0] += 1
+                    return '/usr/sbin/smartctl'
+
+                mock_resolve.side_effect = mock_resolve_impl
+
+                # First call should resolve
+                result1 = get_command_path("smartctl")
+                assert result1 == '/usr/sbin/smartctl'
+                assert call_count[0] == 1
+
+                # Second call should use cache
+                result2 = get_command_path("smartctl")
+                assert result2 == '/usr/sbin/smartctl'
+                assert call_count[0] == 1  # No additional call
         finally:
-            disk_utils.resolve_command_path = original_resolve
+            disk_utils._COMMAND_CONFIG.clear()
+            disk_utils._COMMAND_CONFIG.update(original_config)
+            disk_utils._COMMAND_RESOLUTION_CACHE.clear()
+            disk_utils._COMMAND_RESOLUTION_CACHE.update(original_cache)
 
     def test_command_path_cache_expiration(self):
         """Test that cache can be cleared to force re-resolution."""
-        import disk_utils
-        original_resolve = disk_utils.resolve_command_path
-        call_count = [0]
+        with patch('disk_utils.resolve_command_path') as mock_resolve:
+            call_count = [0]
 
-        def mock_resolve(command_name, candidates, env_var):
-            call_count[0] += 1
-            return '/usr/bin/smartctl'
+            def mock_resolve_impl(command_name, candidates, env_var):
+                call_count[0] += 1
+                return '/usr/bin/smartctl'
 
-        disk_utils.resolve_command_path = mock_resolve
+            mock_resolve.side_effect = mock_resolve_impl
 
-        try:
             # Clear cache to start fresh
             from disk_utils import _COMMAND_RESOLUTION_CACHE
             _COMMAND_RESOLUTION_CACHE.clear()
@@ -538,24 +544,12 @@ class TestCommandResolution:
             result2 = get_command_path("smartctl")
             assert result2 == '/usr/bin/smartctl'
             assert call_count[0] == 2
-        finally:
-            disk_utils.resolve_command_path = original_resolve
 
     def test_unconfigured_command_returns_none(self):
         """Test that unconfigured commands return None."""
-        import disk_utils
-        original_resolve = disk_utils.resolve_command_path
-
-        def mock_resolve(command_name, candidates, env_var):
-            return None
-
-        disk_utils.resolve_command_path = mock_resolve
-
-        try:
+        with patch('disk_utils.resolve_command_path', return_value=None):
             result = get_command_path("nonexistent")
             assert result is None
-        finally:
-            disk_utils.resolve_command_path = original_resolve
 
 
 if __name__ == "__main__":

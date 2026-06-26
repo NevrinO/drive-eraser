@@ -3,6 +3,8 @@ import pytest
 import sys
 import os
 import json
+import tempfile
+import sqlite3
 from unittest.mock import patch, MagicMock, Mock
 import io
 
@@ -312,10 +314,8 @@ class TestSmartTestDatabaseFunctions:
     def test_record_smart_test_run(self, mock_get_db_path):
         """Test recording a SMART test run."""
         from database import record_smart_test_run
-        import tempfile
-        import sqlite3
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -331,7 +331,8 @@ class TestSmartTestDatabaseFunctions:
                         finished_at TEXT,
                         status TEXT NOT NULL,
                         result TEXT,
-                        output_json TEXT
+                        output_json TEXT,
+                        updated_at TEXT NOT NULL
                     )
                 """)
 
@@ -348,13 +349,17 @@ class TestSmartTestDatabaseFunctions:
                 assert row[2] == "TEST123"
                 assert row[3] == "short"
                 assert row[6] == "started"
+            
+            # Close all SQLite connections before temp directory cleanup
+            from database import close_all_connections
+            close_all_connections()
 
     @patch('database.get_db_path')
     def test_record_smart_test_run_invalid_device(self, mock_get_db_path):
         """Test that invalid device path is rejected."""
         from database import record_smart_test_run
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -366,10 +371,8 @@ class TestSmartTestDatabaseFunctions:
     def test_update_smart_test_run(self, mock_get_db_path):
         """Test updating a SMART test run."""
         from database import record_smart_test_run, update_smart_test_run
-        import tempfile
-        import sqlite3
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -385,7 +388,8 @@ class TestSmartTestDatabaseFunctions:
                         finished_at TEXT,
                         status TEXT NOT NULL,
                         result TEXT,
-                        output_json TEXT
+                        output_json TEXT,
+                        updated_at TEXT NOT NULL
                     )
                 """)
 
@@ -403,15 +407,17 @@ class TestSmartTestDatabaseFunctions:
                 assert row[6] == "completed"
                 assert row[7] == "passed"
                 assert row[5] is not None  # finished_at should be set
+            
+            # Close all SQLite connections before temp directory cleanup
+            from database import close_all_connections
+            close_all_connections()
 
     @patch('database.get_db_path')
     def test_get_smart_test_history(self, mock_get_db_path):
         """Test getting SMART test history."""
         from database import record_smart_test_run, get_smart_test_history
-        import tempfile
-        import sqlite3
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -427,7 +433,8 @@ class TestSmartTestDatabaseFunctions:
                         finished_at TEXT,
                         status TEXT NOT NULL,
                         result TEXT,
-                        output_json TEXT
+                        output_json TEXT,
+                        updated_at TEXT NOT NULL
                     )
                 """)
 
@@ -440,13 +447,17 @@ class TestSmartTestDatabaseFunctions:
             assert len(history) == 2
             assert history[0]["device"] == "/dev/sda"
             assert history[0]["serial"] == "TEST123"
+            
+            # Close all SQLite connections before temp directory cleanup
+            from database import close_all_connections
+            close_all_connections()
 
     @patch('database.get_db_path')
     def test_get_smart_test_history_invalid_device(self, mock_get_db_path):
         """Test that invalid device path is rejected."""
         from database import get_smart_test_history
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -458,10 +469,8 @@ class TestSmartTestDatabaseFunctions:
     def test_get_smart_test_history_limit_enforcement(self, mock_get_db_path):
         """Test that limit parameter is enforced (DoS prevention)."""
         from database import get_smart_test_history
-        import tempfile
-        import sqlite3
 
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
             db_path = os.path.join(tmpdir, "test.db")
             mock_get_db_path.return_value = db_path
 
@@ -477,15 +486,16 @@ class TestSmartTestDatabaseFunctions:
                         finished_at TEXT,
                         status TEXT NOT NULL,
                         result TEXT,
-                        output_json TEXT
+                        output_json TEXT,
+                        updated_at TEXT NOT NULL
                     )
                 """)
 
             # Insert many records
             for i in range(100):
                 conn.execute(
-                    "INSERT INTO smart_test_log (device, serial, test_type, started_at, status) VALUES (?, ?, ?, ?, ?)",
-                    ("/dev/sda", "TEST123", "short", "2024-01-01T00:00:00Z", "completed")
+                    "INSERT INTO smart_test_log (device, serial, test_type, started_at, status, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    ("/dev/sda", "TEST123", "short", "2024-01-01T00:00:00Z", "completed", "2024-01-01T00:00:00Z")
                 )
             conn.commit()
 
@@ -498,16 +508,20 @@ class TestSmartTestDatabaseFunctions:
             history = get_smart_test_history(device="/dev/sda", limit=5000)
 
             assert len(history) <= 1000  # Should be capped at 1000
+            
+            # Close all SQLite connections before temp directory cleanup
+            from database import close_all_connections
+            close_all_connections()
 
 
 class TestSmartDetailsEndpoint:
     """Test smart-details endpoint."""
 
     @patch('smart_parsing.get_smart_data')
-    @patch('admin_routes.is_valid_device_name')
+    @patch('routes.admin_routes.is_valid_device_name')
     def test_smart_details_endpoint_basic(self, mock_is_valid, mock_get_smart_data):
         """Test basic smart-details endpoint."""
-        from admin_routes import get_smart_details
+        from routes.admin_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -529,10 +543,10 @@ class TestSmartDetailsEndpoint:
             assert "attributes" in data
             assert len(data["attributes"]) == 1
 
-    @patch('admin_routes.is_valid_device_name')
+    @patch('routes.admin_routes.is_valid_device_name')
     def test_smart_details_invalid_device(self, mock_is_valid):
         """Test that invalid device name is rejected."""
-        from admin_routes import get_smart_details
+        from routes.admin_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -546,10 +560,10 @@ class TestSmartDetailsEndpoint:
             assert status_code == 400
 
     @patch('smart_parsing.get_smart_data')
-    @patch('admin_routes.is_valid_device_name')
+    @patch('routes.admin_routes.is_valid_device_name')
     def test_smart_details_size_limits(self, mock_is_valid, mock_get_smart_data):
         """Test that size limits are enforced (DoS prevention)."""
-        from admin_routes import get_smart_details
+        from routes.admin_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -576,10 +590,10 @@ class TestSmartDetailsEndpoint:
             assert data["truncated"] is True
 
     @patch('smart_parsing.get_smart_data')
-    @patch('admin_routes.is_valid_device_name')
+    @patch('routes.admin_routes.is_valid_device_name')
     def test_smart_details_extended_self_test_log(self, mock_is_valid, mock_get_smart_data):
         """Test that smart-details endpoint reads self-test log from extended.table."""
-        from admin_routes import get_smart_details
+        from routes.admin_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -623,12 +637,12 @@ class TestSmartDetailsEndpoint:
 class TestSmartExportEndpoint:
     """Test smart-export endpoint."""
 
+    @patch('routes.admin_routes.ERASE_JOBS_LOCK')
+    @patch('routes.admin_routes.is_valid_device_name')
     @patch('smart_parsing.get_smart_data')
-    @patch('admin_routes.is_valid_device_name')
-    @patch('admin_routes.ERASE_JOBS_LOCK')
-    def test_smart_export_endpoint(self, mock_jobs_lock, mock_is_valid, mock_get_smart_data):
+    def test_smart_export_endpoint(self, mock_get_smart_data, mock_is_valid, mock_jobs_lock):
         """Test basic smart-export endpoint."""
-        from admin_routes import export_smart_data
+        from routes.admin_routes import export_smart_data, ERASE_JOBS
         from flask import Flask
 
         app = Flask(__name__)
@@ -643,17 +657,28 @@ class TestSmartExportEndpoint:
             "raw": "{}"
         }
 
-        with app.test_request_context():
-            response, status_code = export_smart_data("sda")
+        # Register the route with the test app
+        @app.route('/api/admin/drives/<device>/smart-export')
+        def test_route(device):
+            return export_smart_data(device)
 
-            assert status_code == 200
-            # Response should be a file-like object
-            assert hasattr(response, "get_data")
+        # Clear ERASE_JOBS to avoid 409 conflict
+        original_jobs = ERASE_JOBS.copy()
+        ERASE_JOBS.clear()
+        try:
+            with app.test_client() as client:
+                response = client.get('/api/admin/drives/sda/smart-export')
 
-    @patch('admin_routes.is_valid_device_name')
+                assert response.status_code == 200
+                # Response should be a file-like object
+                assert hasattr(response, "get_data")
+        finally:
+            ERASE_JOBS.update(original_jobs)
+
+    @patch('routes.admin_routes.is_valid_device_name')
     def test_smart_export_invalid_device(self, mock_is_valid):
         """Test that invalid device name is rejected."""
-        from admin_routes import export_smart_data
+        from routes.admin_routes import export_smart_data
         from flask import Flask
 
         app = Flask(__name__)

@@ -92,8 +92,8 @@ class TestValidatePciAddress:
         assert validate_pci_address("00:1f.2") is False
 
     def test_invalid_format_missing_function(self):
-        """Test that missing function is rejected."""
-        assert validate_pci_address("0000:00:1f") is False
+        """Test that missing function is accepted (function is optional per implementation)."""
+        assert validate_pci_address("0000:00:1f") is True
 
     def test_invalid_format_wrong_separator(self):
         """Test that wrong separators are rejected."""

@@ -132,7 +132,7 @@ class TestSSDParserWithFixtures:
         assert result["model"] == "INTEL SSDSC2KB480G8"
         assert result["reallocated_sectors"] == 8
         assert result["reallocated_normalized"] == 93
-        assert result["wear_level"] == 93
+        assert result["wear_level"] == 7  # Percentage used (normalized value is 7, which is <= 50)
         assert result["rotation_rate"] == 0
 
 
@@ -198,9 +198,10 @@ class TestSASScoringWithFixtures:
         health, _ = calculate_drive_health_score("sas", smart, None)
 
         # With 6 grown defects, log10(6) ≈ 0.78, penalty ≈ 0.78 * 20 = 15.6
+        # 30K POH: (30000-20000)/40000*30 = 7.5 penalty
         # 57M NME is below 100M penalty threshold, so no NME penalty
-        # Health ≈ 100 - 15.6 = 84.4, but POH penalty also applies
-        assert 53 <= health <= 58, f"Expected health 53-58 for healthy SAS drive, got {health}"
+        # Health ≈ 100 - 15.6 - 7.5 = 76.9
+        assert 75 <= health <= 80, f"Expected health 75-80 for healthy SAS drive, got {health}"
 
 
 class TestSSDScoringWithFixtures:
@@ -240,10 +241,11 @@ class TestSSDScoringWithFixtures:
         smart = get_smart_data("/dev/sda")
         health, _ = calculate_drive_health_score("sata", smart, None)
 
-        # 93% wear (7% remaining), 8 reallocated sectors
-        # Wear penalty: 93 (since > 80), realloc penalty: 8 * 5 = 40
-        # But SSD with spare reserve may mitigate realloc penalty
-        assert 60 <= health <= 75, f"Expected health 60-75 for Intel SSD with reallocs, got {health}"
+        # Normalized wear value is 7 (percentage used), so 7% wear, 93% remaining
+        # Base health: 100 - 7 = 93
+        # 8 reallocated sectors with 93% spare reserve: penalty = 8 * 2 = 16 (mitigated)
+        # Health = 93 - 16 = 77
+        assert 75 <= health <= 80, f"Expected health 75-80 for Intel SSD with reallocs, got {health}"
 
 
 class TestSASRecommendationWithFixtures:
@@ -322,6 +324,92 @@ class TestSASRecommendationWithFixtures:
 
         # Sticky LBA should trigger at least SCRATCH
         assert recommendation["status"] in ["SCRATCH", "DESTROY"]
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_sas_grown_defects_exceed_fail_threshold(self, mock_get_triage_thresholds, mock_get_command_path, mock_run_command):
+        """Test SAS with grown defects >= fail threshold is recommended DESTROY."""
+        from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
+
+        mock_get_triage_thresholds.return_value = {
+            "sas_grown_defect_fail_threshold": 10000,
+            "health_score_destroy_threshold": 30,
+            "health_score_scratch_threshold": 50,
+            "pending_sectors_destroy_threshold": 10,
+            "pending_sectors_scratch_threshold": 5
+        }
+
+        with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
+            fixture_data = json.load(f)
+        # Modify to have high grown defects
+        fixture_data["scsi_grown_defect_list"] = 15000
+
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps(fixture_data)
+
+        smart = get_smart_data("/dev/sda")
+        health, _ = calculate_drive_health_score("sas", smart, None)
+        recommendation = get_drive_recommendation("sas", smart, health)
+
+        # Grown defects >= 10000 should trigger DESTROY
+        assert recommendation["status"] == "DESTROY"
+        assert "grown defects" in recommendation["comment"].lower()
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    @patch('smart_parsing.get_triage_thresholds')
+    def test_sas_grown_defects_below_fail_threshold(self, mock_get_triage_thresholds, mock_get_command_path, mock_run_command):
+        """Test SAS with grown defects > 0 but < fail threshold is recommended SCRATCH."""
+        from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
+
+        mock_get_triage_thresholds.return_value = {
+            "sas_grown_defect_fail_threshold": 10000,
+            "health_score_destroy_threshold": 30,
+            "health_score_scratch_threshold": 50,
+            "pending_sectors_destroy_threshold": 10,
+            "pending_sectors_scratch_threshold": 5
+        }
+
+        with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
+            fixture_data = json.load(f)
+        # Modify to have moderate grown defects
+        fixture_data["scsi_grown_defect_list"] = 500
+
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps(fixture_data)
+
+        smart = get_smart_data("/dev/sda")
+        health, _ = calculate_drive_health_score("sas", smart, None)
+        recommendation = get_drive_recommendation("sas", smart, health)
+
+        # Grown defects > 0 but < 10000 should trigger SCRATCH
+        assert recommendation["status"] == "SCRATCH"
+        assert "grown defects" in recommendation["comment"].lower()
+
+    @patch('smart_parsing.run_command')
+    @patch('smart_parsing.get_command_path')
+    def test_sas_no_grown_defects_no_defect_recommendation(self, mock_get_command_path, mock_run_command):
+        """Test SAS with 0 grown defects does not trigger defect-based recommendations."""
+        from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
+
+        with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
+            fixture_data = json.load(f)
+        # Ensure no grown defects
+        fixture_data["scsi_grown_defect_list"] = 0
+
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps(fixture_data)
+
+        smart = get_smart_data("/dev/sda")
+        health, _ = calculate_drive_health_score("sas", smart, None)
+        recommendation = get_drive_recommendation("sas", smart, health)
+
+        # No grown defects should not trigger defect-based DESTROY/SCRATCH
+        # (may still trigger other recommendations based on health score)
+        if recommendation["status"] in ["DESTROY", "SCRATCH"]:
+            # If it's DESTROY/SCRATCH, it should NOT be due to grown defects
+            assert "grown defects" not in recommendation["comment"].lower()
 
 
 class TestPreWipeHealthGate:

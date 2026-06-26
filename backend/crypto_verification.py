@@ -119,7 +119,15 @@ def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_de
     
     for attempt in range(attempts):
         dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={bs}", f"skip={skip}", f"count={count}", "status=none"]
-        result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
+        try:
+            result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
+        except Exception as e:
+            last_stderr = str(e)
+            logger.warning(f"dd read exception on attempt {attempt + 1}/{attempts} for {device}: {last_stderr}")
+            # Sleep before retry, but not after the last attempt
+            if attempt < attempts - 1:
+                time.sleep(retry_delay)
+            continue
         
         if result.returncode == 0:
             logger.debug(f"dd read succeeded on attempt {attempt + 1}/{attempts} for {device}")

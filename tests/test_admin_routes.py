@@ -318,12 +318,12 @@ class TestAdminRoutes:
     # Phase 8: SMART endpoint tests
     def test_smart_export_invalid_device(self, admin_session):
         """Test smart-export rejects invalid device names."""
-        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-export')
+        response = admin_session.get('/api/admin/drives/sda*/smart-export')
         assert response.status_code == 400
 
     def test_smart_export_success(self, admin_session):
         """Test smart-export returns JSON file."""
-        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+        with patch('smart_parsing.get_smart_data') as mock_get_smart:
             mock_get_smart.return_value = {
                 "serial": "TEST123",
                 "model": "Test Drive",
@@ -353,12 +353,12 @@ class TestAdminRoutes:
 
     def test_smart_details_invalid_device(self, admin_session):
         """Test smart-details rejects invalid device names."""
-        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-details')
+        response = admin_session.get('/api/admin/drives/sda*/smart-details')
         assert response.status_code == 400
 
     def test_smart_details_success(self, admin_session):
         """Test smart-details returns structured SMART data."""
-        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+        with patch('smart_parsing.get_smart_data') as mock_get_smart:
             mock_get_smart.return_value = {
                 "serial": "TEST123",
                 "raw": json.dumps({
@@ -374,7 +374,7 @@ class TestAdminRoutes:
     def test_smart_details_size_limits(self, admin_session):
         """Test smart-details enforces size limits (DoS prevention)."""
         large_attrs = [{"id": i, "name": f"Attr{i}", "value": 100} for i in range(200)]
-        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
+        with patch('smart_parsing.get_smart_data') as mock_get_smart:
             mock_get_smart.return_value = {
                 "serial": "TEST123",
                 "raw": json.dumps({
@@ -390,12 +390,12 @@ class TestAdminRoutes:
 
     def test_smart_test_invalid_device(self, admin_session):
         """Test smart-test rejects invalid device names."""
-        response = admin_session.post('/api/admin/drives/../../../etc/passwd/smart-test', json={"test_type": "short"})
+        response = admin_session.post('/api/admin/drives/sda*/smart-test', json={"test_type": "short"})
         assert response.status_code == 400
 
     def test_smart_test_invalid_test_type(self, admin_session):
         """Test smart-test rejects invalid test types."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
+        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
             with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
@@ -403,12 +403,17 @@ class TestAdminRoutes:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
                     with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
-                        response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "invalid"})
-                        assert response.status_code == 400
+                        # Mock lsblk to avoid mounted drive check (403)
+                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                            mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
+                            # Mock device_discovery to avoid locked/secondary path checks (403)
+                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                                response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "invalid"})
+                                assert response.status_code == 400
 
     def test_smart_test_success(self, admin_session):
         """Test smart-test starts a test successfully."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
+        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
             with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
@@ -416,22 +421,27 @@ class TestAdminRoutes:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
                     with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
-                        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
-                            mock_get_smart.return_value = {
-                                "serial": "TEST123",
-                                "interface_type": "sata"
-                            }
-                            with patch('routes.admin_routes.run_smart_test') as mock_run_test:
-                                mock_run_test.return_value = {
-                                    "test_type": "short",
-                                    "status": "started",
-                                    "estimated_minutes": 2
-                                }
-                                with patch('routes.admin_routes.record_smart_test_run', return_value=1):
-                                    response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "short"})
-                                    assert response.status_code == 200
-                                    data = json.loads(response.data)
-                                    assert data["status"] == "started"
+                        # Mock lsblk to avoid mounted drive check (403)
+                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                            mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
+                            # Mock device_discovery to avoid locked/secondary path checks (403)
+                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                                with patch('smart_parsing.get_smart_data') as mock_get_smart:
+                                    mock_get_smart.return_value = {
+                                        "serial": "TEST123",
+                                        "interface_type": "sata"
+                                    }
+                                    with patch('smart_parsing.run_smart_test') as mock_run_test:
+                                        mock_run_test.return_value = {
+                                            "test_type": "short",
+                                            "status": "started",
+                                            "estimated_minutes": 2
+                                        }
+                                        with patch('database.record_smart_test_run', return_value=1):
+                                            response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "short"})
+                                            assert response.status_code == 200
+                                            data = json.loads(response.data)
+                                            assert data["status"] == "started"
 
     def test_smart_test_while_wiping(self, admin_session):
         """Test smart-test blocked during active wipe."""
@@ -450,7 +460,7 @@ class TestAdminRoutes:
 
     def test_smart_test_conveyance_sata_only(self, admin_session):
         """Test conveyance test rejected on non-SATA devices."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
+        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
             with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
@@ -458,24 +468,29 @@ class TestAdminRoutes:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
                     with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
-                        with patch('routes.admin_routes.get_smart_data') as mock_get_smart:
-                            mock_get_smart.return_value = {
-                                "serial": "TEST123",
-                                "interface_type": "sas"
-                            }
-                            response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "conveyance"})
-                            assert response.status_code == 400
-                            data = json.loads(response.data)
-                            assert "Conveyance test is only supported on SATA" in data["error"]
+                        # Mock lsblk to avoid mounted drive check (403)
+                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                            mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
+                            # Mock device_discovery to avoid locked/secondary path checks (403)
+                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                                with patch('smart_parsing.get_smart_data') as mock_get_smart:
+                                    mock_get_smart.return_value = {
+                                        "serial": "TEST123",
+                                        "interface_type": "sas"
+                                    }
+                                    response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "conveyance"})
+                                    assert response.status_code == 400
+                                    data = json.loads(response.data)
+                                    assert "Conveyance test is only supported on SATA" in data["error"]
 
     def test_smart_test_status_invalid_device(self, admin_session):
         """Test smart-test-status rejects invalid device names."""
-        response = admin_session.get('/api/admin/drives/../../../etc/passwd/smart-test-status')
+        response = admin_session.get('/api/admin/drives/sda*/smart-test-status')
         assert response.status_code == 400
 
     def test_smart_test_status_success(self, admin_session):
         """Test smart-test-status returns test status."""
-        with patch('routes.admin_routes.get_smart_test_status') as mock_get_status:
+        with patch('smart_parsing.get_smart_test_status') as mock_get_status:
             mock_get_status.return_value = {
                 "status": "in_progress",
                 "percentage": 50.0,
@@ -544,6 +559,9 @@ class TestAdminRoutes:
                     "name": "Test 4-Bay",
                     "vendor": "Test",
                     "slot_count": 4,
+                    "rows": 2,
+                    "cols": 2,
+                    "traversal_preset": "top_left_down_then_across",
                     "default_role": "wipe"
                 }
             }, False)
@@ -554,6 +572,27 @@ class TestAdminRoutes:
                         "slot_type": "sas_expander",
                         "physical_slot_number": 0,
                         "hardware_identifier": "0:0:0",
+                        "expander_sas_address": None
+                    },
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 1,
+                        "hardware_identifier": "0:0:1",
+                        "expander_sas_address": None
+                    },
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 2,
+                        "hardware_identifier": "0:0:2",
+                        "expander_sas_address": None
+                    },
+                    {
+                        "pci_controller": "0000:00:1f.2",
+                        "slot_type": "sas_expander",
+                        "physical_slot_number": 3,
+                        "hardware_identifier": "0:0:3",
                         "expander_sas_address": None
                     }
                 ]

@@ -245,7 +245,16 @@ def get_smart_data(device, diagnostics=None):
     sata_wear = None
     for attr_id in [177, 233, 202]:
         val = get_sata_attr(attr_id, get_normalized=True)
-        if val is not None: sata_wear = val; break
+        if val is not None:
+            # Heuristic: if normalized > 50, it's remaining life (wear = 100 - val)
+            # If normalized <= 50, it's percentage used (wear = val)
+            # This handles manufacturer differences (Samsung vs Intel)
+            # LIMITATION: This assumes a 50-threshold split between manufacturers.
+            # Some drives may report percentage used as 60 (meaning 60% used, 40% remaining),
+            # which would be incorrectly interpreted as 60% remaining life (40% used).
+            # This is a best-effort heuristic without manufacturer-specific logic.
+            sata_wear = (100 - val) if val > 50 else val
+            break
 
     nvme_wear = nvme_log.get("percentage_used")
     sas_wear = data.get("scsi_percentage_used_endurance_indicator")
@@ -298,6 +307,8 @@ def get_smart_data(device, diagnostics=None):
             sas_scan_status = scan_status_obj.get("string")
         elif isinstance(scan_status_obj, str):
             sas_scan_status = scan_status_obj
+        if sas_scan_status:
+            sas_scan_status = sas_scan_status.upper()
     
     # Parse scan event data from background_scan_log.table
     sas_scan_event_count = None
@@ -316,7 +327,7 @@ def get_smart_data(device, diagnostics=None):
                     unique_lbas.add(lba)
                     # Count errors per LBA for sticky LBA detection
                     status_desc = str(entry.get("status", "") or "").lower()
-                    if "failed" in status_desc or "error" in status_desc:
+                    if "failed" in status_desc or "error" in status_desc or "failure" in status_desc:
                         lba_error_count[lba] = lba_error_count.get(lba, 0) + 1
             sas_scan_unique_lbas = len(unique_lbas) if unique_lbas else None
             # If any LBA has 3+ errors, mark as sticky LBA detected
@@ -432,7 +443,7 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     
     if is_ssd and wear is not None:
         wear_val = safe_int(wear, 0)
-        base_score = max(0, 100 - wear_val) if iface in {"nvme", "sas"} else wear_val
+        base_score = max(0, 100 - wear_val)
         thresholds = get_triage_thresholds()
         ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
         if poh > ssd_high_poh_thresh:
@@ -442,9 +453,8 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     else:
         thresholds = get_triage_thresholds()
         if iface == "sas":
-            # SAS-specific POH threshold: 50,000
-            sas_high_poh_thresh = thresholds.get("sas_high_poh_threshold", 50000)
-            poh_penalty = min(30, max(0, (poh - sas_high_poh_thresh) / (sas_high_poh_thresh * 2) * 30)) if poh > sas_high_poh_thresh else 0
+            # SAS uses same POH threshold as HDD: 20,000
+            poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
         else:
             # HDD POH threshold: 20,000
             poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
@@ -469,19 +479,26 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
 
     realloc_penalty = 0
     if is_ssd:
-        realloc_normalized = smart_data.get("reallocated_normalized")
-        if realloc_normalized is not None:
-            norm_val = safe_int(realloc_normalized, 100)
-            if norm_val < 100: realloc_penalty = min(40, (100 - norm_val) * 1)
+        # For SSDs, use raw reallocated sector count with penalty mitigated by spare reserve
+        realloc_raw = safe_int(smart_data.get("reallocated_sectors"), 0)
+        if realloc_raw > 0:
+            realloc_normalized = smart_data.get("reallocated_normalized")
+            if realloc_normalized is not None:
+                norm_val = safe_int(realloc_normalized, 100)
+                # If spare reserve is high (>80), mitigate the penalty significantly
+                if norm_val >= 80:
+                    realloc_penalty = min(40, realloc_raw * 2)  # Reduced penalty with good spare
+                else:
+                    realloc_penalty = min(40, realloc_raw * 5)  # Full penalty with low spare
+            else:
+                realloc_penalty = min(40, realloc_raw * 5)  # Full penalty if no spare info
     elif iface == "sas":
         # SAS logarithmic grown-defect penalty: ~40 at 100, ~70 at 1000, ~100 at 10000+
         sas_grown_defects = safe_int(smart_data.get("sas_grown_defect_list"), 0)
         if sas_grown_defects > 0:
-            thresholds = get_triage_thresholds()
-            sas_grown_defect_scratch_threshold = thresholds.get("sas_grown_defect_scratch_threshold", 100)
-            if sas_grown_defects >= sas_grown_defect_scratch_threshold:
-                # Logarithmic scaling: penalty = 35 * log10(defects / 10), capped at 100
-                realloc_penalty = min(100, 35 * math.log10(max(1, sas_grown_defects / 10)))
+            # Logarithmic scaling: penalty = 20 * log10(defects), capped at 100
+            # This applies to any defects > 0, not just above threshold
+            realloc_penalty = min(100, 20 * math.log10(max(1, sas_grown_defects)))
     else:
         if reallocated > 0:
             realloc_penalty = min(40, 10 if reallocated == 1 else (10 + (reallocated - 1) * 5 if reallocated <= 5 else 30 + (reallocated - 5) * 10))
@@ -942,15 +959,21 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
         sas_write_errors = safe_int(smart.get("sas_uncorrectable_write_errors"), 0)
         sas_read_errors = safe_int(smart.get("sas_uncorrectable_read_errors"), 0)
         sas_sticky_lba = smart.get("sas_sticky_lba_detected")
+        sas_grown_defects = safe_int(smart.get("sas_grown_defect_list"), 0)
+        sas_grown_defect_fail_thresh = thresholds.get("sas_grown_defect_fail_threshold", 10000)
         
         if sas_verify_errors >= 1 or sas_write_errors >= 1:
             return {"status": "DESTROY", "comment": "SAS drive has uncorrectable verify or write errors. Critical data integrity risk."}
         if sas_read_errors >= 10:
             return {"status": "DESTROY", "comment": "SAS drive has excessive uncorrectable read errors. Critical data integrity risk."}
+        if sas_grown_defects >= sas_grown_defect_fail_thresh:
+            return {"status": "DESTROY", "comment": f"SAS drive has {sas_grown_defects:,} grown defects (exceeds fail threshold). Critical mechanical degradation."}
         if sas_read_errors >= 1:
             return {"status": "SCRATCH", "comment": "SAS drive has uncorrectable read errors. Use only for non-critical data."}
         if sas_sticky_lba:
             return {"status": "SCRATCH", "comment": "SAS drive has sticky LBA detected (recurring errors at same location). Use only for non-critical data."}
+        if sas_grown_defects > 0:
+            return {"status": "SCRATCH", "comment": f"SAS drive has {sas_grown_defects:,} grown defects. Mechanical degradation detected. Use only for non-critical data."}
 
     if health_score is not None:
         if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
