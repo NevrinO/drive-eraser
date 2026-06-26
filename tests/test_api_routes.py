@@ -120,6 +120,74 @@ class TestAPIRoutes:
             })
         assert response.status_code == 400
 
+    def test_erase_start_confirmation_uses_display_label(self, client):
+        """Test that single-bay confirmation expects the display label (BAY N), not the raw bay id."""
+        mocked_drive = {
+            "bay": "dell_front_slot_4",
+            "display_number": "4",
+            "present": True,
+            "device": "/dev/sdb",
+            "supported_methods": ["overwrite"],
+        }
+        with patch('api_routes.discover_drives', return_value=[mocked_drive]):
+            response = client.post('/api/erase/start',
+                json={
+                    "bays": ["dell_front_slot_4"],
+                    "confirmation_text": "erase dell_front_slot_4",  # old raw-id text
+                    "technician": "Test Tech",
+                    "ticket_number": "TICKET-001"
+                })
+            assert response.status_code == 400
+            data = json.loads(response.data)
+            assert "erase BAY 4" in data["error"]
+
+    def test_erase_start_confirmation_accepts_lowercase_display_label(self, client):
+        """Test that the correct lowercase display-label confirmation succeeds."""
+        mocked_drive = {
+            "bay": "dell_front_slot_4",
+            "display_number": "4",
+            "present": True,
+            "device": "/dev/sdb",
+            "supported_methods": ["overwrite"],
+        }
+        validated = {
+            "technician": "Test Tech",
+            "ticket_number": "TICKET-001",
+            "bay": "dell_front_slot_4",
+            "device": "/dev/sdb",
+            "method": "overwrite",
+            "recommended_method": "overwrite",
+            "drive": mocked_drive,
+        }
+        job = {
+            "id": "job-123",
+            "friendly_id": "JOB-123",
+            "request": validated.copy(),
+            "status": "queued",
+            "created_at": "2026-06-26T14:00:00Z",
+        }
+        mock_semaphore = MagicMock()
+        mock_semaphore.acquire = MagicMock()
+        mock_semaphore.release = MagicMock()
+
+        with patch('api_routes.discover_drives', return_value=[mocked_drive]), \
+             patch('api_routes.validate_single_bay', return_value=(validated, None, None)), \
+             patch('api_routes.create_erase_job', return_value=job), \
+             patch('api_routes.get_wipe_semaphore', return_value=mock_semaphore), \
+             patch('api_routes.run_erase_job'), \
+             patch('api_routes.persist_job'):
+            response = client.post('/api/erase/start',
+                json={
+                    "bays": ["dell_front_slot_4"],
+                    "confirmation_text": "erase bay 4",
+                    "technician": "Test Tech",
+                    "ticket_number": "TICKET-001"
+                })
+            assert response.status_code == 202
+            data = json.loads(response.data)
+            assert "jobs" in data
+            assert len(data["jobs"]) == 1
+
     def test_erase_start_confirmation_validation_missing(self, client):
         """Test that missing confirmation returns 400."""
         response = client.post('/api/erase/start',

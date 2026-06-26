@@ -99,8 +99,11 @@ def register_routes(flask_app):
             if not bays or not isinstance(bays, list):
                 return jsonify({"error": "bays list is required"}), 400
 
-            expected_confirmation = f"erase {bays[0]}" if len(bays) == 1 else f"erase {len(bays)} drives"
-            if confirmation_text != expected_confirmation:
+            first_bay = str(bays[0]).strip()
+            first_drive = next((d for d in drives if d.get("bay") == first_bay), None)
+            first_display_label = f"BAY {first_drive['display_number']}" if first_drive and first_drive.get("display_number") is not None else first_bay.upper()
+            expected_confirmation = f"erase {first_display_label}" if len(bays) == 1 else f"erase {len(bays)} drives"
+            if confirmation_text != expected_confirmation.lower():
                 return jsonify({"error": f"confirmation_text must exactly be '{expected_confirmation}'"}), 400
 
             validated_bays = []
