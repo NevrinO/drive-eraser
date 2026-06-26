@@ -205,7 +205,7 @@ Writable operational fields include:
 - `prewipe_spot_check` — reserved policy toggle (currently not implemented in the wipe workflow)
 - `post_erase_marker` — enable/disable post-erase marker writing
 - `allow_method_override` — allow technicians to override the recommended erase method
-- `crypto_verification_mode` — `conservative_probe`, `full_verify`, or `disabled`
+- `secondary_verification_mode` — `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)
 - `discovery_max_workers` — parallel SMART query threads during discovery
 - `max_concurrent_wipes` — maximum simultaneous erase jobs
 - `blockdev_post_wipe_retries` — retry attempts for post-wipe `blockdev --getsize64`

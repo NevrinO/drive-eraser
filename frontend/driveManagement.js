@@ -638,12 +638,12 @@ batchSelectToggleBtn.addEventListener("click", () => {
   renderBays(currentDrives);
 });
 
-openBatchWipeModalBtn.addEventListener("click", () => {
-  renderBatchModalForm();
+openBatchWipeModalBtn.addEventListener("click", async () => {
+  await renderBatchModalForm();
   openModal(batchWipeModal);
 });
 
-function renderBatchModalForm() {
+async function renderBatchModalForm() {
   const techInput = document.getElementById("technician");
   const ticketInput = document.getElementById("ticketNumber");
   if (techInput) techInput.value = "";
@@ -673,6 +673,35 @@ function renderBatchModalForm() {
   }).join("");
 
   selectedDrivesConfigList.innerHTML = listHtml;
+
+  // Load global verification policy to default the per-drive dropdown
+  let defaultVerificationMode = "sampled";
+  let secondaryVerificationDisabled = false;
+  try {
+    const response = await safeFetch("/api/admin/policy");
+    if (response.ok) {
+      const policy = await response.json();
+      const effectiveMode = policy.secondary_verification_mode || policy.crypto_verification_mode;
+      if (effectiveMode === "disabled") {
+        secondaryVerificationDisabled = true;
+      } else if (effectiveMode === "full_verify") {
+        defaultVerificationMode = "full";
+      }
+    }
+  } catch (e) {
+    console.error("Failed to load policy for verification default:", e);
+  }
+
+  const perDriveVerificationMode = document.getElementById("perDriveVerificationMode");
+  if (perDriveVerificationMode) {
+    perDriveVerificationMode.value = defaultVerificationMode;
+    perDriveVerificationMode.disabled = secondaryVerificationDisabled;
+  }
+
+  const secondaryVerificationDisabledNote = document.getElementById("secondaryVerificationDisabledNote");
+  if (secondaryVerificationDisabledNote) {
+    secondaryVerificationDisabledNote.classList.toggle("hidden", !secondaryVerificationDisabled);
+  }
   
   const count = selectedBays.size;
   let hintText;
@@ -735,6 +764,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
     }
   }
 
+  const perDriveVerificationMode = document.getElementById("perDriveVerificationMode");
   const payload = {
     technician: tech,
     ticket_number: ticket,
@@ -742,7 +772,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
     confirmation_text: confirmTextVal,
     methods: {},
     disable_marker: !document.getElementById("writeMarkerCheckbox").checked,
-    full_verification: document.getElementById("fullVerifyCheckbox").checked
+    full_verification: perDriveVerificationMode ? perDriveVerificationMode.value === "full" : false
   };
 
   document.querySelectorAll(".batch-drive-method-select").forEach(select => {

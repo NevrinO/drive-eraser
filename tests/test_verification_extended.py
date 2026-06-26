@@ -793,6 +793,52 @@ class TestVerificationForMethod:
                 result = verification_for_method("/dev/sda", "sata", "OVERWRITE", {"ok": True})
                 assert result["ok"] is True
 
+    def test_overwrite_skips_secondary_when_policy_disabled(self):
+        """Test that overwrite skips secondary verification when global policy is disabled."""
+        from verification import verification_for_method
+        with patch('verification.verify_overwrite', return_value={"ok": True, "status": "verified"}):
+            with patch('verification.verify_sampled_zero_check') as mock_zero_check:
+                with patch('verification.load_policy', return_value={"secondary_verification_mode": "disabled"}):
+                    result = verification_for_method("/dev/sda", "sata", "overwrite", {"ok": True}, before_state=None)
+                    assert result["ok"] is True
+                    assert result["details"]["secondary_status"] == "SKIPPED"
+                    assert result["details"]["verification_level"] == "primary_verification_only"
+                    mock_zero_check.assert_not_called()
+
+    def test_crypto_block_skips_secondary_when_policy_disabled(self):
+        """Test that crypto/block methods skip secondary verification when global policy is disabled."""
+        from verification import verification_for_method
+        with patch('verification.verify_sata_sanitize', return_value={"ok": True, "status": "verified"}):
+            with patch('verification.verify_sampled_zero_check') as mock_zero_check:
+                with patch('verification.load_policy', return_value={"secondary_verification_mode": "disabled"}):
+                    result = verification_for_method("/dev/sda", "sata", "crypto", {"ok": True}, before_state=None)
+                    assert result["ok"] is True
+                    assert result["details"]["secondary_status"] == "SKIPPED"
+                    assert result["details"]["verification_level"] == "primary_verification_only"
+                    mock_zero_check.assert_not_called()
+
+    def test_overwrite_runs_secondary_when_policy_enabled(self):
+        """Test that overwrite still runs secondary verification when global policy is enabled."""
+        from verification import verification_for_method
+        with patch('verification.verify_overwrite', return_value={"ok": True, "status": "verified"}):
+            with patch('verification.verify_sampled_zero_check', return_value={"ok": True, "status": "verified"}) as mock_zero_check:
+                with patch('verification.load_policy', return_value={"secondary_verification_mode": "conservative_probe"}):
+                    result = verification_for_method("/dev/sda", "sata", "overwrite", {"ok": True}, before_state=None)
+                    assert result["ok"] is True
+                    assert result["details"]["secondary_status"] == "PASSED_SAMPLED_ZERO_CHECK"
+                    mock_zero_check.assert_called_once()
+
+    def test_deprecated_crypto_verification_mode_still_works(self):
+        """Test that the deprecated crypto_verification_mode key is still honored as a fallback."""
+        from verification import verification_for_method
+        with patch('verification.verify_overwrite', return_value={"ok": True, "status": "verified"}):
+            with patch('verification.verify_sampled_zero_check') as mock_zero_check:
+                with patch('verification.load_policy', return_value={"crypto_verification_mode": "disabled"}):
+                    result = verification_for_method("/dev/sda", "sata", "overwrite", {"ok": True}, before_state=None)
+                    assert result["ok"] is True
+                    assert result["details"]["secondary_status"] == "SKIPPED"
+                    mock_zero_check.assert_not_called()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

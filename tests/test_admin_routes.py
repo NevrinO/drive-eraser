@@ -226,6 +226,14 @@ class TestAdminRoutes:
             assert data["status"] == "success"
             mock_stop.assert_called_once()
 
+    def test_admin_policy_post_rejects_deprecated_crypto_verification_mode(self, admin_session):
+        """Test that the deprecated crypto_verification_mode key is rejected."""
+        payload = {"crypto_verification_mode": "disabled"}
+        response = admin_session.post('/api/admin/policy', json=payload)
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert "secondary_verification_mode" in data["error"]
+
     def test_admin_triage_config_get(self, admin_session):
         """Test GET triage config endpoint."""
         with patch('routes.admin_routes.load_policy') as mock_load:

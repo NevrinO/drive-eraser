@@ -46,7 +46,7 @@ STATION_ID="wipe-station-01"
 WIPE_PORT=5000
 WIPE_PASSPHRASE=""
 STRICT_AUDIT_MODE="true"
-CRYPTO_VERIFICATION_MODE="conservative_probe"
+SECONDARY_VERIFICATION_MODE="conservative_probe"
 LAN_PASSPHRASE="eraser123"
 SLACK_WEBHOOK=""
 
@@ -391,7 +391,7 @@ setup_config() {
         export WIPE_PORT
         export WIPE_PASSPHRASE
         export STRICT_AUDIT_MODE
-        export CRYPTO_VERIFICATION_MODE
+        export SECONDARY_VERIFICATION_MODE
         export LAN_PASSPHRASE
         export SLACK_WEBHOOK
         export CORS_ORIGIN
@@ -411,7 +411,7 @@ data = {
   },
   'crypto_fail_retry_block': True,
   'strict_audit_mode': os.environ.get('STRICT_AUDIT_MODE', 'true').lower() == 'true',
-  'crypto_verification_mode': os.environ.get('CRYPTO_VERIFICATION_MODE', 'conservative_probe'),
+  'secondary_verification_mode': os.environ.get('SECONDARY_VERIFICATION_MODE', 'conservative_probe'),
   'health_soft_stop': True,
   'port': int(os.environ.get('WIPE_PORT', 5000)),
   'bind_address': '0.0.0.0',
@@ -443,7 +443,7 @@ with open(path, 'w', encoding='utf-8') as f:
 "
         unset WIPE_PASSPHRASE
         unset STRICT_AUDIT_MODE
-        unset CRYPTO_VERIFICATION_MODE
+        unset SECONDARY_VERIFICATION_MODE
         unset LAN_PASSPHRASE
         unset SLACK_WEBHOOK
         success "policy.json safely compiled."

@@ -30,9 +30,9 @@ async function loadSystemConfig() {
       slackWebhookInput.value = policy.slack_webhook_url || "";
     }
     
-    const cryptoModeInput = document.getElementById("crypto_verification_mode");
-    if (cryptoModeInput) {
-      cryptoModeInput.value = policy.crypto_verification_mode || "conservative_probe";
+    const secondaryVerificationModeInput = document.getElementById("secondary_verification_mode");
+    if (secondaryVerificationModeInput) {
+      secondaryVerificationModeInput.value = policy.secondary_verification_mode || policy.crypto_verification_mode || "conservative_probe";
     }
     
     const discoveryWorkersInput = document.getElementById("discovery_max_workers");
@@ -162,16 +162,16 @@ function validateForm() {
     formData.slack_webhook_url = slackWebhookInput.value.trim();
   }
   
-  // Crypto verification mode (enum)
-  const cryptoModeInput = document.getElementById("crypto_verification_mode");
-  if (cryptoModeInput) {
+  // Secondary verification mode (enum)
+  const secondaryVerificationModeInput = document.getElementById("secondary_verification_mode");
+  if (secondaryVerificationModeInput) {
     const validModes = ["conservative_probe", "full_verify", "disabled"];
-    if (!validModes.includes(cryptoModeInput.value)) {
+    if (!validModes.includes(secondaryVerificationModeInput.value)) {
       isValid = false;
-      cryptoModeInput.style.borderColor = "var(--color-danger)";
+      secondaryVerificationModeInput.style.borderColor = "var(--color-danger)";
     } else {
-      cryptoModeInput.style.borderColor = "";
-      formData.crypto_verification_mode = cryptoModeInput.value;
+      secondaryVerificationModeInput.style.borderColor = "";
+      formData.secondary_verification_mode = secondaryVerificationModeInput.value;
     }
   }
   

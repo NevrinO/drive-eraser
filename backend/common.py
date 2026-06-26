@@ -41,7 +41,7 @@ DEFAULT_POLICY = {
     "allow_method_override": True,
     "crypto_fail_retry_block": True,
     "strict_audit_mode": True,
-    "crypto_verification_mode": "conservative_probe",
+    "secondary_verification_mode": "conservative_probe",
     "health_soft_stop": True,
     "lan_passphrase": "eraser123",
     "slack_webhook_url": "",
@@ -79,7 +79,8 @@ POLICY_SCHEMA = {
         },
         "crypto_fail_retry_block": {"type": "boolean"},
         "strict_audit_mode": {"type": "boolean"},
-        "crypto_verification_mode": {"type": "string", "enum": ["conservative_probe", "full_verify", "disabled"]},
+        "secondary_verification_mode": {"type": "string", "enum": ["conservative_probe", "full_verify", "disabled"]},
+        "crypto_verification_mode": {"type": "string", "enum": ["conservative_probe", "full_verify", "disabled"]},  # Deprecated: use secondary_verification_mode
         "health_soft_stop": {"type": "boolean"},
         "port": {"type": "integer", "minimum": 1, "maximum": 65535},
         "bind_address": {"type": "string"},
@@ -409,6 +410,11 @@ def load_policy(config_dir=None):
             # Merge with defaults
             merged = DEFAULT_POLICY.copy()
             merged.update(data)
+
+            # Migration: deprecated crypto_verification_mode -> secondary_verification_mode
+            if "secondary_verification_mode" not in merged and "crypto_verification_mode" in merged:
+                merged["secondary_verification_mode"] = merged["crypto_verification_mode"]
+
             return merged
     except Exception as e:
         logger.error(f"Failed to load policy configuration: {e}")

@@ -458,6 +458,10 @@ def admin_policy():
             if new_strict_audit_mode is not None and not isinstance(new_strict_audit_mode, bool):
                 return jsonify({"error": "strict_audit_mode must be a boolean value"}), 400
             
+            # Reject deprecated policy key explicitly
+            if "crypto_verification_mode" in payload:
+                return jsonify({"error": "crypto_verification_mode is deprecated; use secondary_verification_mode"}), 400
+            
             # Validation: strict_audit_mode requires wipe_passphrase of at least 8 characters
             # Check both the new value from payload and the existing value in current_policy
             strict_audit_enabled = new_strict_audit_mode if new_strict_audit_mode is not None else current_policy.get("strict_audit_mode", False)
@@ -470,7 +474,7 @@ def admin_policy():
             
             # Apply mutations after validation passes
             old_background_smart_max_workers = current_policy.get("background_smart_max_workers")
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "secondary_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]

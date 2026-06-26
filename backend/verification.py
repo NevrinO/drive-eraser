@@ -657,13 +657,19 @@ def verification_for_method(device, interface_type, method, execution, before_st
 
     if primary_result and primary_result.get("ok"):
         primary_result.setdefault("details", {})
+
+        # Determine whether secondary verification is disabled by policy
+        try:
+            policy = load_policy()
+        except Exception:
+            policy = {}
+        secondary_mode = str(
+            policy.get("secondary_verification_mode") or policy.get("crypto_verification_mode") or "conservative_probe"
+        ).strip().lower()
+
         # Unified secondary verification: hash comparison if before_state available, otherwise sampled zero check
         if before_state and before_state.get("ok"):
-            try:
-                policy = load_policy()
-            except Exception:
-                policy = {}
-            crypto_probe = verify_crypto_probe(device, policy.get("crypto_verification_mode", "conservative_probe"), before_state=before_state, sample_ratio=sample_ratio)
+            crypto_probe = verify_crypto_probe(device, secondary_mode, before_state=before_state, sample_ratio=sample_ratio)
             if not crypto_probe.get("ok"):
                 return {
                     "ok": False,
@@ -681,7 +687,7 @@ def verification_for_method(device, interface_type, method, execution, before_st
             else:
                 primary_result["details"]["secondary_status"] = "PASSED_HASH_COMPARISON"
             primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_hash_comparison")
-        else:
+        elif secondary_mode not in {"disabled", "controller_only"}:
             secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio)
             if not secondary_result.get("ok"):
                 return {
@@ -697,6 +703,10 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["secondary_status"] = "PASSED_SAMPLED_ZERO_CHECK"
             primary_result["details"]["verification_level"] = "sampled_zero_check"
             primary_result["details"]["sample_ratio"] = sample_ratio
+        else:
+            # Secondary verification disabled by policy; rely on primary verification only
+            primary_result["details"]["secondary_status"] = "SKIPPED"
+            primary_result["details"]["verification_level"] = "primary_verification_only"
 
         # Capture SMART baseline after secondary verification to leverage natural delay from read pass
         smart_metrics = get_smart_data(device)

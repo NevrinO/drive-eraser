@@ -357,13 +357,17 @@
               <input type="checkbox" id="writeMarkerCheckbox" name="write_marker" checked>
               <span>Write post-erase marker</span>
             </label>
-            <label style="display: flex; align-items: flex-start; gap: 8px;">
-              <input type="checkbox" id="fullVerifyCheckbox" name="full_verification">
-              <div>
-                <span>100% verification (slower)</span>
-                <small class="text-muted-xs" style="display: block; margin-top: 4px; color: var(--color-warning);">This will significantly increase wipe time on large drives</small>
-              </div>
+            <label id="perDriveVerificationLabel">
+              <span>Secondary Verification Sample Coverage</span>
+              <select id="perDriveVerificationMode" name="per_drive_verification_mode">
+                <option value="sampled">10% sampled</option>
+                <option value="full">100% full</option>
+              </select>
+              <small class="text-muted-xs" style="display: block; margin-top: 4px; color: var(--color-warning);">Full coverage will significantly increase wipe time on large drives</small>
             </label>
+            <div id="secondaryVerificationDisabledNote" class="text-muted-xs hidden" style="margin-top: 4px; color: var(--color-warning);">
+              Secondary verification is disabled globally. Only primary verification will run.
+            </div>
           </div>
 
           <div class="confirmation-section">
@@ -761,13 +765,13 @@
 
             <div class="modal-section-header">Verification Mode</div>
             <label>
-              Crypto Verification Mode
-              <select id="crypto_verification_mode" name="crypto_verification_mode">
-                <option value="conservative_probe">Conservative Probe (recommended)</option>
-                <option value="full_verify">Full Verify (slower, more thorough)</option>
-                <option value="disabled">Disabled (no verification)</option>
+              Post-Wipe Secondary Verification
+              <select id="secondary_verification_mode" name="secondary_verification_mode">
+                <option value="conservative_probe">Hash or zero check probe (10% sampled)</option>
+                <option value="full_verify">Full drive verification (100%)</option>
+                <option value="disabled">Skip secondary verification</option>
               </select>
-              <small class="text-muted-xs">Controls post-wipe verification behavior for crypto/block erase methods</small>
+              <small class="text-muted-xs">Additional verification pass after the drive reports a successful erase</small>
             </label>
 
             <div class="modal-section-header">Performance Settings</div>
