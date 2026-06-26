@@ -63,6 +63,7 @@ def _centralized_signal_handler(signum, frame):
     disk_ops._handle_discovery_signal(signum, frame)
     udev_listener.stop_udev_listener()
     stop_smart_test_update_thread()
+    disk_ops.stop_extended_smart_pool(wait=True)
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")

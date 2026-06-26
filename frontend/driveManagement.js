@@ -9,20 +9,36 @@ const lastUpdated = document.getElementById("lastUpdated");
 
 // Enclosure data for workbench grouping
 let workbenchEnclosures = {};
+let workbenchEnclosuresFetchedAt = 0;
+let workbenchEnclosuresPromise = null;
+const ENCLOSURE_CACHE_TTL_MS = 60000;
 
-// Load enclosures for workbench grouping
+// Load enclosures for workbench grouping (cached; static config changes rarely)
 async function loadEnclosuresForWorkbench() {
-  try {
-    const response = await safeFetch("/api/admin/enclosures");
-    if (!response.ok) return;
-    const data = await response.json();
-    workbenchEnclosures = {};
-    (data.enclosures || []).forEach(enc => {
-      workbenchEnclosures[enc.id] = enc;
-    });
-  } catch (e) {
-    console.error("Failed to load enclosures for workbench:", e);
+  const now = Date.now();
+  if (now - workbenchEnclosuresFetchedAt < ENCLOSURE_CACHE_TTL_MS) {
+    return;
   }
+  if (workbenchEnclosuresPromise) {
+    return workbenchEnclosuresPromise;
+  }
+  workbenchEnclosuresPromise = (async () => {
+    try {
+      const response = await safeFetch("/api/admin/enclosures");
+      if (!response.ok) return;
+      const data = await response.json();
+      workbenchEnclosures = {};
+      (data.enclosures || []).forEach(enc => {
+        workbenchEnclosures[enc.id] = enc;
+      });
+      workbenchEnclosuresFetchedAt = Date.now();
+    } catch (e) {
+      console.error("Failed to load enclosures for workbench:", e);
+    } finally {
+      workbenchEnclosuresPromise = null;
+    }
+  })();
+  return workbenchEnclosuresPromise;
 }
 
 if (!baysGrid) {

@@ -52,14 +52,26 @@ def get_discovery_max_workers():
     except Exception:
         return _DISCOVERY_MAX_WORKERS
 
+
+def get_background_smart_max_workers():
+    """Get the maximum number of workers for background extended SMART collection."""
+    try:
+        policy = load_policy(get_config_dir())
+        workers = policy.get("background_smart_max_workers", 4)
+        # Clamp to reasonable bounds for background load
+        return max(1, min(workers, 8))
+    except Exception:
+        return 4
+
+
 # Medium #34: Global flag for discovery interruption
 _discovery_interrupted = False
 _discovery_interrupt_lock = threading.Lock()
 
-# Phase 1: Background extended SMART collection thread tracking
-_background_smart_thread = None
-_background_smart_lock = threading.Lock()
-_background_smart_stop_event = threading.Event()
+# Phase 1: Persistent background extended SMART collection worker pool
+_EXTENDED_SMART_EXECUTOR = None
+_EXTENDED_SMART_LOCK = threading.Lock()
+_EXTENDED_SMART_PENDING = set()
 _shutdown_requested = False
 _shutdown_lock = threading.Lock()
 
@@ -78,7 +90,7 @@ def _check_discovery_interrupted():
         return _discovery_interrupted
 
 def invalidate_drive_cache(device=None):
-    """Invalidate cached per-device drive data.
+    """Invalidate cached per-device drive data and pending background SMART tasks.
 
     Args:
         device: Specific device node (e.g. /dev/sda) to invalidate, or None to clear all.
@@ -89,6 +101,13 @@ def invalidate_drive_cache(device=None):
         else:
             for key in [k for k in _DRIVE_DATA_CACHE if k[1] == device]:
                 del _DRIVE_DATA_CACHE[key]
+    # Clear pending background SMART keys so the affected drives can be re-enqueued
+    with _EXTENDED_SMART_LOCK:
+        if device is None:
+            _EXTENDED_SMART_PENDING.clear()
+        else:
+            for key in [k for k in _EXTENDED_SMART_PENDING if k[1] == device]:
+                _EXTENDED_SMART_PENDING.discard(key)
 
 # --- PROGRAMMATIC OS DRIVE DETECTION AND OVERRIDES ---
 
@@ -553,118 +572,144 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
     finally:
         executor.shutdown(wait=False)
 
-def _collect_extended_smart_background(drive_list, passphrase):
-    """Background thread to collect extended SMART data for drives with smart_polling: true.
+def _get_extended_smart_executor():
+    """Lazy-initialize the persistent background extended SMART thread pool."""
+    global _EXTENDED_SMART_EXECUTOR
+    with _shutdown_lock:
+        shutdown_requested = _shutdown_requested
+    with _EXTENDED_SMART_LOCK:
+        if _EXTENDED_SMART_EXECUTOR is not None:
+            return _EXTENDED_SMART_EXECUTOR
+        if shutdown_requested:
+            return None
+        workers = get_background_smart_max_workers()
+        _EXTENDED_SMART_EXECUTOR = ThreadPoolExecutor(
+            max_workers=workers,
+            thread_name_prefix="ext-smart"
+        )
+        logging.getLogger(__name__).info(f"Started background extended SMART pool with {workers} workers")
+        return _EXTENDED_SMART_EXECUTOR
 
-    Iterates through drives with smart_polling: true flag, collects full SMART data
-    using get_smart_data() with -x flag, updates cache, sets smart_polling: false,
-    and broadcasts WebSocket event with updated drive data.
 
-    Args:
-        drive_list: List of (cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number) tuples
-        passphrase: Wipe passphrase for marker verification
-    """
+def stop_extended_smart_pool(wait=True):
+    """Shut down the persistent background extended SMART pool."""
+    global _EXTENDED_SMART_EXECUTOR
+    with _EXTENDED_SMART_LOCK:
+        if _EXTENDED_SMART_EXECUTOR is not None:
+            _EXTENDED_SMART_EXECUTOR.shutdown(wait=wait)
+            _EXTENDED_SMART_EXECUTOR = None
+            logging.getLogger(__name__).info("Stopped background extended SMART pool")
+        # Clear pending set so cancelled futures do not leak entries
+        _EXTENDED_SMART_PENDING.clear()
+
+
+def _process_single_drive_extended_smart(item, passphrase):
+    """Collect extended SMART data for a single drive and update the cache."""
+    cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number = item
     logger = logging.getLogger(__name__)
-    for cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number in drive_list:
-        # Check if stop event is set (concurrent discovery cancellation)
-        if _background_smart_stop_event.is_set():
-            logger.info("Background SMART collection stopped due to concurrent discovery")
-            break
-
-        # Check if shutdown was requested (SIGTERM/SIGINT)
+    try:
+        # Check if shutdown was requested
         with _shutdown_lock:
             if _shutdown_requested:
-                logger.info("Background SMART collection stopped due to shutdown request")
-                break
-
-        try:
-            # Check if device still exists (may have been removed during polling)
-            if not os.path.exists(dev_node):
-                logger.info(f"Device {dev_node} removed during background SMART collection, skipping")
-                continue
-
-            # Collect full extended SMART data
-            command_diagnostics = {}
-            smart = get_smart_data(dev_node, command_diagnostics)
-            interface_type = detect_interface_type(resolved_path or configured_path, dev_node, configured_type, smart.get("raw"))
-            capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
-            marker_status = read_marker_status(dev_node, interface_type, passphrase)
-
-            if marker_status.get("status") == "checksum_valid":
-                is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
-                marker_status["is_pristine"] = is_pristine
-                marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
-
-            health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
-            recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
-            drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
-
-            # Record intake snapshot now that we have full data
-            serial = smart.get("serial")
-            if serial:
-                try:
-                    record_intake_snapshot(serial, smart, recommendation, health_score=health_score)
-                except Exception as e:
-                    logger.warning(f"Failed to record intake snapshot for {serial}: {e}")
-
-            # Build full payload with smart_polling: false
-            payload = {
-                "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
-                "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
-                "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
-                "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
-                "smart": {
-                    "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
-                    "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
-                    "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
-                    "penalty_breakdown": penalty_breakdown, "smart_polling": False
-                }
-            }
-
-            # Update cache with full data
-            _store_drive_payload(cache_key, payload)
-            logger.info(f"Background extended SMART collection completed for {dev_node}")
-
-            # Broadcast WebSocket event with updated SMART data
-            if _websocket_manager:
-                try:
-                    _websocket_manager.emit('smart_data_updated', {
-                        'event': 'smart_data_updated',
-                        'device': dev_node,
-                        'enclosure_id': enclosure_id,
-                        'slot_number': slot_number,
-                        'smart': payload.get('smart'),
-                        'health_score': payload.get('health_score'),
-                        'recommendation': payload.get('recommendation')
-                    })
-                    logger.debug(f"Broadcasted SMART data update for {dev_node}")
-                except Exception as e:
-                    logger.warning(f"Failed to broadcast SMART data update for {dev_node}: {e}")
-
-        except Exception as e:
-            logger.warning(f"Background extended SMART collection failed for {dev_node}: {e}")
-
-def _start_background_smart_thread(drives_needing_extended_smart, passphrase):
-    """Cancel any running background SMART thread and start a new one for the given drives."""
-    global _background_smart_thread
-    with _background_smart_lock:
-        if _background_smart_thread and _background_smart_thread.is_alive():
-            _background_smart_stop_event.set()
-            _background_smart_thread.join(timeout=5.0)
-            if _background_smart_thread.is_alive():
-                logging.getLogger(__name__).warning("Background SMART thread did not stop in time, skipping new background thread")
-                _background_smart_stop_event.clear()
+                logger.info(f"Skipping extended SMART for {dev_node}, shutdown requested")
                 return
-            _background_smart_stop_event.clear()
-        if drives_needing_extended_smart:
-            _background_smart_thread = threading.Thread(
-                target=_collect_extended_smart_background,
-                args=(drives_needing_extended_smart, passphrase),
-                name="extended-smart-collection",
-                daemon=True
-            )
-            _background_smart_thread.start()
-            logging.getLogger(__name__).info(f"Started background extended SMART collection for {len(drives_needing_extended_smart)} drives")
+
+        # Avoid redundant work if another task already cached this drive
+        cached = _get_cached_drive_payload(cache_key)
+        if cached is not None and not cached.get("smart", {}).get("smart_polling", True):
+            logger.debug(f"Skipping extended SMART for {dev_node}, already cached")
+            return
+
+        # Check if device still exists
+        if not os.path.exists(dev_node):
+            logger.info(f"Device {dev_node} removed during background SMART collection, skipping")
+            return
+
+        # Collect full extended SMART data
+        command_diagnostics = {}
+        smart = get_smart_data(dev_node, command_diagnostics)
+        interface_type = detect_interface_type(resolved_path or configured_path, dev_node, configured_type, smart.get("raw"))
+        capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
+        marker_status = read_marker_status(dev_node, interface_type, passphrase)
+
+        if marker_status.get("status") == "checksum_valid":
+            is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
+            marker_status["is_pristine"] = is_pristine
+            marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
+
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
+        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+        drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
+
+        # Record intake snapshot now that we have full data
+        serial = smart.get("serial")
+        if serial:
+            try:
+                record_intake_snapshot(serial, smart, recommendation, health_score=health_score)
+            except Exception as e:
+                logger.warning(f"Failed to record intake snapshot for {serial}: {e}")
+
+        # Build full payload with smart_polling: false
+        payload = {
+            "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
+            "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
+            "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
+            "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
+            "smart": {
+                "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
+                "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
+                "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+                "penalty_breakdown": penalty_breakdown, "smart_polling": False
+            }
+        }
+
+        # Update cache with full data
+        _store_drive_payload(cache_key, payload)
+        logger.info(f"Background extended SMART collection completed for {dev_node}")
+
+        # Broadcast WebSocket event with updated SMART data
+        if _websocket_manager:
+            try:
+                _websocket_manager.emit('smart_data_updated', {
+                    'event': 'smart_data_updated',
+                    'device': dev_node,
+                    'enclosure_id': enclosure_id,
+                    'slot_number': slot_number,
+                    'smart': payload.get('smart'),
+                    'health_score': payload.get('health_score'),
+                    'recommendation': payload.get('recommendation')
+                })
+                logger.info(f"Broadcasted SMART data update for {dev_node}")
+            except Exception as e:
+                logger.warning(f"Failed to broadcast SMART data update for {dev_node}: {e}")
+
+    except Exception as e:
+        logger.warning(f"Background extended SMART collection failed for {dev_node}: {e}")
+    finally:
+        with _EXTENDED_SMART_LOCK:
+            _EXTENDED_SMART_PENDING.discard(cache_key)
+
+
+def _submit_drive_for_extended_smart(item, passphrase):
+    """Submit a drive for background extended SMART collection if not already pending."""
+    cache_key = item[0]
+    with _shutdown_lock:
+        if _shutdown_requested:
+            return
+    with _EXTENDED_SMART_LOCK:
+        if cache_key in _EXTENDED_SMART_PENDING:
+            return
+        _EXTENDED_SMART_PENDING.add(cache_key)
+    try:
+        executor = _get_extended_smart_executor()
+        if executor is None:
+            with _EXTENDED_SMART_LOCK:
+                _EXTENDED_SMART_PENDING.discard(cache_key)
+            return
+        executor.submit(_process_single_drive_extended_smart, item, passphrase)
+    except RuntimeError:
+        with _EXTENDED_SMART_LOCK:
+            _EXTENDED_SMART_PENDING.discard(cache_key)
 
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
     # Medium #35: Discovery operations are read-only (no device writes/modifications).
@@ -841,9 +886,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
             _collect_pending_serial(pending, passphrase, use_identity_only=True)
 
-    # Phase 1: Start background thread for extended SMART collection
-    # Collect drives with smart_polling: true flag
-    drives_needing_extended_smart = []
+    # Phase 1: Submit drives needing extended SMART to the persistent worker pool
     for bay_info in results:
         if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
             dev_node = bay_info.get("device")
@@ -855,9 +898,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
             configured_type = bay_info.get("interface_type")
             enclosure_id = bay_info.get("enclosure_id")
             slot_number = bay_info.get("display_number")
-            drives_needing_extended_smart.append((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number))
-
-    _start_background_smart_thread(drives_needing_extended_smart, passphrase)
+            _submit_drive_for_extended_smart((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number), passphrase)
 
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)
@@ -994,9 +1035,7 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
             logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
             _collect_pending_serial(pending, passphrase, use_identity_only=True)
 
-    # Phase 1: Start background thread for extended SMART collection
-    # Collect drives with smart_polling: true flag
-    drives_needing_extended_smart = []
+    # Phase 1: Submit drives needing extended SMART to the persistent worker pool
     for bay_info in results:
         if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
             dev_node = bay_info.get("device")
@@ -1009,9 +1048,7 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
             configured_type = bay_info.get("interface_type")
             enclosure_id = bay_info.get("enclosure_id")
             slot_number = bay_info.get("display_number")
-            drives_needing_extended_smart.append((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number))
-
-    _start_background_smart_thread(drives_needing_extended_smart, passphrase)
+            _submit_drive_for_extended_smart((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number), passphrase)
 
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)

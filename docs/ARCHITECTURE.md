@@ -242,3 +242,14 @@
 ## Workbench Display Layout
 - To ensure optimal viewing on standard 1080p and touch-screen monitors, the Workbench Tab bay layout is constrained to exactly **4 columns per row** maximum, with excess cards spilling down to subsequent rows.
 - Workbench cards must display their physical descriptive labels next to their machine IDs (e.g. `BAY2 (Workbench Slot A)`).
+
+## Background SMART Collection Cache Invalidation Race (Deferred)
+- **Context**: The background extended SMART worker updates the per-drive cache via `_store_drive_payload`. If the cache is invalidated (e.g., by a hot-plug udev event or a bay mapping change) while a `smartctl -x` task is already in flight, the task will still write its result when it completes, resetting the 10-minute cache TTL with data that predates the invalidation event.
+- **Impact**: Worst-case stale data can be served for up to the cache TTL (10 minutes) before the next natural refresh or invalidation.
+- **Reason for deferral**: The race is a pre-existing edge case unrelated to the churn fix and is left for a future pass to keep the worker refactor focused.
+- **Future fix**: Add a generation/version counter to cache entries and only store if the generation has not advanced since the task was enqueued.
+
+## Background SMART Retry Behavior
+- **Current decision (Option A)**: Immediate retry on next discovery. If a background `smartctl -x` task fails, the cache retains `smart_polling: true`, so the next `/api/drives` poll will re-enqueue the drive and the worker will try again.
+- **Future option (Option B)**: Short backoff. Track `last_failed_at` per drive in memory and skip re-enqueueing until a backoff window (e.g., 30 seconds, doubling up to a cap) has passed. This avoids hammering a flaky or slow drive at the cost of a small in-memory state tracker.
+- **Rationale**: Option A keeps the implementation minimal and avoids extra state. Option B is reserved for future refinement if retry noise becomes a problem.

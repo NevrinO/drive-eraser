@@ -31,7 +31,8 @@ class PollingFilter(logging.Filter):
             is_poll_endpoint = any(x in clean_msg for x in [
                 "GET /api/drives",
                 "GET /api/admin/metrics",
-                "GET /api/erase/history"
+                "GET /api/erase/history",
+                "GET /api/admin/enclosures"
             ])
             
             if is_poll_endpoint:

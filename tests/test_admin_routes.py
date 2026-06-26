@@ -215,6 +215,17 @@ class TestAdminRoutes:
         data = json.loads(response.data)
         assert data["status"] == "success"
 
+    def test_admin_policy_post_update_background_smart_workers_restarts_pool(self, admin_session):
+        """Test that changing background_smart_max_workers restarts the extended SMART pool."""
+        import routes.admin_routes as admin_module
+        with patch.object(admin_module, 'stop_extended_smart_pool') as mock_stop:
+            payload = {"background_smart_max_workers": 6}
+            response = admin_session.post('/api/admin/policy', json=payload)
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["status"] == "success"
+            mock_stop.assert_called_once()
+
     def test_admin_triage_config_get(self, admin_session):
         """Test GET triage config endpoint."""
         with patch('routes.admin_routes.load_policy') as mock_load:

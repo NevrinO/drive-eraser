@@ -31,7 +31,7 @@ from device_discovery import (
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
-from disk_ops import invalidate_drive_cache
+from disk_ops import invalidate_drive_cache, stop_extended_smart_pool
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
@@ -469,7 +469,8 @@ def admin_policy():
                     return jsonify({"error": error_msg}), 400
             
             # Apply mutations after validation passes
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
+            old_background_smart_max_workers = current_policy.get("background_smart_max_workers")
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "crypto_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]
@@ -489,6 +490,10 @@ def admin_policy():
             # Passphrase change invalidates marker HMAC verification results in drive cache
             if lan_passphrase_changed or wipe_passphrase_changed:
                 invalidate_drive_cache()
+            
+            # Restart the background SMART pool so a changed worker count takes effect immediately
+            if "background_smart_max_workers" in payload and current_policy.get("background_smart_max_workers") != old_background_smart_max_workers:
+                stop_extended_smart_pool(wait=False)
             
             logger.info("Operational policies modified successfully by administrator.")
             return jsonify({"status": "success", "message": "System policies updated successfully."}), 200

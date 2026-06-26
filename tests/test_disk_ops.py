@@ -649,5 +649,146 @@ class TestCacheInvalidationTriggers:
         assert len(_DRIVE_DATA_CACHE) == 0
 
 
+class TestExtendedSmartPool:
+    """Test persistent background extended SMART collection pool."""
+
+    def setup_method(self):
+        """Reset pool state before each test."""
+        import disk_ops
+        disk_ops.stop_extended_smart_pool(wait=False)
+        with disk_ops._shutdown_lock:
+            disk_ops._shutdown_requested = False
+        with disk_ops._EXTENDED_SMART_LOCK:
+            disk_ops._EXTENDED_SMART_PENDING.clear()
+
+    def teardown_method(self):
+        """Stop pool after each test."""
+        import disk_ops
+        disk_ops.stop_extended_smart_pool(wait=False)
+
+    def test_get_background_smart_max_workers_default(self):
+        """Default background worker count is 4."""
+        from disk_ops import get_background_smart_max_workers
+        with patch('disk_ops.load_policy') as mock_load_policy:
+            mock_load_policy.return_value = {}
+            assert get_background_smart_max_workers() == 4
+
+    def test_get_background_smart_max_workers_clamped(self):
+        """Worker count is clamped to [1, 8]."""
+        from disk_ops import get_background_smart_max_workers
+        with patch('disk_ops.load_policy') as mock_load_policy:
+            mock_load_policy.return_value = {"background_smart_max_workers": 50}
+            assert get_background_smart_max_workers() == 8
+            mock_load_policy.return_value = {"background_smart_max_workers": 0}
+            assert get_background_smart_max_workers() == 1
+
+    def test_submit_drive_adds_to_pending(self):
+        """Submitting a drive adds its cache key to the pending set."""
+        from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with patch('disk_ops._get_extended_smart_executor'):
+            _submit_drive_for_extended_smart(item, "pass")
+            with _EXTENDED_SMART_LOCK:
+                assert item[0] in _EXTENDED_SMART_PENDING
+
+    def test_submit_same_drive_skipped(self):
+        """Duplicate submissions for the same cache key are ignored."""
+        from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with patch('disk_ops._get_extended_smart_executor'):
+            _submit_drive_for_extended_smart(item, "pass")
+            _submit_drive_for_extended_smart(item, "pass")
+            with _EXTENDED_SMART_LOCK:
+                assert len(_EXTENDED_SMART_PENDING) == 1
+
+    def test_shutdown_prevents_new_submissions(self):
+        """When shutdown is requested, drives are not added to the pending set."""
+        import disk_ops
+        from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
+        with disk_ops._shutdown_lock:
+            disk_ops._shutdown_requested = True
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with patch('disk_ops._get_extended_smart_executor'):
+            _submit_drive_for_extended_smart(item, "pass")
+            with _EXTENDED_SMART_LOCK:
+                assert item[0] not in _EXTENDED_SMART_PENDING
+
+    def test_process_single_drive_skips_when_cached(self):
+        """Tasks skip processing when the cache already has a finished payload."""
+        import disk_ops
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with patch('disk_ops._get_cached_drive_payload') as mock_get_cache, \
+             patch('disk_ops._store_drive_payload') as mock_store:
+            mock_get_cache.return_value = {"smart": {"smart_polling": False}}
+            disk_ops._process_single_drive_extended_smart(item, "pass")
+            mock_store.assert_not_called()
+
+    def test_process_single_drive_success(self):
+        """A successful task stores the payload and broadcasts a WebSocket event."""
+        import disk_ops
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with patch('disk_ops.os.path.exists', return_value=True), \
+             patch('disk_ops._get_cached_drive_payload', return_value=None), \
+             patch('disk_ops.get_smart_data', return_value={"status": "OK", "serial": "S1", "model": "M1", "capacity_str": "1TB", "data_written_raw": 0, "raw": {}}), \
+             patch('disk_ops.detect_interface_type', return_value="sas_sata"), \
+             patch('disk_ops.detect_drive_capabilities', return_value={"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}), \
+             patch('disk_ops.read_marker_status', return_value={"status": "none"}), \
+             patch('disk_ops.calculate_drive_health_score', return_value=(95, {})), \
+             patch('disk_ops.get_drive_recommendation', return_value={"status": "OK", "comment": "-"}), \
+             patch('disk_ops.is_drive_ssd', return_value=False), \
+             patch('disk_ops.record_intake_snapshot'), \
+             patch('disk_ops._store_drive_payload') as mock_store, \
+             patch('disk_ops._websocket_manager') as mock_ws:
+            disk_ops._process_single_drive_extended_smart(item, "pass")
+            mock_store.assert_called_once()
+            mock_ws.emit.assert_called_once()
+
+    def test_stop_extended_smart_pool(self):
+        """Stopping the pool clears the executor reference."""
+        import disk_ops
+        executor = disk_ops._get_extended_smart_executor()
+        assert executor is not None
+        disk_ops.stop_extended_smart_pool(wait=False)
+        assert disk_ops._EXTENDED_SMART_EXECUTOR is None
+
+    def test_stop_extended_smart_pool_clears_pending(self):
+        """Stopping the pool clears the pending set so cancelled tasks do not leak."""
+        import disk_ops
+        from disk_ops import _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
+        item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        with _EXTENDED_SMART_LOCK:
+            _EXTENDED_SMART_PENDING.add(item[0])
+        disk_ops.stop_extended_smart_pool(wait=False)
+        with _EXTENDED_SMART_LOCK:
+            assert item[0] not in _EXTENDED_SMART_PENDING
+
+    def test_invalidate_drive_cache_clears_pending_all(self):
+        """Cache invalidation clears all pending background SMART keys."""
+        import disk_ops
+        from disk_ops import _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK, invalidate_drive_cache
+        item1 = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        item2 = (("path", "/dev/sdb"), "/dev/sdb", "/dev/sdb", "/dev/sdb", "sas_sata", "enc2", 1)
+        with _EXTENDED_SMART_LOCK:
+            _EXTENDED_SMART_PENDING.add(item1[0])
+            _EXTENDED_SMART_PENDING.add(item2[0])
+        invalidate_drive_cache()
+        with _EXTENDED_SMART_LOCK:
+            assert len(_EXTENDED_SMART_PENDING) == 0
+
+    def test_invalidate_drive_cache_clears_pending_specific_device(self):
+        """Cache invalidation for a specific device removes only that device's pending key."""
+        import disk_ops
+        from disk_ops import _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK, invalidate_drive_cache
+        item1 = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
+        item2 = (("path", "/dev/sdb"), "/dev/sdb", "/dev/sdb", "/dev/sdb", "sas_sata", "enc2", 1)
+        with _EXTENDED_SMART_LOCK:
+            _EXTENDED_SMART_PENDING.add(item1[0])
+            _EXTENDED_SMART_PENDING.add(item2[0])
+        invalidate_drive_cache(device="/dev/sda")
+        with _EXTENDED_SMART_LOCK:
+            assert item1[0] not in _EXTENDED_SMART_PENDING
+            assert item2[0] in _EXTENDED_SMART_PENDING
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
