@@ -2,16 +2,80 @@
 import os
 import json
 import re
+import time
+from threading import Lock
 from flask import Blueprint, jsonify, request
 from app_config import logger, limiter
-from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
+from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map, DRIVE_DATA_CACHE_TTL
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
 from routes.admin_routes import require_admin_auth
 from disk_ops import get_os_by_path, invalidate_drive_cache
 from device_discovery import invalidate_master_slot_cache
-from smart_parsing import get_smart_data
+from smart_parsing import get_smart_identity
 
 bay_mapping_bp = Blueprint('bay_mapping_routes', __name__)
+
+# Performance: cache identity-only SMART data for unmapped drive listings.
+# The list of unmapped devices is rebuilt from /dev/disk/by-path on every request,
+# but per-device identity data is expensive enough to cache. Device nodes are the
+# natural cache key because identity attributes (model/serial/capacity) do not
+# change while a drive remains physically present.
+_UNMAPPED_DRIVE_CACHE = {}  # dev_node -> {'data': dict, 'timestamp': float}
+_UNMAPPED_DRIVE_CACHE_LOCK = Lock()
+_UNMAPPED_DRIVE_CACHE_TTL = DRIVE_DATA_CACHE_TTL  # 10 minutes
+
+
+def _get_cached_unmapped_drive(dev_node):
+    """Return cached unmapped drive identity data if still fresh, else None."""
+    with _UNMAPPED_DRIVE_CACHE_LOCK:
+        entry = _UNMAPPED_DRIVE_CACHE.get(dev_node)
+        if entry and (time.time() - entry['timestamp']) < _UNMAPPED_DRIVE_CACHE_TTL:
+            return entry['data']
+    return None
+
+
+def _is_valid_identity_result(data):
+    """Return True if `data` contains actual identity data (not a failure sentinel).
+
+    `get_smart_identity` returns an empty template when smartctl is missing, times
+    out, or returns invalid JSON. Caching that sentinel would hide transient failures
+    for the full TTL, so we only cache results that carry a real model/serial or raw
+    smartctl output.
+    """
+    if not data or not isinstance(data, dict):
+        return False
+    return bool(
+        data.get("model") or data.get("serial") or data.get("raw")
+    )
+
+
+def _set_cached_unmapped_drive(dev_node, data):
+    """Store or refresh identity data for an unmapped drive, pruning stale entries.
+
+    Failure sentinels are not stored; callers must retry on the next request.
+    """
+    if not _is_valid_identity_result(data):
+        return
+    now = time.time()
+    with _UNMAPPED_DRIVE_CACHE_LOCK:
+        for key in [k for k, v in _UNMAPPED_DRIVE_CACHE.items()
+                    if (now - v['timestamp']) >= _UNMAPPED_DRIVE_CACHE_TTL]:
+            del _UNMAPPED_DRIVE_CACHE[key]
+        _UNMAPPED_DRIVE_CACHE[dev_node] = {'data': data, 'timestamp': now}
+
+
+def invalidate_unmapped_drive_cache(device=None):
+    """Clear the unmapped-drive identity cache.
+
+    Args:
+        device: Optional device node. If provided, only that entry is removed;
+                otherwise the entire cache is cleared.
+    """
+    with _UNMAPPED_DRIVE_CACHE_LOCK:
+        if device is None:
+            _UNMAPPED_DRIVE_CACHE.clear()
+        else:
+            _UNMAPPED_DRIVE_CACHE.pop(device, None)
 
 @bay_mapping_bp.route("/api/admin/bay-map")
 @require_admin_auth
@@ -77,8 +141,13 @@ def get_unmapped_drives():
                     
         for by_path, dev_node in path_to_dev.items():
             try:
-                smart = get_smart_data(dev_node)
-                
+                # Use cached identity-only data when available; full extended SMART is
+                # unnecessary here and was the cause of the 60s admin page load.
+                smart = _get_cached_unmapped_drive(dev_node)
+                if smart is None:
+                    smart = get_smart_identity(dev_node)
+                    _set_cached_unmapped_drive(dev_node, smart)
+
                 is_os = False
                 if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
                     is_os = True
@@ -298,7 +367,9 @@ def auto_detect_bays():
         invalidate_drive_cache()
         # Also invalidate master slot map cache to refresh hardware topology
         invalidate_master_slot_cache()
-        
+        # The set of unmapped devices may have changed; clear identity cache too
+        invalidate_unmapped_drive_cache()
+
         logger.info(f"Auto-detect bays updated {updates_count} map elements out of {len(discovered_slots)} total discovered enclosures.")
         return jsonify({
             "status": "success",
@@ -353,6 +424,8 @@ def update_bay_map():
         invalidate_drive_cache()
         # Also invalidate master slot map cache to refresh hardware topology
         invalidate_master_slot_cache()
+        # The set of unmapped devices may have changed; clear identity cache too
+        invalidate_unmapped_drive_cache()
 
         logger.info("Enclosure bay map edited manually by administrator.")
         return jsonify({"status": "success", "message": "Bay mapping configuration updated successfully."}), 200

@@ -472,3 +472,11 @@ This prevents unclosed connection warnings that originate from SQLite's connecti
 ### 103. Consistent String Normalization for Comparisons
 - **Rule**: When comparing user input against a generated or canonical string, apply the same normalization to both sides before comparing.
 - **Guardrail**: If the backend lowercases/trims user input to enable case-insensitive or whitespace-tolerant matching, the expected/canonical string must also be normalized the same way before comparison. Returning a mixed-case expected string in error messages while comparing against a normalized version creates a hidden mismatch that breaks direct API callers and makes the error message misleading. Prefer comparing normalized versions while keeping the displayed hint in the original casing, or explicitly document that the comparison is strictly case-sensitive.
+
+### 104. Invalidate Derived-Data Caches When Source Mappings Change
+- **Rule**: When a cache stores data derived from a mutable mapping or configuration (e.g., device-to-bay mapping, user-to-role assignments), the cache must be invalidated whenever the source mapping changes.
+- **Guardrail**: If multiple caches exist for related data (e.g., full drive data and unmapped drive identity), ensure that every mutation path (admin save, auto-detect, hot-plug events) clears or versions the derived cache. Do not rely on a global `invalidate_*()` function that only clears one cache. Document which caches are intentionally persistent across mutations.
+
+### 105. Never Cache Failure Sentinels as Valid Data
+- **Rule**: When a function returns a sentinel object (e.g., an empty dict with null fields, a default "UNKNOWN" record) to indicate failure, do not store that sentinel in a TTL cache.
+- **Guardrail**: Before writing to a TTL cache, verify the result contains actual successful data (e.g., non-empty raw output, populated identity fields). If the result is a failure sentinel, treat the request as a cache miss and allow the next request to retry. Document the sentinel shape in the function contract so callers know what to check.

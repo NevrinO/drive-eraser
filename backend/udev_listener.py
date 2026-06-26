@@ -20,6 +20,7 @@ from device_discovery import (
     resolve_multipath_parent
 )
 from disk_ops import invalidate_drive_cache
+from routes.bay_mapping_routes import invalidate_unmapped_drive_cache
 from common import get_config_dir, load_policy
 
 # Runtime slot state: (enclosure_id, slot_number) -> device_info
@@ -240,6 +241,9 @@ def udev_event_listener_thread():
                         # Hardware topology caches (SAS expander, SCSI projections, master slot map) are NOT
                         # invalidated here because drive hot-plug does not change physical hardware topology
                         invalidate_drive_cache(final_dev_node)
+                        # A previously unknown or swapped device now appears under the same by-path;
+                        # clear its identity cache so the admin panel shows the new model/serial.
+                        invalidate_unmapped_drive_cache(final_dev_node)
 
                         with _runtime_slot_lock:
                             _runtime_slot_state[(enc_id, slot_num)] = {
@@ -271,6 +275,9 @@ def udev_event_listener_thread():
                 # Hardware topology caches (SAS expander, SCSI projections, master slot map) are NOT
                 # invalidated here because drive hot-plug does not change physical hardware topology
                 invalidate_drive_cache(final_dev_node)
+                # A removed device may reappear under the same by-path with new identity;
+                # clear its identity cache so the admin panel does not show stale data.
+                invalidate_unmapped_drive_cache(final_dev_node)
 
                 with _runtime_slot_lock:
                     for (enc_id, slot_num), state in list(_runtime_slot_state.items()):
