@@ -1,0 +1,1054 @@
+{
+  "total_issues": 55,
+  "completed": 0,
+  "pending": 55,
+  "groups": [
+    {
+      "id": "G1",
+      "pattern": "Performance: repeated disk I/O without caching",
+      "fix_shape": "Add TTL cache or file-mtime-based cache",
+      "issues": [
+        {
+          "id": "A16",
+          "title": "`verify_crypto_hash_comparison` Re-reads Unchanged Chunks Unnecessarily",
+          "file": "backend/crypto_verification.py",
+          "line": "736-769",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Performance",
+          "suggestion": "Pre-compute all-zeros hash once, skip re-reading chunks whose before-hash differs from it."
+        },
+        {
+          "id": "A1",
+          "title": "`load_policy()` Called on Every API Request",
+          "file": "backend/app.py",
+          "line": "32 (inside `security_gate` before_request hook)",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Add a TTL cache (e.g., `functools.lru_cache` with a TTL wrapper) or a file-mtime-based cache to avoid re-reading unchanged policy."
+        },
+        {
+          "id": "A21",
+          "title": "`get_discovery_max_workers` / `get_background_smart_max_workers` Load Policy on Every Call",
+          "file": "backend/disk_ops.py",
+          "line": "128-147",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Consider caching with short TTL or file-mtime check if discovery frequency increases."
+        },
+        {
+          "id": "C10",
+          "title": "`_job_interrupted` flag never reset after signal",
+          "file": "backend/job_management.py",
+          "line": "420-429",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Reset `_job_interrupted = False` at the start of each `run_erase_job` call, or use a per-job interruption flag instead of a module-level flag."
+        },
+        {
+          "id": "A31",
+          "title": "`bay_map.json` reloaded on every udev event",
+          "file": "backend/udev_listener.py",
+          "line": "212-216",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Cache with file mtime check or use inotify-based file watcher."
+        }
+      ],
+      "issue_ids": [
+        "A16",
+        "A1",
+        "A21",
+        "C10",
+        "A31"
+      ],
+      "files": [
+        "backend/app.py",
+        "backend/crypto_verification.py",
+        "backend/disk_ops.py",
+        "backend/job_management.py",
+        "backend/udev_listener.py"
+      ],
+      "weight": 18,
+      "difficulty_breakdown": {
+        "low": 1,
+        "medium": 4
+      },
+      "session_size": "large",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G2",
+      "pattern": "Performance: repeated disk I/O without caching",
+      "fix_shape": "Add TTL cache or file-mtime-based cache",
+      "issues": [
+        {
+          "id": "A32",
+          "title": "`_emit_update` double lock acquisition",
+          "file": "backend/zero_check_manager.py",
+          "line": "80, 104, 196",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Pass the status dict directly to `_emit_update` instead of re-reading it."
+        }
+      ],
+      "issue_ids": [
+        "A32"
+      ],
+      "files": [
+        "backend/zero_check_manager.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G3",
+      "pattern": "Concurrency: missing/improper locks",
+      "fix_shape": "Add locks around shared mutable state or restructure lock scope",
+      "issues": [
+        {
+          "id": "A2",
+          "title": "`smart_test_update_thread` Global Without Lock",
+          "file": "backend/app.py",
+          "line": "210-225 (`start_smart_test_update_thread` / `stop_smart_test_update_thread`)",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Concurrency",
+          "suggestion": "Add a `Lock` around the check-and-start sequence."
+        },
+        {
+          "id": "C8",
+          "title": "Signal Handler Uses `threading.Lock` — Potential Deadlock",
+          "file": "backend/disk_ops.py",
+          "line": "161-167",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Use `threading.Event` instead of `Lock`+boolean. `Event.set()` and `Event.is_set()` are lock-free and async-signal-safe in CPython."
+        }
+      ],
+      "issue_ids": [
+        "A2",
+        "C8"
+      ],
+      "files": [
+        "backend/app.py",
+        "backend/disk_ops.py"
+      ],
+      "weight": 6,
+      "difficulty_breakdown": {
+        "low": 1,
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G4",
+      "pattern": "TOCTOU: os.path.exists() pre-checks",
+      "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
+      "issues": [
+        {
+          "id": "A25",
+          "title": "`os.path.exists` TOCTOU patterns",
+          "file": "backend/job_management.py",
+          "line": "188, 311, 866, 905",
+          "severity": "advisory",
+          "difficulty": "trivial",
+          "category": "Concurrency",
+          "suggestion": "Use direct operation + exception handling (`try: os.rename(...) except FileNotFoundError: pass`)."
+        },
+        {
+          "id": "A19",
+          "title": "TOCTOU `os.path.exists` Patterns Throughout",
+          "file": "backend/disk_ops.py",
+          "line": "205, 223, 238, 251, 267, 499, 555, 567, 579, 585",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Concurrency",
+          "suggestion": "Replace pre-check patterns with direct `try/except (OSError, IOError)`."
+        },
+        {
+          "id": "A3",
+          "title": "`os.path.exists()` TOCTOU in Background Thread",
+          "file": "backend/app.py",
+          "line": "147 (inside `update_smart_test_status_background`)",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Remove the `os.path.exists` check and let `get_smart_test_status` handle the missing device, catching the exception."
+        },
+        {
+          "id": "C3",
+          "title": "`load_policy()` TOCTOU on File Existence",
+          "file": "backend/common.py",
+          "line": "396-397",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Remove `os.path.exists` check, attempt `open()` directly, catch `FileNotFoundError`."
+        },
+        {
+          "id": "A7",
+          "title": "`load_bay_map()` TOCTOU on File Existence",
+          "file": "backend/common.py",
+          "line": "510-511",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "DRY",
+          "suggestion": "Attempt `open()` directly, catch `FileNotFoundError`."
+        },
+        {
+          "id": "A10",
+          "title": "`get_data_dir()` / `get_config_dir()` TOCTOU Pattern",
+          "file": "backend/common.py",
+          "line": "291-300, 377-386",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Return the path without the isdir check, or handle errors at the point of use."
+        }
+      ],
+      "issue_ids": [
+        "A25",
+        "A19",
+        "A3",
+        "C3",
+        "A7",
+        "A10"
+      ],
+      "files": [
+        "backend/app.py",
+        "backend/common.py",
+        "backend/disk_ops.py",
+        "backend/job_management.py"
+      ],
+      "weight": 19,
+      "difficulty_breakdown": {
+        "trivial": 1,
+        "low": 1,
+        "medium": 4
+      },
+      "session_size": "large",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G5",
+      "pattern": "TOCTOU: os.path.exists() pre-checks",
+      "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
+      "issues": [
+        {
+          "id": "A30",
+          "title": "`os.path.exists` TOCTOU patterns",
+          "file": "backend/udev_listener.py",
+          "line": "82, 231",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Use direct `os.listdir()` in try/except `OSError`."
+        },
+        {
+          "id": "A35",
+          "title": "`os.path.exists` TOCTOU patterns",
+          "file": "backend/routes/admin_routes.py",
+          "line": "269, 389, 403, 407, 587, 611, 668, 2042, 2366, 2412",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Use direct operation + exception handling."
+        }
+      ],
+      "issue_ids": [
+        "A30",
+        "A35"
+      ],
+      "files": [
+        "backend/routes/admin_routes.py",
+        "backend/udev_listener.py"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "medium": 2
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G6",
+      "pattern": "Import hygiene: lazy/redundant imports",
+      "fix_shape": "Move imports to module level, remove duplicates",
+      "issues": [
+        {
+          "id": "A4",
+          "title": "Redundant Import in `security_gate`",
+          "file": "backend/app.py",
+          "line": "21",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Code Quality",
+          "suggestion": "Change to `from flask import request`."
+        },
+        {
+          "id": "A9",
+          "title": "`__import__(\"logging\")` Anti-Pattern in `load_bay_map`",
+          "file": "backend/common.py",
+          "line": "519, 531",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Use the module-level `logger` directly."
+        }
+      ],
+      "issue_ids": [
+        "A4",
+        "A9"
+      ],
+      "files": [
+        "backend/app.py",
+        "backend/common.py"
+      ],
+      "weight": 6,
+      "difficulty_breakdown": {
+        "low": 1,
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G7",
+      "pattern": "Non-atomic file writes",
+      "fix_shape": "Use tempfile + flush + fsync + os.replace() pattern",
+      "issues": [
+        {
+          "id": "C1",
+          "title": "`save_policy()` Non-Atomic Write",
+          "file": "backend/common.py",
+          "line": "475-481",
+          "severity": "critical",
+          "difficulty": "trivial",
+          "category": "Correctness",
+          "suggestion": "Apply same atomic write pattern as `save_bay_map()`: write to temp file, `f.flush()` + `os.fsync()`, then `os.replace()`."
+        }
+      ],
+      "issue_ids": [
+        "C1"
+      ],
+      "files": [
+        "backend/common.py"
+      ],
+      "weight": 1,
+      "difficulty_breakdown": {
+        "trivial": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G8",
+      "pattern": "Unbounded dict/list growth (memory leak)",
+      "fix_shape": "Use WeakValueDictionary or add cleanup on release",
+      "issues": [
+        {
+          "id": "C2",
+          "title": "`DEVICE_LOCKS` Dict Grows Unbounded",
+          "file": "backend/common.py",
+          "line": "23-36",
+          "severity": "critical",
+          "difficulty": "low",
+          "category": "Resource Management",
+          "suggestion": "Use `WeakValueDictionary` or add cleanup when locks are released. Alternatively, document as a known limitation given expected scale."
+        }
+      ],
+      "issue_ids": [
+        "C2"
+      ],
+      "files": [
+        "backend/common.py"
+      ],
+      "weight": 2,
+      "difficulty_breakdown": {
+        "low": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G9",
+      "pattern": "Dead code: unused functions/classes/CSS",
+      "fix_shape": "Remove dead code or wire it into a caller if the feature was intended",
+      "issues": [
+        {
+          "id": "A8",
+          "title": "`purge_old_certificates()` Never Called",
+          "file": "backend/common.py",
+          "line": "350-374",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Dead Code",
+          "suggestion": "Wire into same cleanup paths as `purge_old_logs()`, or remove if retention is handled elsewhere."
+        },
+        {
+          "id": "C12",
+          "title": "`get_runtime_slot_state()` is dead code (zero external callers)",
+          "file": "backend/udev_listener.py",
+          "line": "348-355",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Dead Code",
+          "suggestion": "Remove the function, or connect it to a consumer if the feature was intended."
+        }
+      ],
+      "issue_ids": [
+        "A8",
+        "C12"
+      ],
+      "files": [
+        "backend/common.py",
+        "backend/udev_listener.py"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "medium": 2
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G10",
+      "pattern": "Error swallowing: bare except / silent failures",
+      "fix_shape": "Add logging to except blocks, catch specific exceptions",
+      "issues": [
+        {
+          "id": "A11",
+          "title": "`POLICY_SCHEMA` Allows `additionalProperties: True`",
+          "file": "backend/common.py",
+          "line": "149",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Architecture",
+          "suggestion": "Consider `additionalProperties: False` for stricter validation, with explicit handling of all deprecated keys in migration logic."
+        },
+        {
+          "id": "A24",
+          "title": "`_auto_enqueue_zero_checks` Swallows Policy Load Errors Silently",
+          "file": "backend/disk_ops.py",
+          "line": "89-92",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Error Handling",
+          "suggestion": "Add `logging.getLogger(__name__).warning(f\"Failed to load policy for zero-check enqueue: {e}\")` in the except block."
+        },
+        {
+          "id": "A26",
+          "title": "Bare `except Exception: pass` in poll functions swallow all errors",
+          "file": "backend/job_management.py",
+          "line": "194, 209, 224, 239",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Concurrency",
+          "suggestion": "Add `logger.debug(f\"poll failed for {device}: {e}\")` in except blocks."
+        }
+      ],
+      "issue_ids": [
+        "A11",
+        "A24",
+        "A26"
+      ],
+      "files": [
+        "backend/common.py",
+        "backend/disk_ops.py",
+        "backend/job_management.py"
+      ],
+      "weight": 6,
+      "difficulty_breakdown": {
+        "low": 3
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G11",
+      "pattern": "DRY: duplicated logic across functions/files",
+      "fix_shape": "Extract shared helper function and update all call sites to use it",
+      "issues": [
+        {
+          "id": "A12",
+          "title": "Duplicated Offset Generation Logic",
+          "file": "backend/crypto_verification.py",
+          "line": "470-498 (`verify_sampled_zero_check`) and 591-619 (`capture_before_state`)",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "DRY",
+          "suggestion": "Extract `_generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes)` helper."
+        },
+        {
+          "id": "C9",
+          "title": "Massive Code Duplication Between `_collect_drive_data` and `_process_single_drive_extended_smart`",
+          "file": "backend/disk_ops.py",
+          "line": "299-358 vs 689-751",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Extract `_build_drive_payload(smart, interface_type, capabilities, marker_status, recommendation, health_score, penalty_breakdown, drive_type, command_diagnostics, smart_polling)` helper."
+        },
+        {
+          "id": "A18",
+          "title": "`_discover_drives_enclosure` and `_discover_drives_legacy` ~80% Duplicated",
+          "file": "backend/disk_ops.py",
+          "line": "821-993 vs 996-1147",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Extract shared logic into helpers: `_init_bay_info()`, `_build_path_to_dev()`, `_submit_extended_smart_for_results()`, `_finalize_discovery()`."
+        }
+      ],
+      "issue_ids": [
+        "A12",
+        "C9",
+        "A18"
+      ],
+      "files": [
+        "backend/crypto_verification.py",
+        "backend/disk_ops.py"
+      ],
+      "weight": 12,
+      "difficulty_breakdown": {
+        "medium": 3
+      },
+      "session_size": "medium",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G12",
+      "pattern": "Input validation gaps",
+      "fix_shape": "Validate input types, formats, and enforce size limits",
+      "issues": [
+        {
+          "id": "A28",
+          "title": "Stray line after END OF FILE marker",
+          "file": "backend/job_management.py",
+          "line": "938",
+          "severity": "advisory",
+          "difficulty": "trivial",
+          "category": "Code Quality",
+          "suggestion": "Remove the stray line."
+        },
+        {
+          "id": "A14",
+          "title": "No Size Limit on `offsets` List",
+          "file": "backend/crypto_verification.py",
+          "line": "488-498, 608-619",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Security",
+          "suggestion": "Cap `num_chunks` at a reasonable maximum (e.g., 1000)."
+        },
+        {
+          "id": "A39",
+          "title": "`bay` URL parameter not validated in zero-check endpoints",
+          "file": "backend/routes/drive_routes.py",
+          "line": "177, 208",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Validate `bay` against expected format (alphanumeric, reasonable length)."
+        }
+      ],
+      "issue_ids": [
+        "A28",
+        "A14",
+        "A39"
+      ],
+      "files": [
+        "backend/crypto_verification.py",
+        "backend/job_management.py",
+        "backend/routes/drive_routes.py"
+      ],
+      "weight": 9,
+      "difficulty_breakdown": {
+        "trivial": 1,
+        "medium": 2
+      },
+      "session_size": "medium",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G13",
+      "pattern": "Timing attack: == instead of hmac.compare_digest",
+      "fix_shape": "Replace == with hmac.compare_digest for hash/token comparisons",
+      "issues": [
+        {
+          "id": "A17",
+          "title": "Hash Comparison Uses `==` Instead of `hmac.compare_digest`",
+          "file": "backend/crypto_verification.py",
+          "line": "729",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Use `hmac.compare_digest` for defensive consistency, or document as intentional."
+        },
+        {
+          "id": "A36",
+          "title": "Session token comparison uses `!=` instead of `hmac.compare_digest`",
+          "file": "backend/routes/admin_routes.py",
+          "line": "153",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Security",
+          "suggestion": "Use `hmac.compare_digest(session_token, calculate_session_token(lan_passphrase))`."
+        }
+      ],
+      "issue_ids": [
+        "A17",
+        "A36"
+      ],
+      "files": [
+        "backend/crypto_verification.py",
+        "backend/routes/admin_routes.py"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "medium": 2
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G14",
+      "pattern": "Resource leaks in error paths",
+      "fix_shape": "Use context managers or close resources in except/finally blocks",
+      "issues": [
+        {
+          "id": "C11",
+          "title": "Log file handle leaked if write/flush fails after successful open",
+          "file": "backend/job_management.py",
+          "line": "482-490",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Use a context manager (`with open(...) as log_file:`) or close `log_file` in the except block before returning."
+        }
+      ],
+      "issue_ids": [
+        "C11"
+      ],
+      "files": [
+        "backend/job_management.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G15",
+      "pattern": "Information disclosure: str(e) in API responses",
+      "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
+      "issues": [
+        {
+          "id": "A34",
+          "title": "`str(e)` in API responses throughout (information disclosure)",
+          "file": "backend/routes/admin_routes.py",
+          "line": "178, 212, 263, 428, 446, 509, 577, 1008, 1049, 1353, 1558, 1582, 1644, 1694, 1720, 1780, 1812, 1871, 1914, 1941, 1967, 2027, 2051, 2345, 2494, 2587",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Security",
+          "suggestion": "Return generic error messages to clients; log detailed errors server-side."
+        },
+        {
+          "id": "A40",
+          "title": "`str(e)` in error responses",
+          "file": "backend/routes/drive_routes.py",
+          "line": "131, 205, 218",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Security",
+          "suggestion": "Return generic error messages; log details server-side."
+        }
+      ],
+      "issue_ids": [
+        "A34",
+        "A40"
+      ],
+      "files": [
+        "backend/routes/admin_routes.py",
+        "backend/routes/drive_routes.py"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "medium": 2
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G16",
+      "pattern": "Ungrouped: backend/app.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "A5",
+          "title": "`sys.exit(0)` in Signal Handler Exits with Success Code",
+          "file": "backend/app.py",
+          "line": "71",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Consider `sys.exit(130)` (conventional for SIGINT) or at minimum log a warning if jobs are still active before exiting."
+        },
+        {
+          "id": "A6",
+          "title": "Module-Level Side Effects Make Testing Fragile",
+          "file": "backend/app.py",
+          "line": "97, 100, 103, 109, 112, 228",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Consider a `create_app()` factory pattern or guard behind `if __name__ == \"__main__\"` with a separate WSGI entry point."
+        }
+      ],
+      "issue_ids": [
+        "A5",
+        "A6"
+      ],
+      "files": [
+        "backend/app.py"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "medium": 2
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G17",
+      "pattern": "Ungrouped: backend/crypto_verification.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "C6",
+          "title": "`capture_before_state()` Uses Raw `blockdev` Without Retry",
+          "file": "backend/crypto_verification.py",
+          "line": "585-589",
+          "severity": "critical",
+          "difficulty": "low",
+          "category": "Code Quality",
+          "suggestion": "Replace with `_run_blockdev_getsize64(device, retries, retry_delay)` using policy-loaded retry values, matching the pattern in `verify_sampled_zero_check` (line 465)."
+        },
+        {
+          "id": "C4",
+          "title": "`verify_crypto_hash_comparison()` Missing Device Lock",
+          "file": "backend/crypto_verification.py",
+          "line": "672-872",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Acquire `get_device_lock(device)` at function start, same pattern as `verify_sampled_zero_check` (line 446-449)."
+        },
+        {
+          "id": "C5",
+          "title": "`verify_crypto_hash_comparison()` Missing Interruption Check",
+          "file": "backend/crypto_verification.py",
+          "line": "672-872",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Add `_check_interrupted()` checks before each offset read loop, same as `verify_sampled_zero_check` (line 506) and `capture_before_state` (line 626)."
+        },
+        {
+          "id": "A13",
+          "title": "`b'\\x00' * len(data)` Zero-Check Allocates Full-Size Temporary",
+          "file": "backend/crypto_verification.py",
+          "line": "523, 767, 839",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Performance",
+          "suggestion": "Use `not any(memoryview(data))` for memory efficiency."
+        },
+        {
+          "id": "A15",
+          "title": "`resolve_verify_command_path()` Defined Twice",
+          "file": "backend/crypto_verification.py",
+          "line": "156-167 (also in `verification.py:39`)",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "DRY",
+          "suggestion": "Import from one location, or move to `disk_utils` and import from there."
+        }
+      ],
+      "issue_ids": [
+        "C6",
+        "C4",
+        "C5",
+        "A13",
+        "A15"
+      ],
+      "files": [
+        "backend/crypto_verification.py"
+      ],
+      "weight": 18,
+      "difficulty_breakdown": {
+        "low": 1,
+        "medium": 4
+      },
+      "session_size": "large",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G18",
+      "pattern": "Ungrouped: backend/disk_ops.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "C7",
+          "title": "`discover_drives` Returns Inconsistent Types",
+          "file": "backend/disk_ops.py",
+          "line": "806, 810, 856, 868, 964, 1026, 1117",
+          "severity": "critical",
+          "difficulty": "low",
+          "category": "Correctness",
+          "suggestion": "Replace all `return {\"error\": \"...\"}` with `return []` (callers already handle empty lists), or raise a custom exception that callers catch explicitly."
+        },
+        {
+          "id": "A20",
+          "title": "`_get_extended_smart_executor` Lock Acquisition Not Atomic",
+          "file": "backend/disk_ops.py",
+          "line": "658-674",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Check `_shutdown_requested` inside `_EXTENDED_SMART_LOCK` scope, or acquire both locks atomically."
+        },
+        {
+          "id": "A22",
+          "title": "`_apply_collection_failure` Assumes `diagnostics.commands` Key Exists",
+          "file": "backend/disk_ops.py",
+          "line": "378",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Correctness",
+          "suggestion": "Use `bay_info.setdefault(\"diagnostics\", {}).setdefault(\"commands\", {})[\"collection\"] = ...` for defensive robustness."
+        },
+        {
+          "id": "A23",
+          "title": "Cache Key Construction Differs Between Enclosure and Legacy Modes",
+          "file": "backend/disk_ops.py",
+          "line": "950 vs 1103",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Document that cache keys are schema-specific, or unify on `(dev_node, dev_node)` for both modes."
+        }
+      ],
+      "issue_ids": [
+        "C7",
+        "A20",
+        "A22",
+        "A23"
+      ],
+      "files": [
+        "backend/disk_ops.py"
+      ],
+      "weight": 14,
+      "difficulty_breakdown": {
+        "low": 1,
+        "medium": 3
+      },
+      "session_size": "medium",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G19",
+      "pattern": "Ungrouped: backend/job_management.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "A27",
+          "title": "Hardcoded 512-byte sector size assumption",
+          "file": "backend/job_management.py",
+          "line": "544",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Read logical block size from `/sys/block/{dev}/queue/logical_block_size`."
+        }
+      ],
+      "issue_ids": [
+        "A27"
+      ],
+      "files": [
+        "backend/job_management.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G20",
+      "pattern": "Ungrouped: backend/udev_listener.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "A29",
+          "title": "`_runtime_slot_state` stores `None` instead of deleting keys",
+          "file": "backend/udev_listener.py",
+          "line": "286",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Correctness",
+          "suggestion": "Use `_runtime_slot_state.pop((enc_id, slot_num), None)` instead."
+        }
+      ],
+      "issue_ids": [
+        "A29"
+      ],
+      "files": [
+        "backend/udev_listener.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G21",
+      "pattern": "Ungrouped: backend/zero_check_manager.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "A33",
+          "title": "`get_all_status` shallow copy of status dicts",
+          "file": "backend/zero_check_manager.py",
+          "line": "203",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Use `copy.deepcopy()` if nested structures are added in the future."
+        }
+      ],
+      "issue_ids": [
+        "A33"
+      ],
+      "files": [
+        "backend/zero_check_manager.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G22",
+      "pattern": "Ungrouped: backend/routes/admin_routes.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "A37",
+          "title": "`MAX_ENCODSURES` typo",
+          "file": "backend/routes/admin_routes.py",
+          "line": "76",
+          "severity": "advisory",
+          "difficulty": "trivial",
+          "category": "Code Quality",
+          "suggestion": "Rename to `MAX_ENCLOSURES`."
+        },
+        {
+          "id": "C13",
+          "title": "`ERASE_JOBS_LOCK` held during subprocess calls in `kill_all_jobs`",
+          "file": "backend/routes/admin_routes.py",
+          "line": "865-966",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Snapshot job list inside lock, release lock, perform hardware checks, then re-acquire lock to apply kill decisions."
+        },
+        {
+          "id": "C14",
+          "title": "Hardcoded OS device paths in SMART test endpoint",
+          "file": "backend/routes/admin_routes.py",
+          "line": "2411-2418",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Use the same `get_os_by_path()` function used by `job_management.py` for robust OS drive detection."
+        },
+        {
+          "id": "A38",
+          "title": "`_SATA_DEVICE_RE` allows partition names for SMART test endpoint",
+          "file": "backend/routes/admin_routes.py",
+          "line": "71",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Code Quality",
+          "suggestion": "Use a stricter regex for the SMART test endpoint, or validate that the device is a whole disk before proceeding."
+        }
+      ],
+      "issue_ids": [
+        "A37",
+        "C13",
+        "C14",
+        "A38"
+      ],
+      "files": [
+        "backend/routes/admin_routes.py"
+      ],
+      "weight": 13,
+      "difficulty_breakdown": {
+        "trivial": 1,
+        "medium": 3
+      },
+      "session_size": "medium",
+      "action": "batch_fix"
+    },
+    {
+      "id": "G23",
+      "pattern": "Ungrouped: backend/routes/drive_routes.py",
+      "fix_shape": "No common pattern detected — review individually",
+      "issues": [
+        {
+          "id": "C15",
+          "title": "`ERASE_JOBS_LOCK` held during database queries in `get_drives`",
+          "file": "backend/routes/drive_routes.py",
+          "line": "75-117",
+          "severity": "critical",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Snapshot `ERASE_JOBS` state inside lock, release lock, then perform database queries outside the lock."
+        }
+      ],
+      "issue_ids": [
+        "C15"
+      ],
+      "files": [
+        "backend/routes/drive_routes.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
+    }
+  ],
+  "dependency_chains": []
+}
