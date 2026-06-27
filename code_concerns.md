@@ -66,7 +66,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C2: [Critical] `DEVICE_LOCKS` Dict Grows Unbounded — Difficulty: Low — Category: Resource Management
+### C2: [COMPLETED] [Critical] `DEVICE_LOCKS` Dict Grows Unbounded — Difficulty: Low — Category: Resource Management
 - **Lines**: 23-36
 - **Issue**: `get_device_lock()` creates per-device `Lock` objects that are never removed. In a hot-swap drive erasure station processing many drives over months, this dict grows indefinitely.
 - **Impact**: Slow memory leak. Each `Lock` is ~80 bytes — won't crash, but accumulates over long-running deployments.
@@ -90,7 +90,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A8: [Advisory] `purge_old_certificates()` Never Called — Difficulty: Medium — Category: Dead Code
+### A8: [COMPLETED] [Advisory] `purge_old_certificates()` Never Called — Difficulty: Medium — Category: Dead Code
 - **Lines**: 350-374
 - **Issue**: Function is defined but has zero callers anywhere in the backend. `purge_old_logs()` is called from `job_management.py` and `bulk_cert.py`, but `purge_old_certificates()` was never wired in.
 - **Impact**: Dead code. Certificate retention policy exists but is never enforced.
@@ -134,7 +134,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C5: [Critical] `verify_crypto_hash_comparison()` Missing Interruption Check — Difficulty: Medium — Category: Concurrency
+### C5: [COMPLETED] [Critical] `verify_crypto_hash_comparison()` Missing Interruption Check — Difficulty: Medium — Category: Concurrency
 - **Line**: 672-872
 - **Issue**: Every other verification function checks `_check_interrupted()` before and during reads. This function never checks it. SIGTERM during hash comparison will not abort gracefully.
 - **Impact**: Delays shutdown in multi-drive wipe station. The function will continue reading all offsets instead of aborting.
@@ -282,7 +282,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C23: [Critical] `_discovery_interrupted` Flag Never Reset After Signal — Difficulty: Low — Category: Concurrency
+### C23: [COMPLETED] [Critical] `_discovery_interrupted` Flag Never Reset After Signal — Difficulty: Low — Category: Concurrency
 - **Lines**: 152, 164-166
 - **Issue**: Once set to `True` by `_handle_discovery_signal`, the `_discovery_interrupted` flag is never reset to `False` in production code. All subsequent `discover_drives()` calls immediately return `{"error": "Discovery interrupted by signal"}` (lines 810-811, 856-857, 868-869, 964-965, 1026-1027, 1117-1118). Only tests reset it (`test_disk_ops.py:354-355`). The same pattern exists for `_shutdown_requested` (line 159), which permanently disables the background SMART pool.
 - **Impact**: High — if the process catches SIGINT/SIGTERM and doesn't exit immediately (graceful shutdown), discovery is permanently disabled. The frontend cannot refresh drive status, and `/api/erase/start` (which calls `discover_drives`) is blocked. Every call returns the dict `{"error": "..."}` instead of a list, which also triggers C7 (inconsistent return types).
@@ -290,7 +290,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C10 (same pattern in `job_management.py`), C7 (inconsistent return types triggered by this flag)
 
-### A65: [Advisory] `get_all_controllers()` Is Dead Code in Production — Difficulty: Trivial — Category: Dead Code
+### A65: [COMPLETED] [Advisory] `get_all_controllers()` Is Dead Code in Production — Difficulty: Trivial — Category: Dead Code
 - **Line**: 292-298
 - **Issue**: Function is a thin wrapper around `scan_pci_controllers()` but has zero production callers. Only imported in `tests/test_disk_ops.py:14`. No route, no other module, no internal call site uses it. `scan_pci_controllers` is called directly at lines 847 and 1021.
 - **Impact**: None — dead code.
@@ -349,7 +349,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/job_management.py
 
-### C10: [Critical] `_job_interrupted` flag never reset after signal — Difficulty: Medium — Category: Performance
+### C10: [COMPLETED] [Critical] `_job_interrupted` flag never reset after signal — Difficulty: Medium — Category: Performance
 - **Lines**: 420-429
 - **Issue**: The module-level `_job_interrupted` flag is set to `True` by the signal handler but never reset to `False`. If the process catches SIGINT/SIGTERM and doesn't exit immediately (graceful shutdown), every subsequent `run_erase_job` call will immediately mark the job as interrupted at line 427-429.
 - **Impact**: High — permanently disables ability to start new jobs without full process restart after any caught signal.
@@ -357,7 +357,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C11: [Critical] Log file handle leaked if write/flush fails after successful open — Difficulty: Medium — Category: Concurrency
+### C11: [COMPLETED] [Critical] Log file handle leaked if write/flush fails after successful open — Difficulty: Medium — Category: Concurrency
 - **Lines**: 482-490
 - **Issue**: If `open()` succeeds but `write()` or `flush()` raises (disk full, permissions change), the `except` block calls `finalize_failed_job` and returns without closing `log_file`. The later `try/finally` at line 510 never executes.
 - **Impact**: Medium — file descriptor leak on log write failure. Repeated failures could exhaust the fd limit.
@@ -401,7 +401,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/udev_listener.py
 
-### C12: [Critical] `get_runtime_slot_state()` is dead code (zero external callers) — Difficulty: Medium — Category: Dead Code
+### C12: [COMPLETED] [Critical] `get_runtime_slot_state()` is dead code (zero external callers) — Difficulty: Medium — Category: Dead Code
 - **Lines**: 348-355
 - **Issue**: `get_runtime_slot_state()` is defined but never called from any file other than its own definition. Grep across `backend/` shows only 1 match (the definition).
 - **Impact**: Low — dead code adds maintenance burden and confusion.
@@ -457,7 +457,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/routes/admin_routes.py
 
-### C13: [Critical] `ERASE_JOBS_LOCK` held during subprocess calls in `kill_all_jobs` — Difficulty: Medium — Category: Concurrency
+### C13: [COMPLETED] [Critical] `ERASE_JOBS_LOCK` held during subprocess calls in `kill_all_jobs` — Difficulty: Medium — Category: Concurrency
 - **Lines**: 865-966
 - **Issue**: `kill_all_jobs` holds `ERASE_JOBS_LOCK` while calling `check_drive_hardware_status(job)` (line 875), which spawns subprocesses (`verify_nvme_sanitize`, `verify_sata_sanitize`, `verify_sas_block`, etc.) that can take several seconds per job. All other operations requiring the lock are blocked.
 - **Impact**: High — status polling, job starts, and other kills are blocked for potentially tens of seconds during kill-all.
@@ -517,7 +517,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/routes/drive_routes.py
 
-### C15: [Critical] `ERASE_JOBS_LOCK` held during database queries in `get_drives` — Difficulty: Medium — Category: Concurrency
+### C15: [COMPLETED] [Critical] `ERASE_JOBS_LOCK` held during database queries in `get_drives` — Difficulty: Medium — Category: Concurrency
 - **Lines**: 75-117
 - **Issue**: `get_drives` holds `ERASE_JOBS_LOCK` while performing database queries (`load_prior_visit(serial)` at line 97, `sqlite3.connect` at line 107). These I/O operations block all job operations during drive listing.
 - **Impact**: Medium — drive listing is called frequently by frontend polling; lock contention can delay job starts and status updates.
@@ -693,7 +693,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C20
 
-### C22: [Critical] Three functions with zero external callers (dead code) — Difficulty: Medium — Category: Dead Code
+### C22: [COMPLETED] [Critical] Three functions with zero external callers (dead code) — Difficulty: Medium — Category: Dead Code
 - **Lines**: 356-378 (`get_device_by_pci_path`), 439-493 (`get_nvme_controller_info`), 496-519 (`get_sata_controller_ports`)
 - **Issue**: Grep across all `backend/` Python files confirms these three functions have zero external callers. They are only defined in `device_discovery.py` and never imported by any other module. `get_device_by_pci_path` calls `discover_controllers_and_devices` internally, `get_nvme_controller_info` calls `_get_nvme_list_data` internally, and `get_sata_controller_ports` calls `discover_controllers_and_devices` internally — but no external code calls any of the three.
 - **Impact**: Low — dead code adds maintenance burden. `_get_nvme_list_data` (called only by `get_nvme_controller_info`) is also effectively dead since its only caller is dead.
@@ -709,7 +709,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A54: [Advisory] `controller_by_pci` dict built but never used — Difficulty: Trivial — Category: Dead Code
+### A54: [COMPLETED] [Advisory] `controller_by_pci` dict built but never used — Difficulty: Trivial — Category: Dead Code
 - **Line**: 311
 - **Issue**: Inside `discover_controllers_and_devices`, the dict `controller_by_pci = {c['pci_address']: c for c in controllers}` is built for O(1) lookups but never referenced. The function calls `get_controller_for_device(device_path, controllers=controllers)` at line 326 instead, which does its own linear search.
 - **Impact**: None — wasted allocation on each call.
@@ -732,7 +732,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A56: [Advisory] `_map_pci_class_to_type` fallback description parsing is dead code — Difficulty: Trivial — Category: Dead Code
+### A56: [COMPLETED] [Advisory] `_map_pci_class_to_type` fallback description parsing is dead code — Difficulty: Trivial — Category: Dead Code
 - **Lines**: 203-218
 - **Issue**: The fallback description parsing (lines 203-218) is only reached if `class_code` is not in `class_map`. But `_map_pci_class_to_type` is only called when `class_code` is in `storage_classes` (line 151 filter), and `storage_classes` and `class_map` have identical key sets. The fallback can never execute.
 - **Impact**: None — dead code.
@@ -764,7 +764,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A60: [Advisory] `_SAS_EXPANDER_CACHE` unbounded dict growth — Difficulty: Low — Category: Resource Management
+### A60: [COMPLETED] [Advisory] `_SAS_EXPANDER_CACHE` unbounded dict growth — Difficulty: Low — Category: Resource Management
 - **Line**: 47
 - **Issue**: `_SAS_EXPANDER_CACHE = {}` is keyed by PCI address and grows without bounds as new PCI addresses are queried. `invalidate_sas_expander_cache()` clears the entire dict, but between invalidations, the dict grows. Per Lesson #8, enforce size limits on collections.
 - **Impact**: Low — the number of PCI addresses is bounded by physical hardware (typically < 20). But the pattern is inconsistent with Lesson #8.
@@ -873,7 +873,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A67: [Advisory] SAS and HDD POH penalty branches are identical — dead branch — Difficulty: Trivial — Category: Code Quality
+### A67: [COMPLETED] [Advisory] SAS and HDD POH penalty branches are identical — dead branch — Difficulty: Trivial — Category: Code Quality
 - **Lines**: 455-460
 - **Issue**: The `if iface == "sas":` and `else:` branches both compute the exact same formula: `min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0`. The SAS branch ignores the configured `sas_high_poh_threshold` (50000) and uses the same hardcoded 20000 as HDD.
 - **Impact**: Low — SAS drives get the same POH penalty as HDDs, ignoring the configured threshold. The `sas_high_poh_threshold` config key is dead for this calculation.
@@ -1064,7 +1064,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A89: [Advisory] `wizardData.slots` set but never read — Difficulty: Trivial — Category: Dead Code
+### A89: [COMPLETED] [Advisory] `wizardData.slots` set but never read — Difficulty: Trivial — Category: Dead Code
 - **Line**: 736
 - **Issue**: `wizardData.slots = slots;` stores the computed slots array in `wizardData`, but neither `handleSaveEnclosure` nor `handleEditEnclosure` reads `wizardData.slots`. Both functions re-read slot data from the DOM. The assignment is dead code.
 - **Impact**: None — dead code. But misleading — a reader might think `wizardData.slots` is the source of truth for the save operation.

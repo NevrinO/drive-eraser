@@ -343,13 +343,3 @@ def stop_udev_listener():
     if _udev_thread and _udev_thread.is_alive():
         _udev_thread.join(timeout=5)
         logger.info("udev event listener thread stopped")
-
-
-def get_runtime_slot_state() -> Dict:
-    """Get the current runtime slot state.
-    
-    Returns:
-        Dictionary mapping (enclosure_id, slot_number) to device info
-    """
-    with _runtime_slot_lock:
-        return dict(_runtime_slot_state)

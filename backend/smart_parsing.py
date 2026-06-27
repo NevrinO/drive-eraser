@@ -455,12 +455,7 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
             penalty_breakdown["poh_penalty"] = poh_penalty
     else:
         thresholds = get_triage_thresholds()
-        if iface == "sas":
-            # SAS uses same POH threshold as HDD: 20,000
-            poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
-        else:
-            # HDD POH threshold: 20,000
-            poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
+        poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
         written_bytes = smart_data.get("data_written_bytes")
         if written_bytes is None:
             raw_written = smart_data.get("data_written_raw")

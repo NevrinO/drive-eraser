@@ -182,38 +182,32 @@ class TestMapPciClassToType:
     def test_sata_controller(self):
         """Test SATA controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('0106', 'SATA controller') == 'sata'
+        assert _map_pci_class_to_type('0106') == 'sata'
 
     def test_sas_controller(self):
         """Test SAS controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('0107', 'SAS controller') == 'sas'
+        assert _map_pci_class_to_type('0107') == 'sas'
 
     def test_nvme_controller(self):
         """Test NVMe controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('0108', 'NVMe device') == 'nvme'
+        assert _map_pci_class_to_type('0108') == 'nvme'
 
     def test_raid_controller(self):
         """Test RAID controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('0104', 'RAID controller') == 'raid'
+        assert _map_pci_class_to_type('0104') == 'raid'
 
     def test_scsi_controller(self):
         """Test SCSI controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('0100', 'SCSI controller') == 'scsi'
+        assert _map_pci_class_to_type('0100') == 'scsi'
 
     def test_unknown_controller(self):
         """Test unknown controller mapping."""
         from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('9999', 'Unknown device') == 'unknown'
-
-    def test_case_insensitive_description(self):
-        """Test that description matching is case-insensitive."""
-        from device_discovery import _map_pci_class_to_type
-        assert _map_pci_class_to_type('9999', 'NVMe Controller') == 'nvme'
-        assert _map_pci_class_to_type('9999', 'SATA CONTROLLER') == 'sata'
+        assert _map_pci_class_to_type('9999') == 'unknown'
 
 
 class TestDiscoverControllersAndDevices:
@@ -307,98 +301,6 @@ class TestDiscoverControllersAndDevices:
         with patch('os.path.exists', return_value=False):
             result = discover_controllers_and_devices(use_cache=False)
             assert all(len(devices) == 0 for devices in result.values())
-
-
-class TestGetNvmeControllerInfo:
-    """Test NVMe controller information retrieval."""
-
-    def test_invalid_device_path(self):
-        """Test that invalid device path is rejected."""
-        from device_discovery import get_nvme_controller_info
-        assert get_nvme_controller_info("/dev/invalid") is None
-
-    def test_non_nvme_device(self):
-        """Test that non-NVMe device is rejected."""
-        from device_discovery import get_nvme_controller_info
-        with patch('device_discovery.validate_device_path', return_value=True):
-            assert get_nvme_controller_info("/dev/sda") is None
-
-    def test_successful_json_parsing(self):
-        """Test successful JSON parsing."""
-        from device_discovery import get_nvme_controller_info
-        with patch('device_discovery.validate_device_path', return_value=True):
-            with patch('device_discovery._get_nvme_list_data', return_value={
-                'Devices': [
-                    {
-                        'DevicePath': '/dev/nvme0n1',
-                        'Name': 'nvme0n1',
-                        'ModelNumber': 'Samsung 970',
-                        'SerialNumber': 'S123456',
-                        'Firmware': '1.0.0'
-                    }
-                ]
-            }):
-                result = get_nvme_controller_info("/dev/nvme0n1")
-                assert result is not None
-                assert result['model'] == 'Samsung 970'
-                assert result['serial'] == 'S123456'
-
-    def test_fallback_to_text_parsing(self):
-        """Test fallback to text output parsing."""
-        from device_discovery import get_nvme_controller_info
-        with patch('device_discovery.validate_device_path', return_value=True):
-            with patch('device_discovery._get_nvme_list_data', return_value={
-                'raw_text': '/dev/nvme0n1 Samsung 970\n'
-            }):
-                result = get_nvme_controller_info("/dev/nvme0n1")
-                assert result is not None
-                assert result['type'] == 'nvme'
-
-    def test_no_nvme_data(self):
-        """Test handling when no NVMe data is available."""
-        from device_discovery import get_nvme_controller_info
-        with patch('device_discovery.validate_device_path', return_value=True):
-            with patch('device_discovery._get_nvme_list_data', return_value=None):
-                assert get_nvme_controller_info("/dev/nvme0n1") is None
-
-
-class TestGetSataControllerPorts:
-    """Test SATA controller port enumeration."""
-
-    def test_invalid_pci_address(self):
-        """Test that invalid PCI address is rejected."""
-        from device_discovery import get_sata_controller_ports
-        assert get_sata_controller_ports("invalid") == []
-
-    def test_successful_port_enumeration(self):
-        """Test successful port enumeration."""
-        from device_discovery import get_sata_controller_ports
-        with patch('device_discovery.validate_pci_address', return_value=True):
-            with patch('device_discovery.discover_controllers_and_devices', return_value={
-                'sata': [
-                    {'device_path': '/dev/sda', 'controller': {'pci_address': '0000:00:1f.2'}},
-                    {'device_path': '/dev/sdb', 'controller': {'pci_address': '0000:00:1f.2'}}
-                ]
-            }):
-                result = get_sata_controller_ports('0000:00:1f.2')
-                assert len(result) == 2
-                assert '/dev/sda' in result
-                assert '/dev/sdb' in result
-
-    def test_filters_by_pci_address(self):
-        """Test that devices are filtered by PCI address."""
-        from device_discovery import get_sata_controller_ports
-        with patch('device_discovery.validate_pci_address', return_value=True):
-            with patch('device_discovery.discover_controllers_and_devices', return_value={
-                'sata': [
-                    {'device_path': '/dev/sda', 'controller': {'pci_address': '0000:00:1f.2'}},
-                    {'device_path': '/dev/sdb', 'controller': {'pci_address': '0000:01:00.0'}}
-                ]
-            }):
-                result = get_sata_controller_ports('0000:00:1f.2')
-                assert len(result) == 1
-                assert '/dev/sda' in result
-                assert '/dev/sdb' not in result
 
 
 class TestIsEnclosureDevice:

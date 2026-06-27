@@ -710,54 +710,89 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     if len(offsets) != len(before_hashes):
         return {"ok": False, "status": "verification_error", "error": "before_state_invalid", "details": {"offsets_count": len(offsets), "hashes_count": len(before_hashes)}}
 
-    after_hashes = []
-    total_verified_bytes = 0
-    any_changed = False
-    unchanged_indices = []
+    # High #13: Acquire device lock for all read operations (consistent with other verification functions)
+    device_lock = get_device_lock(device)
+    with device_lock:
+        after_hashes = []
+        total_verified_bytes = 0
+        any_changed = False
+        unchanged_indices = []
 
-    for idx, offset in enumerate(offsets):
-        # Use capacity-aware read size for end-of-drive chunks
-        skip_blocks = offset // chunk_size_bytes
-        read_size = min(chunk_size_bytes, capacity - offset)
-        actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-        
-        # Feature C: Use retry logic for dd reads
-        dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
-        if dd_result["error"]:
-            return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": dd_result['error'], "retries_attempted": retries + 1, "stderr": dd_result['details']}}
-        data = dd_result["data"]
-        total_verified_bytes += len(data)
-        after_hash = hashlib.sha256(data).hexdigest()
-        after_hashes.append(after_hash)
+        for idx, offset in enumerate(offsets):
+            # High #12: Check for interruption before each read
+            if _check_interrupted():
+                logger.warning(f"Hash comparison interrupted at offset {offset}")
+                return {"ok": False, "status": "verification_interrupted", "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
 
-        if after_hash == before_hashes[idx]:
-            unchanged_indices.append(idx)
-        else:
-            any_changed = True
+            # Use capacity-aware read size for end-of-drive chunks
+            skip_blocks = offset // chunk_size_bytes
+            read_size = min(chunk_size_bytes, capacity - offset)
+            actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+            
+            # Feature C: Use retry logic for dd reads
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            if dd_result["error"]:
+                return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": dd_result['error'], "retries_attempted": retries + 1, "stderr": dd_result['details']}}
+            data = dd_result["data"]
+            total_verified_bytes += len(data)
+            after_hash = hashlib.sha256(data).hexdigest()
+            after_hashes.append(after_hash)
 
-    if any_changed:
-        # Some chunks changed - verify unchanged chunks are all zero (partial wipe detection)
-        if unchanged_indices:
-            unchanged_nonzero_found = False
-            first_nonzero_offset = None
-            for idx in unchanged_indices:
-                offset = offsets[idx]
-                skip_blocks = offset // chunk_size_bytes
-                read_size = min(chunk_size_bytes, capacity - offset)
-                actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+            if after_hash == before_hashes[idx]:
+                unchanged_indices.append(idx)
+            else:
+                any_changed = True
+
+        if any_changed:
+            # Some chunks changed - verify unchanged chunks are all zero (partial wipe detection)
+            if unchanged_indices:
+                unchanged_nonzero_found = False
+                first_nonzero_offset = None
+                for idx in unchanged_indices:
+                    offset = offsets[idx]
+                    # High #12: Check for interruption before each read
+                    if _check_interrupted():
+                        logger.warning(f"Hash comparison interrupted during unchanged verification at offset {offset}")
+                        return {"ok": False, "status": "verification_interrupted", "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
+
+                    skip_blocks = offset // chunk_size_bytes
+                    read_size = min(chunk_size_bytes, capacity - offset)
+                    actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+                    
+                    # Feature C: Use retry logic for dd reads
+                    dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+                    if dd_result["error"]:
+                        return {
+                            "ok": False,
+                            "status": "verification_error",
+                            "error": "crypto_comparison_unchanged_verification_failed",
+                            "details": {
+                                "offset": offset,
+                                "exception": dd_result['error'],
+                                "retries_attempted": retries + 1,
+                                "stderr": dd_result['details'],
+                                "total_verified_bytes": total_verified_bytes,
+                                "chunks_checked": len(offsets),
+                                "chunk_size_bytes": chunk_size_bytes,
+                                "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
+                                "unchanged_indices": unchanged_indices,
+                                "before_hashes": before_hashes,
+                                "after_hashes": after_hashes
+                            }
+                        }
+                    data = dd_result["data"]
+                    if data and data != b'\x00' * len(data):
+                        unchanged_nonzero_found = True
+                        first_nonzero_offset = offset
                 
-                # Feature C: Use retry logic for dd reads
-                dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
-                if dd_result["error"]:
+                if unchanged_nonzero_found:
+                    # Partial wipe - some chunks changed, some didn't and aren't zero
                     return {
                         "ok": False,
-                        "status": "verification_error",
-                        "error": "crypto_comparison_unchanged_verification_failed",
+                        "status": "verification_failed",
+                        "error": "crypto_comparison_partial_wipe",
                         "details": {
-                            "offset": offset,
-                            "exception": dd_result['error'],
-                            "retries_attempted": retries + 1,
-                            "stderr": dd_result['details'],
+                            "first_nonzero_offset": first_nonzero_offset,
                             "total_verified_bytes": total_verified_bytes,
                             "chunks_checked": len(offsets),
                             "chunk_size_bytes": chunk_size_bytes,
@@ -767,29 +802,23 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                             "after_hashes": after_hashes
                         }
                     }
-                data = dd_result["data"]
-                if data and data != b'\x00' * len(data):
-                    unchanged_nonzero_found = True
-                    first_nonzero_offset = offset
-            
-            if unchanged_nonzero_found:
-                # Partial wipe - some chunks changed, some didn't and aren't zero
+                # All unchanged chunks are zero - pass (some were already zero)
                 return {
-                    "ok": False,
-                    "status": "verification_failed",
-                    "error": "crypto_comparison_partial_wipe",
+                    "ok": True,
+                    "status": "verified",
                     "details": {
-                        "first_nonzero_offset": first_nonzero_offset,
+                        "verification_level": "controller_attested_with_hash_comparison",
                         "total_verified_bytes": total_verified_bytes,
                         "chunks_checked": len(offsets),
                         "chunk_size_bytes": chunk_size_bytes,
                         "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
                         "unchanged_indices": unchanged_indices,
                         "before_hashes": before_hashes,
-                        "after_hashes": after_hashes
+                        "after_hashes": after_hashes,
+                        "note": "Some chunks unchanged but verified zero (pre-existing zero areas)"
                     }
                 }
-            # All unchanged chunks are zero - pass (some were already zero)
+            # All chunks changed - pass
             return {
                 "ok": True,
                 "status": "verified",
@@ -801,77 +830,61 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                     "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
                     "unchanged_indices": unchanged_indices,
                     "before_hashes": before_hashes,
-                    "after_hashes": after_hashes,
-                    "note": "Some chunks unchanged but verified zero (pre-existing zero areas)"
+                    "after_hashes": after_hashes
                 }
             }
-        # All chunks changed - pass
+
+        # No hashes changed - check if drive was already zeroed
+        all_before_same = len(set(before_hashes)) == 1
+        all_after_same = len(set(after_hashes)) == 1
+
+        if all_before_same and all_after_same and before_hashes[0] == after_hashes[0]:
+            # All hashes identical - check actual byte values to distinguish zeros from other patterns.
+            try:
+                first_offset = offsets[0]
+                skip_blocks = first_offset // chunk_size_bytes
+                read_size = min(chunk_size_bytes, capacity - first_offset)
+                actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
+                
+                # Feature C: Use retry logic for dd reads
+                dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+                if dd_result["error"]:
+                    pass  # If read fails, proceed to unchanged data check below
+                else:
+                    data = dd_result["data"]
+                    if data:
+                        is_all_zeros = data == b'\x00' * len(data)
+                        if is_all_zeros:
+                            return {
+                                "ok": True,
+                                "status": "verified",
+                                "details": {
+                                    "verification_level": "controller_attested_with_hash_comparison",
+                                    "total_verified_bytes": total_verified_bytes,
+                                    "chunks_checked": len(offsets),
+                                    "chunk_size_bytes": chunk_size_bytes,
+                                    "note": "All hashes matched (drive was zero before wipe)",
+                                    "before_hashes": before_hashes,
+                                    "after_hashes": after_hashes,
+                                    "drive_was_zeroed": True,
+                                    "secondary_note": "Hashes zero before wipe - matching expected"
+                                }
+                            }
+            except Exception as e:
+                pass
+
+        # Not zeros - actual data didn't change, potential failure
         return {
-            "ok": True,
-            "status": "verified",
+            "ok": False,
+            "status": "verification_failed",
+            "error": "crypto_comparison_unchanged_data",
             "details": {
-                "verification_level": "controller_attested_with_hash_comparison",
                 "total_verified_bytes": total_verified_bytes,
                 "chunks_checked": len(offsets),
                 "chunk_size_bytes": chunk_size_bytes,
-                "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
                 "unchanged_indices": unchanged_indices,
                 "before_hashes": before_hashes,
                 "after_hashes": after_hashes
             }
         }
-
-    # No hashes changed - check if drive was already zeroed
-    all_before_same = len(set(before_hashes)) == 1
-    all_after_same = len(set(after_hashes)) == 1
-
-    if all_before_same and all_after_same and before_hashes[0] == after_hashes[0]:
-        # All hashes identical - check actual byte values to distinguish zeros from other patterns.
-        try:
-            first_offset = offsets[0]
-            skip_blocks = first_offset // chunk_size_bytes
-            read_size = min(chunk_size_bytes, capacity - first_offset)
-            actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-            
-            # Feature C: Use retry logic for dd reads
-            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
-            if dd_result["error"]:
-                pass  # If read fails, proceed to unchanged data check below
-            else:
-                data = dd_result["data"]
-                if data:
-                    is_all_zeros = data == b'\x00' * len(data)
-                    if is_all_zeros:
-                        return {
-                            "ok": True,
-                            "status": "verified",
-                            "details": {
-                                "verification_level": "controller_attested_with_hash_comparison",
-                                "total_verified_bytes": total_verified_bytes,
-                                "chunks_checked": len(offsets),
-                                "chunk_size_bytes": chunk_size_bytes,
-                                "note": "All hashes matched (drive was zero before wipe)",
-                                "before_hashes": before_hashes,
-                                "after_hashes": after_hashes,
-                                "drive_was_zeroed": True,
-                                "secondary_note": "Hashes zero before wipe - matching expected"
-                            }
-                        }
-        except Exception as e:
-            pass
-
-    # Not zeros - actual data didn't change, potential failure
-    return {
-        "ok": False,
-        "status": "verification_failed",
-        "error": "crypto_comparison_unchanged_data",
-        "details": {
-            "total_verified_bytes": total_verified_bytes,
-            "chunks_checked": len(offsets),
-            "chunk_size_bytes": chunk_size_bytes,
-            "unchanged_indices": unchanged_indices,
-            "before_hashes": before_hashes,
-            "after_hashes": after_hashes
-        }
-    }
 # --- END OF FILE backend/crypto_verification.py ---

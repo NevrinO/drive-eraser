@@ -729,9 +729,6 @@ function renderSlotAssignment() {
       });
     }
   });
-
-  // Store slots in wizard data for save
-  wizardData.slots = slots;
 }
 
 // Wizard navigation

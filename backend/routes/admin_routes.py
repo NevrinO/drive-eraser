@@ -862,108 +862,127 @@ def kill_all_jobs():
         killed_jobs = []
         skipped_jobs = []
         
+        # Step 1: Snapshot running/queued jobs inside lock
         with ERASE_JOBS_LOCK:
-            for job_id, job in list(ERASE_JOBS.items()):
-                if job.get("status") in {"running", "queued"}:
-                    request_data = job.get("request", {})
-                    device = request_data.get("device")
-                    method = request_data.get("method")
-                    interface_type = request_data.get("interface_type", "unknown")
-                    bay = request_data.get("bay")
-                    
-                    # Check actual hardware status
-                    hw_status = check_drive_hardware_status(job)
-                    
-                    # Determine if we should kill based on hardware status
+            jobs_snapshot = [
+                (job_id, job)
+                for job_id, job in list(ERASE_JOBS.items())
+                if job.get("status") in {"running", "queued"}
+            ]
+
+        # Step 2: Perform hardware checks and process termination outside lock
+        jobs_to_kill = []
+        for job_id, job in jobs_snapshot:
+            request_data = job.get("request", {})
+            device = request_data.get("device")
+            method = request_data.get("method")
+            interface_type = request_data.get("interface_type", "unknown")
+            bay = request_data.get("bay")
+            
+            # Check actual hardware status
+            hw_status = check_drive_hardware_status(job)
+            
+            # Determine if we should kill based on hardware status
+            should_kill = True
+            skip_reason = None
+            
+            if hw_status.get("can_query"):
+                if hw_status.get("hardware_active") is True:
+                    # Hardware reports it's still active - don't kill
+                    should_kill = False
+                    skip_reason = "hardware_operation_active"
+                elif hw_status.get("hardware_active") is False:
+                    # Hardware reports idle/complete - safe to kill stuck subprocess
                     should_kill = True
-                    skip_reason = None
-                    
-                    if hw_status.get("can_query"):
-                        if hw_status.get("hardware_active") is True:
-                            # Hardware reports it's still active - don't kill
-                            should_kill = False
-                            skip_reason = "hardware_operation_active"
-                        elif hw_status.get("hardware_active") is False:
-                            # Hardware reports idle/complete - safe to kill stuck subprocess
-                            should_kill = True
-                    else:
-                        # Can't query hardware status (overwrite method, etc.)
-                        # Fall back to subprocess status
-                        process = job.get("_process")
-                        if process and process.poll() is None:
-                            # Process is running but we can't verify hardware
-                            # Check if job has been running unusually long (optional safety)
-                            pass  # Will kill based on subprocess alone
-                    
-                    if not should_kill:
-                        # Skip killing - hardware still active
-                        skipped_info = {
-                            "job_id": job_id,
-                            "bay": bay,
-                            "device": device,
-                            "method": method,
-                            "interface_type": interface_type,
-                            "reason": skip_reason,
-                            "hardware_status": {
-                                "state": hw_status.get("hardware_status"),
-                                "progress_percent": hw_status.get("progress_percent"),
-                                "raw_data": hw_status.get("raw_data")
-                            },
-                            "subprocess_status": {
-                                "pid": job.get("_process").pid if job.get("_process") else None,
-                                "is_running": job.get("_process").poll() is None if job.get("_process") else False
-                            },
-                            "job_state": {
-                                "status": job.get("status"),
-                                "current_phase": job.get("current_phase"),
-                                "started_at": job.get("started_at"),
-                                "progress_percent": job.get("progress_percent")
-                            }
-                        }
-                        skipped_jobs.append(skipped_info)
-                        logger.info(f"Skipped killing job {job_id} - hardware still active: {hw_status.get('hardware_status')}")
-                    else:
-                        # Safe to kill - hardware idle or subprocess stuck
-                        process = job.get("_process")
-                        termination_result = {"terminated": False, "error": None}
-                        
-                        if process and process.poll() is None:
-                            try:
-                                process.terminate()
-                                try:
-                                    process.wait(timeout=10)
-                                    termination_result["terminated"] = True
-                                except subprocess.TimeoutExpired:
-                                    process.kill()
-                                    process.wait()
-                                    termination_result["terminated"] = True
-                                    termination_result["method"] = "kill"
-                            except Exception as e:
-                                logger.warning(f"Failed to terminate process for job {job_id}: {e}")
-                                termination_result["error"] = str(e)
-                        
-                        job["status"] = "failed"
-                        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-                        job["error"] = "Job killed by administrator"
-                        job["current_phase"] = "Killed by Admin"
-                        job["_kill_info"] = {
-                            "hardware_status_before_kill": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
-                            "termination_result": termination_result,
-                            "killed_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        persist_job(job)
-                        
-                        killed_info = {
-                            "job_id": job_id,
-                            "bay": bay,
-                            "device": device,
-                            "method": method,
-                            "interface_type": interface_type,
-                            "hardware_status": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
-                            "termination_result": termination_result
-                        }
-                        killed_jobs.append(killed_info)
-                        ERASE_JOBS.pop(job_id, None)
+            else:
+                # Can't query hardware status (overwrite method, etc.)
+                # Fall back to subprocess status
+                process = job.get("_process")
+                if process and process.poll() is None:
+                    # Process is running but we can't verify hardware
+                    pass  # Will kill based on subprocess alone
+            
+            if not should_kill:
+                # Skip killing - hardware still active
+                skipped_info = {
+                    "job_id": job_id,
+                    "bay": bay,
+                    "device": device,
+                    "method": method,
+                    "interface_type": interface_type,
+                    "reason": skip_reason,
+                    "hardware_status": {
+                        "state": hw_status.get("hardware_status"),
+                        "progress_percent": hw_status.get("progress_percent"),
+                        "raw_data": hw_status.get("raw_data")
+                    },
+                    "subprocess_status": {
+                        "pid": job.get("_process").pid if job.get("_process") else None,
+                        "is_running": job.get("_process").poll() is None if job.get("_process") else False
+                    },
+                    "job_state": {
+                        "status": job.get("status"),
+                        "current_phase": job.get("current_phase"),
+                        "started_at": job.get("started_at"),
+                        "progress_percent": job.get("progress_percent")
+                    }
+                }
+                skipped_jobs.append(skipped_info)
+                logger.info(f"Skipped killing job {job_id} - hardware still active: {hw_status.get('hardware_status')}")
+            else:
+                # Safe to kill - hardware idle or subprocess stuck
+                # Terminate process outside lock (process.wait can block)
+                process = job.get("_process")
+                termination_result = {"terminated": False, "error": None}
+                
+                if process and process.poll() is None:
+                    try:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=10)
+                            termination_result["terminated"] = True
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                            termination_result["terminated"] = True
+                            termination_result["method"] = "kill"
+                    except Exception as e:
+                        logger.warning(f"Failed to terminate process for job {job_id}: {e}")
+                        termination_result["error"] = str(e)
+                
+                jobs_to_kill.append((job_id, bay, device, method, interface_type, hw_status, termination_result))
+
+        # Step 3: Apply kill decisions inside lock
+        with ERASE_JOBS_LOCK:
+            for job_id, bay, device, method, interface_type, hw_status, termination_result in jobs_to_kill:
+                job = ERASE_JOBS.get(job_id)
+                if not job or job.get("status") not in {"running", "queued"}:
+                    # Job state changed between snapshot and kill — skip
+                    logger.info(f"Job {job_id} state changed before kill could be applied (termination_result={termination_result}), skipping")
+                    continue
+
+                job["status"] = "failed"
+                job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                job["error"] = "Job killed by administrator"
+                job["current_phase"] = "Killed by Admin"
+                job["_kill_info"] = {
+                    "hardware_status_before_kill": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
+                    "termination_result": termination_result,
+                    "killed_at": datetime.now(timezone.utc).isoformat()
+                }
+                persist_job(job)
+                
+                killed_info = {
+                    "job_id": job_id,
+                    "bay": bay,
+                    "device": device,
+                    "method": method,
+                    "interface_type": interface_type,
+                    "hardware_status": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
+                    "termination_result": termination_result
+                }
+                killed_jobs.append(killed_info)
+                ERASE_JOBS.pop(job_id, None)
 
         # Build response
         response = {

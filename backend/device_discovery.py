@@ -28,11 +28,6 @@ _ENCLOSURE_CACHE = {'data': None, 'timestamp': 0}
 _ENCLOSURE_CACHE_TTL = 3600  # seconds (1 hour - enclosure metadata changes rarely; manual refresh on enclosure add/edit)
 _ENCLOSURE_CACHE_LOCK = threading.Lock()
 
-# Cache for NVMe list output to avoid redundant subprocess calls
-_NVME_CACHE = {'data': None, 'timestamp': 0}
-_NVME_CACHE_TTL = 3600  # seconds (1 hour - NVMe topology changes rarely; manual refresh on enclosure add/edit)
-_NVME_CACHE_LOCK = threading.Lock()
-
 # Cache for device discovery results to avoid redundant full scans
 _DISCOVERY_CACHE = {'data': None, 'timestamp': 0}
 _DISCOVERY_CACHE_TTL = 60  # seconds
@@ -46,6 +41,7 @@ _MASTER_SLOT_CACHE_LOCK = threading.Lock()
 # Cache for SAS expander detection results to avoid redundant by-path scans
 _SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp': time}
 _SAS_EXPANDER_CACHE_TTL = 3600  # seconds (1 hour - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
+MAX_SAS_EXPANDER_CACHE_SIZE = 100  # Prevent unbounded growth
 _SAS_EXPANDER_CACHE_LOCK = threading.Lock()
 
 # Conservative fallback for SAS expander phy count when sysfs doesn't expose it
@@ -156,7 +152,7 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
             device_id = vendor_device_match.group(2) if vendor_device_match else None
             
             # Determine controller type based on class code
-            controller_type = _map_pci_class_to_type(class_code, device_info)
+            controller_type = _map_pci_class_to_type(class_code)
             
             controllers.append({
                 'pci_address': pci_addr,
@@ -183,7 +179,7 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
     return controllers
 
 
-def _map_pci_class_to_type(class_code: str, description: str) -> str:
+def _map_pci_class_to_type(class_code: str) -> str:
     """Map PCI class code to controller type string."""
     class_map = {
         '0100': 'scsi',
@@ -194,27 +190,7 @@ def _map_pci_class_to_type(class_code: str, description: str) -> str:
         '0107': 'sas',
         '0108': 'nvme'
     }
-    
-    # Use class code mapping first
-    if class_code in class_map:
-        return class_map[class_code]
-    
-    # Fallback to description parsing
-    desc_lower = description.lower()
-    if 'nvme' in desc_lower:
-        return 'nvme'
-    elif 'sata' in desc_lower:
-        return 'sata'
-    elif 'sas' in desc_lower:
-        return 'sas'
-    elif 'raid' in desc_lower:
-        return 'raid'
-    elif 'scsi' in desc_lower:
-        return 'scsi'
-    elif 'ata' in desc_lower:
-        return 'ata'
-    
-    return 'unknown'
+    return class_map.get(class_code, 'unknown')
 
 
 def get_controller_for_device(device_path: str, controllers: Optional[List[Dict]] = None) -> Optional[Dict]:
@@ -306,9 +282,6 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
     # Scan all PCI controllers (uses cache)
     controllers = scan_pci_controllers(use_cache=True)
 
-    # Build PCI address → controller mapping for O(1) lookups
-    controller_by_pci = {c['pci_address']: c for c in controllers}
-
     # Scan /sys/class/block for all block devices
     block_devices = []
     if os.path.exists('/sys/class/block'):
@@ -350,172 +323,6 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
             _DISCOVERY_CACHE['timestamp'] = time.time()
 
     return result
-
-
-def get_device_by_pci_path(pci_address: str) -> Optional[str]:
-    """Get device path for a specific PCI controller.
-    
-    Args:
-        pci_address: PCI address (e.g., "0000:00:1f.2")
-        
-    Returns:
-        Device path or None if not found
-    """
-    if not validate_pci_address(pci_address):
-        logging.warning(f"Invalid PCI address: {pci_address}")
-        return None
-
-    controllers_and_devices = discover_controllers_and_devices(use_cache=True)
-    
-    # Search all controller types for matching PCI address
-    for controller_type, devices in controllers_and_devices.items():
-        for device_info in devices:
-            controller = device_info.get('controller')
-            if controller and controller.get('pci_address') == pci_address:
-                return device_info['device_path']
-    
-    return None
-
-
-def _get_nvme_list_data(use_cache: bool = True) -> Optional[Dict]:
-    """Get cached NVMe list data to avoid redundant subprocess calls.
-
-    Args:
-        use_cache: If True, return cached results if available and not expired
-
-    Returns:
-        Dictionary with parsed NVMe list data or None
-    """
-    # Check cache first if enabled
-    if use_cache:
-        with _NVME_CACHE_LOCK:
-            now = time.time()
-            if _NVME_CACHE['data'] is not None and (now - _NVME_CACHE['timestamp']) < _NVME_CACHE_TTL:
-                return _NVME_CACHE['data']
-
-    nvme_data = None
-
-    try:
-        # Try JSON output first
-        result = subprocess.run(
-            ['nvme', 'list', '-o', 'json'],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            shell=False
-        )
-
-        if result.returncode == 0:
-            try:
-                nvme_data = json.loads(result.stdout)
-            except (json.JSONDecodeError, KeyError, TypeError) as e:
-                logging.warning(f"Failed to parse nvme list JSON: {e}")
-        else:
-            # Fallback to text output
-            result = subprocess.run(
-                ['nvme', 'list'],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                shell=False
-            )
-            if result.returncode == 0:
-                nvme_data = {'raw_text': result.stdout}
-
-        # Update cache only on successful data acquisition
-        if use_cache and nvme_data is not None:
-            with _NVME_CACHE_LOCK:
-                _NVME_CACHE['data'] = nvme_data
-                _NVME_CACHE['timestamp'] = time.time()
-
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:
-        logging.warning(f"Error running nvme list: {e}")
-        # Do NOT update cache on failure
-
-    return nvme_data
-
-
-def get_nvme_controller_info(nvme_device: str) -> Optional[Dict]:
-    """Get detailed NVMe controller information.
-
-    Args:
-        nvme_device: NVMe device path (e.g., /dev/nvme0n1)
-
-    Returns:
-        Dictionary with NVMe controller details or None
-    """
-    if not validate_device_path(nvme_device):
-        return None
-
-    device_name = os.path.basename(nvme_device)
-    if not device_name.startswith('nvme'):
-        return None
-
-    # Extract controller number (nvme0n1 -> nvme0)
-    controller_match = re.match(r'(nvme\d+)', device_name)
-    if not controller_match:
-        return None
-
-    controller_name = controller_match.group(1)
-
-    # Get cached NVMe list data
-    nvme_data = _get_nvme_list_data(use_cache=True)
-    if nvme_data is None:
-        return None
-
-    # Try to parse from JSON data first
-    if isinstance(nvme_data, dict) and 'Devices' in nvme_data:
-        for device in nvme_data['Devices']:
-            if device.get('DevicePath') == nvme_device or device.get('Name') == device_name:
-                return {
-                    'controller_name': controller_name,
-                    'device_name': device_name,
-                    'type': 'nvme',
-                    'model': device.get('ModelNumber'),
-                    'serial': device.get('SerialNumber'),
-                    'firmware': device.get('Firmware'),
-                    'raw_info': device
-                }
-
-    # Fallback to text output parsing
-    if isinstance(nvme_data, dict) and 'raw_text' in nvme_data:
-        for line in nvme_data['raw_text'].splitlines():
-            # Look for device node pattern: "/dev/nvme0n1" or "nvme0n1"
-            if device_name in line and '/dev/' in line:
-                return {
-                    'controller_name': controller_name,
-                    'device_name': device_name,
-                    'type': 'nvme',
-                    'raw_info': line.strip()
-                }
-
-    return None
-
-
-def get_sata_controller_ports(controller_pci: str, controllers_and_devices: Optional[Dict[str, List[Dict]]] = None) -> List[str]:
-    """Get list of SATA ports for a given controller.
-
-    Args:
-        controller_pci: PCI address of SATA controller
-        controllers_and_devices: Optional pre-discovered data to avoid redundant scans
-
-    Returns:
-        List of device paths connected to this controller
-    """
-    if not validate_pci_address(controller_pci):
-        logging.warning(f"Invalid PCI address: {controller_pci}")
-        return []
-
-    devices = []
-    if controllers_and_devices is None:
-        controllers_and_devices = discover_controllers_and_devices(use_cache=True)
-
-    for device_info in controllers_and_devices.get('sata', []):
-        controller = device_info.get('controller')
-        if controller and controller.get('pci_address') == controller_pci:
-            devices.append(device_info['device_path'])
-
-    return devices
 
 
 def is_enclosure_device(scsi_device_path: str, device_type_cache: Optional[Dict[str, bool]] = None) -> bool:
@@ -937,6 +744,10 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
     # Update cache with successful result
     if use_cache:
         with _SAS_EXPANDER_CACHE_LOCK:
+            if len(_SAS_EXPANDER_CACHE) >= MAX_SAS_EXPANDER_CACHE_SIZE:
+                oldest_keys = sorted(_SAS_EXPANDER_CACHE, key=lambda k: _SAS_EXPANDER_CACHE[k]['timestamp'])
+                for k in oldest_keys[:len(oldest_keys) - MAX_SAS_EXPANDER_CACHE_SIZE + 1]:
+                    del _SAS_EXPANDER_CACHE[k]
             _SAS_EXPANDER_CACHE[pci_address] = {'data': result, 'timestamp': time.time()}
 
     return result

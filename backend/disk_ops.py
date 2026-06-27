@@ -148,9 +148,13 @@ def get_background_smart_max_workers():
         return 4
 
 
-# Medium #34: Global flag for discovery interruption
-_discovery_interrupted = False
+# Medium #34: Global generation counter for discovery interruption.
+# Uses a monotonically increasing counter instead of a boolean flag to avoid
+# the cross-operation reset race (Lesson #101). Each discovery captures the
+# generation in a thread-local and compares it to detect signals since then.
+_discovery_interrupt_generation = 0
 _discovery_interrupt_lock = threading.Lock()
+_discovery_thread_state = threading.local()
 
 # Phase 1: Persistent background extended SMART collection worker pool
 _EXTENDED_SMART_EXECUTOR = None
@@ -161,17 +165,19 @@ _shutdown_lock = threading.Lock()
 
 def _handle_discovery_signal(signum, frame):
     """Signal handler for SIGTERM/SIGINT during discovery operations."""
-    global _discovery_interrupted, _shutdown_requested
+    global _discovery_interrupt_generation, _shutdown_requested
     with _discovery_interrupt_lock:
-        _discovery_interrupted = True
+        _discovery_interrupt_generation += 1
     with _shutdown_lock:
         _shutdown_requested = True
 
 def _check_discovery_interrupted():
-    """Check if discovery was interrupted by signal."""
-    global _discovery_interrupted
+    """Check if discovery was interrupted by signal since this thread's operation started."""
+    gen = getattr(_discovery_thread_state, 'generation', None)
+    if gen is None:
+        return False
     with _discovery_interrupt_lock:
-        return _discovery_interrupted
+        return _discovery_interrupt_generation != gen
 
 def invalidate_drive_cache(device=None):
     """Invalidate cached per-device drive data and pending background SMART tasks.
@@ -288,14 +294,6 @@ def _get_os_by_path_cached():
     return data
 
 # --- DISCOVERY ENGINE ---
-
-def get_all_controllers():
-    """Get all PCI storage controllers for discovery API.
-    
-    Returns:
-        List of controller dictionaries with PCI address, vendor, device, and type info
-    """
-    return scan_pci_controllers()
 
 def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, configured_type, passphrase, use_identity_only=False):
     """Collect all expensive per-drive data (SMART, capabilities, marker) for one device.
@@ -796,6 +794,11 @@ def _submit_drive_for_extended_smart(item, passphrase):
             _EXTENDED_SMART_PENDING.discard(cache_key)
 
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None, skip_auto_enqueue=False):
+    # Medium #34: Capture current generation in thread-local so we can detect
+    # signals received during this discovery without clearing signals for other operations.
+    with _discovery_interrupt_lock:
+        _discovery_thread_state.generation = _discovery_interrupt_generation
+
     # Medium #35: Discovery operations are read-only (no device writes/modifications).
     # Device-level locking is intentionally skipped to avoid blocking verification operations.
     # Discovery only reads device information (SMART data, capabilities, etc.) and does not

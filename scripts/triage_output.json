@@ -1,7 +1,7 @@
 {
   "total_issues": 125,
-  "completed": 7,
-  "pending": 118,
+  "completed": 28,
+  "pending": 97,
   "groups": [
     {
       "id": "G1",
@@ -9,16 +9,6 @@
       "pattern_id": "perf_caching",
       "fix_shape": "Add TTL cache or file-mtime-based cache",
       "issues": [
-        {
-          "id": "A89",
-          "title": "`wizardData.slots` set but never read",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "736",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove the assignment, or refactor save handlers to use `wizardData.slots` instead of re-reading from DOM (which would also fix A82)."
-        },
         {
           "id": "A16",
           "title": "`verify_crypto_hash_comparison` Re-reads Unchanged Chunks Unnecessarily",
@@ -71,7 +61,6 @@
         }
       ],
       "issue_ids": [
-        "A89",
         "A16",
         "A1",
         "A21",
@@ -83,12 +72,10 @@
         "backend/crypto_verification.py",
         "backend/disk_ops.py",
         "backend/udev_listener.py",
-        "backend/zero_check_manager.py",
-        "frontend/admin/enclosureManagement.js"
+        "backend/zero_check_manager.py"
       ],
-      "weight": 19,
+      "weight": 18,
       "difficulty_breakdown": {
-        "trivial": 1,
         "low": 1,
         "medium": 4
       },
@@ -405,36 +392,6 @@
     },
     {
       "id": "G7",
-      "pattern": "Non-atomic file writes",
-      "pattern_id": "atomic_write",
-      "fix_shape": "Use tempfile + flush + fsync + os.replace() pattern",
-      "issues": [
-        {
-          "id": "C1",
-          "title": "`save_policy()` Non-Atomic Write",
-          "file": "backend/common.py",
-          "line": "475-481",
-          "severity": "critical",
-          "difficulty": "trivial",
-          "category": "Correctness",
-          "suggestion": "Apply same atomic write pattern as `save_bay_map()`: write to temp file, `f.flush()` + `os.fsync()`, then `os.replace()`."
-        }
-      ],
-      "issue_ids": [
-        "C1"
-      ],
-      "files": [
-        "backend/common.py"
-      ],
-      "weight": 1,
-      "difficulty_breakdown": {
-        "trivial": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G8",
       "pattern": "Unbounded dict/list growth (memory leak)",
       "pattern_id": "memory_leak",
       "fix_shape": "Use WeakValueDictionary or add cleanup on release",
@@ -476,143 +433,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G9",
-      "pattern": "Dead code: unused functions/classes/CSS",
-      "pattern_id": "dead_code",
-      "fix_shape": "Remove dead code or wire it into a caller if the feature was intended",
-      "issues": [
-        {
-          "id": "A65",
-          "title": "`get_all_controllers()` Is Dead Code in Production",
-          "file": "backend/disk_ops.py",
-          "line": "292-298",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove the function. If tests need it, they can import `scan_pci_controllers` from `device_discovery` directly."
-        },
-        {
-          "id": "A43",
-          "title": "Dead utility classes — zero callers",
-          "file": "frontend/styles.css",
-          "line": "1039-1043 (`.grid-span-2-rows`), 1386-1389 (`.hidden--slide-down`), 1391-1393 (`.overflow-y-auto`), 1396-1398 (`.border-default`), 1400-1402 (`.bg-surface-1`), 1404-1406 (`.rounded-md`)",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove all six classes. If any are needed later, they can be re-added."
-        },
-        {
-          "id": "A44",
-          "title": "Dead CSS variables — never referenced",
-          "file": "frontend/styles.css",
-          "line": "36 (`--z-below`), 37 (`--z-base`)",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove both variables."
-        },
-        {
-          "id": "A54",
-          "title": "`controller_by_pci` dict built but never used",
-          "file": "backend/device_discovery.py",
-          "line": "311",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove line 311. Alternatively, refactor to use `controller_by_pci` for O(1) lookups instead of calling `get_controller_for_device` (which re-resolves sysfs paths per device)."
-        },
-        {
-          "id": "A56",
-          "title": "`_map_pci_class_to_type` fallback description parsing is dead code",
-          "file": "backend/device_discovery.py",
-          "line": "203-218",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove the fallback (lines 203-218) and the `description` parameter. Return `class_map[class_code]` directly."
-        },
-        {
-          "id": "A67",
-          "title": "SAS and HDD POH penalty branches are identical — dead branch",
-          "file": "backend/smart_parsing.py",
-          "line": "455-460",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Either use `thresholds[\"sas_high_poh_threshold\"]` in the SAS branch, or remove the if/else and use a single formula with the HDD threshold."
-        },
-        {
-          "id": "A79",
-          "title": "Dead code — `cachedUnmappedDrives` and `cachedUnmappedDrivesTime` never used",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "7-8",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove both declarations."
-        },
-        {
-          "id": "A8",
-          "title": "`purge_old_certificates()` Never Called",
-          "file": "backend/common.py",
-          "line": "350-374",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Dead Code",
-          "suggestion": "Wire into same cleanup paths as `purge_old_logs()`, or remove if retention is handled elsewhere."
-        },
-        {
-          "id": "C12",
-          "title": "`get_runtime_slot_state()` is dead code (zero external callers)",
-          "file": "backend/udev_listener.py",
-          "line": "348-355",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Dead Code",
-          "suggestion": "Remove the function, or connect it to a consumer if the feature was intended."
-        },
-        {
-          "id": "C22",
-          "title": "Three functions with zero external callers (dead code)",
-          "file": "backend/device_discovery.py",
-          "line": "356-378 (`get_device_by_pci_path`), 439-493 (`get_nvme_controller_info`), 496-519 (`get_sata_controller_ports`)",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Dead Code",
-          "suggestion": "Remove all three functions and `_get_nvme_list_data`. If any are needed in the future, they can be re-added with proper callers."
-        }
-      ],
-      "issue_ids": [
-        "A65",
-        "A43",
-        "A44",
-        "A54",
-        "A56",
-        "A67",
-        "A79",
-        "A8",
-        "C12",
-        "C22"
-      ],
-      "files": [
-        "backend/common.py",
-        "backend/device_discovery.py",
-        "backend/disk_ops.py",
-        "backend/smart_parsing.py",
-        "backend/udev_listener.py",
-        "frontend/admin/enclosureManagement.js",
-        "frontend/styles.css"
-      ],
-      "weight": 19,
-      "difficulty_breakdown": {
-        "trivial": 7,
-        "medium": 3
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G10",
+      "id": "G8",
       "pattern": "Input validation gaps",
       "pattern_id": "input_validation",
       "fix_shape": "Validate input types, formats, and enforce size limits",
@@ -703,7 +524,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G11",
+      "id": "G9",
       "pattern": "Signal flags never reset after handler",
       "pattern_id": "signal_flag_reset",
       "fix_shape": "Reset interruption flags at start of each operation, or use threading.Event",
@@ -758,7 +579,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G12",
+      "id": "G10",
       "pattern": "DRY: duplicated logic across functions/files",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -880,12 +701,12 @@
       "session_size": "large",
       "action": "batch_fix",
       "related_groups": [
-        "G13",
-        "G14"
+        "G11",
+        "G12"
       ]
     },
     {
-      "id": "G13",
+      "id": "G11",
       "pattern": "DRY: duplicated logic across functions/files (batch 2)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -948,12 +769,12 @@
       "session_size": "medium",
       "action": "batch_fix",
       "related_groups": [
-        "G12",
-        "G14"
+        "G10",
+        "G12"
       ]
     },
     {
-      "id": "G14",
+      "id": "G12",
       "pattern": "DRY: duplicated logic across functions/files (batch 3)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -994,12 +815,12 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G12",
-        "G13"
+        "G10",
+        "G11"
       ]
     },
     {
-      "id": "G15",
+      "id": "G13",
       "pattern": "Timing attack: == instead of hmac.compare_digest",
       "pattern_id": "timing_attack",
       "fix_shape": "Replace == with hmac.compare_digest for hash/token comparisons",
@@ -1041,7 +862,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G16",
+      "id": "G14",
       "pattern": "Inconsistent return types across code paths",
       "pattern_id": "inconsistent_return",
       "fix_shape": "Return consistent types (e.g., always list) or raise custom exception",
@@ -1084,7 +905,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G17",
+      "id": "G15",
       "pattern": "Error swallowing: bare except / silent failures",
       "pattern_id": "error_swallowing",
       "fix_shape": "Add logging to except blocks, catch specific exceptions",
@@ -1163,7 +984,7 @@
       "action": "plan"
     },
     {
-      "id": "G18",
+      "id": "G16",
       "pattern": "Resource leaks in error paths",
       "pattern_id": "resource_leak",
       "fix_shape": "Use context managers or close resources in except/finally blocks",
@@ -1193,7 +1014,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G19",
+      "id": "G17",
       "pattern": "Information disclosure: str(e) in API responses",
       "pattern_id": "info_disclosure",
       "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
@@ -1248,7 +1069,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G20",
+      "id": "G18",
       "pattern": "File organization: domain mixing / god modules",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -1289,11 +1110,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G21"
+        "G19"
       ]
     },
     {
-      "id": "G21",
+      "id": "G19",
       "pattern": "File organization: domain mixing / god modules (batch 2)",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -1334,52 +1155,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G20"
+        "G18"
       ]
     },
     {
-      "id": "G22",
-      "pattern": "Cache failure state cached (None/empty cached for full TTL)",
-      "pattern_id": "cache_failure_state",
-      "fix_shape": "Move cache update inside success path only; never cache failure states",
-      "issues": [
-        {
-          "id": "C20",
-          "title": "`scan_pci_controllers` caches failure state (empty list) for 1 hour",
-          "file": "backend/device_discovery.py",
-          "line": "119-124, 178-183",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Caching",
-          "suggestion": "Move cache update inside the success path only. Remove the cache update from the `returncode != 0` early return (lines 120-124) and from the `finally` block (lines 178-183). Only update cache after su"
-        },
-        {
-          "id": "C21",
-          "title": "`detect_sas_expander` caches `None` failure state for 1 hour",
-          "file": "backend/device_discovery.py",
-          "line": "922-927",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Caching",
-          "suggestion": "Remove the `None` cache write at lines 924-926. Let cache misses re-scan until a valid result is found. The success path cache writes at lines 943-945 are correct."
-        }
-      ],
-      "issue_ids": [
-        "C20",
-        "C21"
-      ],
-      "files": [
-        "backend/device_discovery.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "low": 2
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G23",
+      "id": "G20",
       "pattern": "Misc: Code Quality",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1506,7 +1286,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G24",
+      "id": "G21",
       "pattern": "Misc: Code Quality",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1547,7 +1327,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G25",
+      "id": "G22",
       "pattern": "Misc: Architecture",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1602,7 +1382,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G26",
+      "id": "G23",
       "pattern": "Misc: Concurrency",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1680,7 +1460,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G27",
+      "id": "G24",
       "pattern": "Misc: Performance",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1759,97 +1539,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G28",
-      "pattern": "Misc: Correctness",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "C23",
-          "title": "`logger` undefined — NameError at runtime",
-          "file": "backend/smart_parsing.py",
-          "line": "1117",
-          "severity": "critical",
-          "difficulty": "trivial",
-          "category": "Correctness",
-          "suggestion": "Add `import logging` and `logger = logging.getLogger(__name__)` at module level, or import `logger` from `app_config` like `job_management.py` does."
-        },
-        {
-          "id": "A62",
-          "title": "`detect_sas_expander` magic number fallback `phy_count = 10`",
-          "file": "backend/device_discovery.py",
-          "line": "884, 935",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Correctness",
-          "suggestion": "Define a named constant `_DEFAULT_SAS_PHY_COUNT = 10` and document that it's a conservative fallback. Consider logging a warning when the fallback is used so operators can investigate."
-        },
-        {
-          "id": "C24",
-          "title": "`remaining` None causes TypeError in `get_smart_test_status`",
-          "file": "backend/smart_parsing.py",
-          "line": "828",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Correctness",
-          "suggestion": "Change line 828 to `if remaining is not None and remaining > 0:`."
-        },
-        {
-          "id": "C25",
-          "title": "SATA SSD `remaining_life` inverted in `get_drive_recommendation`",
-          "file": "backend/smart_parsing.py",
-          "line": "949",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Correctness",
-          "suggestion": "Change to `remaining_life = max(0, 100 - wear_val)` for all SSD types (remove the conditional). The `wear_level` field is always percentage-used across all interfaces."
-        },
-        {
-          "id": "A22",
-          "title": "`_apply_collection_failure` Assumes `diagnostics.commands` Key Exists",
-          "file": "backend/disk_ops.py",
-          "line": "378",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Correctness",
-          "suggestion": "Use `bay_info.setdefault(\"diagnostics\", {}).setdefault(\"commands\", {})[\"collection\"] = ...` for defensive robustness."
-        },
-        {
-          "id": "A29",
-          "title": "`_runtime_slot_state` stores `None` instead of deleting keys",
-          "file": "backend/udev_listener.py",
-          "line": "286",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Correctness",
-          "suggestion": "Use `_runtime_slot_state.pop((enc_id, slot_num), None)` instead."
-        }
-      ],
-      "issue_ids": [
-        "C23",
-        "A62",
-        "C24",
-        "C25",
-        "A22",
-        "A29"
-      ],
-      "files": [
-        "backend/device_discovery.py",
-        "backend/disk_ops.py",
-        "backend/smart_parsing.py",
-        "backend/udev_listener.py"
-      ],
-      "weight": 15,
-      "difficulty_breakdown": {
-        "trivial": 1,
-        "low": 3,
-        "medium": 2
-      },
-      "session_size": "medium",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G29",
+      "id": "G25",
       "pattern": "Misc: Error Handling",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1914,7 +1604,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G30",
+      "id": "G26",
       "pattern": "Misc: Security",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1956,7 +1646,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G31",
+      "id": "G27",
       "pattern": "Ungrouped: backend/crypto_verification.py",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1986,7 +1676,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G32",
+      "id": "G28",
       "pattern": "Ungrouped: backend/disk_ops.py",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -2011,36 +1701,6 @@
       "weight": 4,
       "difficulty_breakdown": {
         "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G33",
-      "pattern": "Ungrouped: backend/device_discovery.py",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "A63",
-          "title": "`get_scsi_host_slot_projections` dead `max_slot` variable in expander path",
-          "file": "backend/device_discovery.py",
-          "line": "1450",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Dead Code",
-          "suggestion": "Remove line 1450."
-        }
-      ],
-      "issue_ids": [
-        "A63"
-      ],
-      "files": [
-        "backend/device_discovery.py"
-      ],
-      "weight": 1,
-      "difficulty_breakdown": {
-        "trivial": 1
       },
       "session_size": "small",
       "action": "batch_fix"

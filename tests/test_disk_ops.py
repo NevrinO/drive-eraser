@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 import disk_ops
-from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock, _auto_enqueue_zero_checks
+from disk_ops import get_os_parent_device, get_os_by_path, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock, _auto_enqueue_zero_checks
 from common import DRIVE_DATA_CACHE_TTL
 
 
@@ -192,8 +192,13 @@ class TestDiscoveryInterruption:
     """Test discovery interruption handling (Medium #34)."""
 
     def test_signal_handler_sets_interrupted_flag(self):
-        """Test that signal handler sets the interrupted flag."""
-        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted
+        """Test that signal handler increments generation counter."""
+        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state
+        import disk_ops
+
+        # Set thread-local generation to current value
+        with disk_ops._discovery_interrupt_lock:
+            _discovery_thread_state.generation = disk_ops._discovery_interrupt_generation
 
         # Initially not interrupted
         assert _check_discovery_interrupted() is False
@@ -206,15 +211,20 @@ class TestDiscoveryInterruption:
 
     def test_check_interrupted_thread_safe(self):
         """Test that _check_discovery_interrupted is thread-safe."""
-        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted
+        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state, _discovery_interrupt_lock
+        import disk_ops
         import threading
 
-        # Set interrupted flag
+        with _discovery_interrupt_lock:
+            gen_before_signal = disk_ops._discovery_interrupt_generation
+
+        # Simulate signal handler
         _handle_discovery_signal(None, None)
 
         # Multiple threads should be able to check safely
         results = []
         def check_flag():
+            _discovery_thread_state.generation = gen_before_signal
             results.append(_check_discovery_interrupted())
 
         threads = [threading.Thread(target=check_flag) for _ in range(10)]
@@ -223,7 +233,7 @@ class TestDiscoveryInterruption:
         for t in threads:
             t.join()
 
-        # All should return True
+        # All should return True (generation was set before the signal)
         assert all(results)
 
 
@@ -348,11 +358,12 @@ class TestPresenceDetectionUncached:
     """Test that presence detection (by-path resolution) is NOT cached for real-time detection."""
 
     def setup_method(self):
-        """Clear cache and reset interruption flag before each test."""
+        """Clear cache and reset thread-local state before each test."""
         import disk_ops
         invalidate_drive_cache()
-        with disk_ops._discovery_interrupt_lock:
-            disk_ops._discovery_interrupted = False
+        # Clear thread-local generation so _check_discovery_interrupted returns False
+        if hasattr(disk_ops._discovery_thread_state, 'generation'):
+            del disk_ops._discovery_thread_state.generation
 
     def teardown_method(self):
         """Clear cache after each test."""

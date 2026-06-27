@@ -72,49 +72,64 @@ def get_drives():
                 except Exception as e:
                     logger.warning(f"Failed to set SMART test status for {device_path}: {e}")
 
+        # Snapshot ERASE_JOBS state inside lock to avoid holding lock during DB queries
+        jobs_snapshot = []
         with ERASE_JOBS_LOCK:
-            for d in drives:
-                bay_name = d.get("bay")
-                for job_id, job in ERASE_JOBS.items():
-                    req = job.get("request") or {}
-                    if str(req.get("bay")).lower() == str(bay_name).lower():
-                        if job.get("status") in {"running", "queued"}:
-                            d["status"] = job["status"].upper()
-                            d["progress_percent"] = job.get("progress_percent", 0.0)
-                            d["current_phase"] = job.get("current_phase", "Sanitizing")
+            for job_id, job in ERASE_JOBS.items():
+                req = job.get("request") or {}
+                jobs_snapshot.append({
+                    "job_id": job_id,
+                    "status": job.get("status"),
+                    "progress_percent": job.get("progress_percent", 0.0),
+                    "current_phase": job.get("current_phase", "Sanitizing"),
+                    "bay": req.get("bay"),
+                    "serial": req.get("serial"),
+                    "model": req.get("model"),
+                    "capacity_bytes": req.get("capacity_bytes"),
+                })
 
-                            if req.get("serial"):
-                                d["serial"] = req.get("serial")
-                            if req.get("model"):
-                                d["model"] = req.get("model")
-                            if req.get("capacity_bytes"):
-                                d["capacity_str"] = format_capacity_bytes(req.get("capacity_bytes"))
-                            break
+        # Match drives to jobs and perform DB queries outside lock
+        for d in drives:
+            bay_name = d.get("bay")
+            for job_snap in jobs_snapshot:
+                if str(job_snap.get("bay")).lower() == str(bay_name).lower():
+                    if job_snap["status"] in {"running", "queued"}:
+                        d["status"] = job_snap["status"].upper()
+                        d["progress_percent"] = job_snap["progress_percent"]
+                        d["current_phase"] = job_snap["current_phase"]
 
-                        # Phase 5: Include prior-visit data and snapshot IDs when drive is linked to a job
-                        if req.get("serial"):
-                            serial = req.get("serial")
-                            prior_visit = load_prior_visit(serial)
-                            if prior_visit:
-                                d["prior_visit"] = {
-                                    "seen_at": prior_visit.get("seen_at"),
-                                    "health_score": prior_visit.get("health_score"),
-                                    "recommendation": prior_visit.get("recommendation"),
-                                }
+                        if job_snap.get("serial"):
+                            d["serial"] = job_snap["serial"]
+                        if job_snap.get("model"):
+                            d["model"] = job_snap["model"]
+                        if job_snap.get("capacity_bytes"):
+                            d["capacity_str"] = format_capacity_bytes(job_snap["capacity_bytes"])
+                        break
 
-                            # Load snapshot IDs from database
-                            try:
-                                with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn:
-                                    conn.row_factory = sqlite3.Row
-                                    row = conn.execute(
-                                        "SELECT pre_wipe_smart_json, post_wipe_smart_json FROM erase_jobs WHERE id = ?",
-                                        (job_id,)
-                                    ).fetchone()
-                                    if row:
-                                        d["has_pre_wipe_snapshot"] = bool(row["pre_wipe_smart_json"])
-                                        d["has_post_wipe_snapshot"] = bool(row["post_wipe_smart_json"])
-                            except Exception as e:
-                                logger.warning(f"Failed to load snapshot IDs for job {job_id}: {e}")
+                    # Phase 5: Include prior-visit data and snapshot IDs when drive is linked to a job
+                    if job_snap.get("serial"):
+                        serial = job_snap["serial"]
+                        prior_visit = load_prior_visit(serial)
+                        if prior_visit:
+                            d["prior_visit"] = {
+                                "seen_at": prior_visit.get("seen_at"),
+                                "health_score": prior_visit.get("health_score"),
+                                "recommendation": prior_visit.get("recommendation"),
+                            }
+
+                        # Load snapshot IDs from database
+                        try:
+                            with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn:
+                                conn.row_factory = sqlite3.Row
+                                row = conn.execute(
+                                    "SELECT pre_wipe_smart_json, post_wipe_smart_json FROM erase_jobs WHERE id = ?",
+                                    (job_snap["job_id"],)
+                                ).fetchone()
+                                if row:
+                                    d["has_pre_wipe_snapshot"] = bool(row["pre_wipe_smart_json"])
+                                    d["has_post_wipe_snapshot"] = bool(row["post_wipe_smart_json"])
+                        except Exception as e:
+                            logger.warning(f"Failed to load snapshot IDs for job {job_snap['job_id']}: {e}")
 
         # Merge ephemeral zero-check status for each drive
         try:

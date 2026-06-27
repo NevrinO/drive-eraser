@@ -4,11 +4,11 @@ import json
 import time
 import logging
 from threading import Lock, RLock
+from weakref import WeakValueDictionary
 from jsonschema import validate, ValidationError
 
 # Constants
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
-DEFAULT_CERTIFICATE_RETENTION_DAYS = 365  # Default number of days to retain certificates
 SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certificate signature (NIST recommendation: 100,000+)
 DRIVE_DATA_CACHE_TTL = 600  # seconds (10 minutes) - TTL for drive discovery cache
 
@@ -20,7 +20,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAY_MAP_LOCK = RLock()
 
 # High #13: Device-level lock to prevent concurrent operations on same device
-DEVICE_LOCKS = {}  # device_path -> Lock
+DEVICE_LOCKS = WeakValueDictionary()  # device_path -> Lock (auto-cleaned when no references remain)
 DEVICE_LOCKS_LOCK = Lock()  # Lock for accessing DEVICE_LOCKS dict
 
 logger = logging.getLogger("app")
@@ -29,11 +29,14 @@ def get_device_lock(device_path):
     """
     Get or create a device-specific lock for concurrent operation prevention.
     High #13: Shared lock mechanism for verification operations.
+    Uses WeakValueDictionary so locks are auto-cleaned when no callers hold references.
     """
     with DEVICE_LOCKS_LOCK:
-        if device_path not in DEVICE_LOCKS:
-            DEVICE_LOCKS[device_path] = Lock()
-        return DEVICE_LOCKS[device_path]
+        lock = DEVICE_LOCKS.get(device_path)
+        if lock is None:
+            lock = Lock()
+            DEVICE_LOCKS[device_path] = lock
+        return lock
 
 DEFAULT_POLICY = {
     "prewipe_zero_detection_enabled": True,
@@ -347,31 +350,6 @@ def purge_old_logs(max_age_days=DEFAULT_LOG_RETENTION_DAYS):
                     pass # Remain stable if a file is currently locked or deleted by another thread
     return purged_count
 
-def purge_old_certificates(max_age_days=DEFAULT_CERTIFICATE_RETENTION_DAYS):
-    """
-    Medium #58: Scans certificate directory and purges any files
-    whose last modified time exceeds max_age_days.
-    """
-    now = time.time()
-    max_age_seconds = max_age_days * 86400
-    cert_dir = get_cert_dir()
-
-    purged_count = 0
-    if not os.path.isdir(cert_dir):
-        return purged_count
-
-    for entry in os.listdir(cert_dir):
-        full_path = os.path.join(cert_dir, entry)
-        # Ensure we only delete certificate files (json and html), avoiding folders
-        if os.path.isfile(full_path) and (entry.endswith(".json") or entry.endswith(".html")):
-            try:
-                mtime = os.path.getmtime(full_path)
-                if (now - mtime) > max_age_seconds:
-                    os.remove(full_path)
-                    purged_count += 1
-            except Exception:
-                pass # Remain stable if a file is currently locked or deleted by another thread
-    return purged_count
 # --- END OF LOGGING DIRECTORY EXTENSIONS ---
 
 def get_config_dir():
