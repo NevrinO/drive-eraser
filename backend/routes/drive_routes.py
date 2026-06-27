@@ -6,9 +6,10 @@ from contextlib import closing
 from flask import Blueprint, jsonify
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, limiter
 from common import get_config_dir, load_policy, get_db_path
-from disk_ops import discover_drives, invalidate_drive_cache
+from disk_ops import discover_drives, invalidate_drive_cache, _is_eligible_for_zero_check
 from disk_utils import format_capacity_bytes
 from routes.admin_routes import require_admin_auth
+from zero_check_manager import get_manager as get_zero_check_manager
 from database import load_prior_visit, get_smart_test_history, get_smart_test_status_batch
 from device_discovery import (
     invalidate_sas_expander_cache,
@@ -115,6 +116,16 @@ def get_drives():
                             except Exception as e:
                                 logger.warning(f"Failed to load snapshot IDs for job {job_id}: {e}")
 
+        # Merge ephemeral zero-check status for each drive
+        try:
+            zero_check_manager = get_zero_check_manager()
+            for d in drives:
+                bay = d.get("bay")
+                if bay:
+                    d["zero_check"] = zero_check_manager.get_status(bay)
+        except Exception as e:
+            logger.warning(f"Failed to merge zero-check status: {e}")
+
         return jsonify(drives)
     except Exception as e:
         logger.error(f"Error getting drives: {e}")
@@ -138,4 +149,71 @@ def get_status():
         })
     except Exception as e:
         logger.error(f"Error getting status: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _resolve_drive_for_bay(bay):
+    """Resolve a bay to its current drive dict from discovery, or None."""
+    if not bay:
+        return None
+    try:
+        running_devices = set()
+        with ERASE_JOBS_LOCK:
+            for job in ERASE_JOBS.values():
+                if job.get("status") in {"running", "queued"}:
+                    dev = job.get("request", {}).get("device")
+                    if dev:
+                        running_devices.add(dev)
+        config_dir = get_config_dir()
+        drives = discover_drives(os.path.join(config_dir, "bay_map.json"), running_devices=running_devices, skip_auto_enqueue=True)
+        for d in drives:
+            if d.get("bay") == bay:
+                return d
+    except Exception as e:
+        logger.warning(f"Failed to resolve drive for bay {bay}: {e}")
+    return None
+
+
+@drive_bp.route("/api/drives/<bay>/zero-check", methods=["POST"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def start_zero_check(bay):
+    """Manually trigger a background zero-check for a bay."""
+    try:
+        drive = _resolve_drive_for_bay(bay)
+        if not drive:
+            return jsonify({"error": f"bay not found or no drive present: {bay}"}), 404
+        if not drive.get("present"):
+            return jsonify({"error": f"no drive present in bay: {bay}"}), 409
+        device = drive.get("device")
+        if not device:
+            return jsonify({"error": f"device not resolved for bay: {bay}"}), 409
+
+        policy = load_policy(get_config_dir())
+        if not policy.get("prewipe_zero_detection_enabled", True):
+            return jsonify({"error": "pre-wipe zero detection is disabled by policy"}), 403
+
+        manager = get_zero_check_manager()
+        eligible, reason = _is_eligible_for_zero_check(drive, manager, allow_completed=True)
+        if not eligible:
+            return jsonify({"error": reason}), 409
+
+        status = manager.start_check(bay, device, serial=drive.get("serial"))
+        return jsonify({"status": "success", "zero_check": status}), 200
+    except Exception as e:
+        logger.error(f"Error starting zero check for bay {bay}: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@drive_bp.route("/api/drives/<bay>/zero-check", methods=["DELETE"])
+@require_admin_auth
+@limiter.limit("30 per minute")
+def cancel_zero_check(bay):
+    """Cancel a running or queued zero-check for a bay."""
+    try:
+        manager = get_zero_check_manager()
+        result = manager.cancel_check(bay)
+        return jsonify({"status": "success", "cancelled": result.get("cancelled", True)}), 200
+    except Exception as e:
+        logger.error(f"Error cancelling zero check for bay {bay}: {e}")
         return jsonify({"error": str(e)}), 500

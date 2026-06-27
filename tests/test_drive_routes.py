@@ -215,6 +215,127 @@ class TestDriveRoutes:
             data = json.loads(response.data)
             assert "error" in data
 
+    def test_start_zero_check_success(self, client):
+        """Test manual zero-check succeeds for an eligible drive."""
+        response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
+        assert response.status_code == 200
+
+        fake_drive = {"bay": "bay1", "present": True, "device": "/dev/sdb"}
+        fake_manager = MagicMock()
+        fake_manager.start_check.return_value = {"status": "queued"}
+
+        with patch('routes.drive_routes._resolve_drive_for_bay', return_value=fake_drive):
+            with patch('routes.drive_routes.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+                with patch('routes.drive_routes._is_eligible_for_zero_check', return_value=(True, "")):
+                    with patch('routes.drive_routes.get_zero_check_manager', return_value=fake_manager):
+                        response = client.post('/api/drives/bay1/zero-check')
+                        assert response.status_code == 200
+                        data = json.loads(response.data)
+                        assert data["status"] == "success"
+                        fake_manager.start_check.assert_called_once_with("bay1", "/dev/sdb", serial=None)
+
+    def test_start_zero_check_rejects_ineligible(self, client):
+        """Test manual zero-check rejects drives that fail the shared eligibility filter."""
+        response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
+        assert response.status_code == 200
+
+        fake_drive = {"bay": "bay1", "present": True, "device": "/dev/sdb"}
+
+        with patch('routes.drive_routes._resolve_drive_for_bay', return_value=fake_drive):
+            with patch('routes.drive_routes.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+                with patch('routes.drive_routes._is_eligible_for_zero_check', return_value=(False, "drive is locked or busy")):
+                    with patch('routes.drive_routes.get_zero_check_manager'):
+                        response = client.post('/api/drives/bay1/zero-check')
+                        assert response.status_code == 409
+                        data = json.loads(response.data)
+                        assert "drive is locked or busy" in data["error"]
+
+    def test_start_zero_check_disabled_by_policy(self, client):
+        """Test manual zero-check returns 403 when disabled by policy."""
+        response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
+        assert response.status_code == 200
+
+        fake_drive = {"bay": "bay1", "present": True, "device": "/dev/sdb"}
+
+        with patch('routes.drive_routes._resolve_drive_for_bay', return_value=fake_drive):
+            with patch('routes.drive_routes.load_policy', return_value={"prewipe_zero_detection_enabled": False}):
+                response = client.post('/api/drives/bay1/zero-check')
+                assert response.status_code == 403
+
+    def test_start_zero_check_allows_recheck_after_completion(self, client):
+        """Test manual zero-check succeeds even when a previous check is completed."""
+        response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
+        assert response.status_code == 200
+
+        fake_drive = {"bay": "bay1", "present": True, "device": "/dev/sdb"}
+        fake_manager = MagicMock()
+        fake_manager.get_status.return_value = {"status": "completed", "result": "zeroed"}
+        fake_manager.start_check.return_value = {"status": "queued"}
+
+        with patch('routes.drive_routes._resolve_drive_for_bay', return_value=fake_drive):
+            with patch('routes.drive_routes.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+                with patch('routes.drive_routes._is_eligible_for_zero_check', return_value=(True, None)) as mock_elig:
+                    with patch('routes.drive_routes.get_zero_check_manager', return_value=fake_manager):
+                        response = client.post('/api/drives/bay1/zero-check')
+                        assert response.status_code == 200
+                        data = json.loads(response.data)
+                        assert data["status"] == "success"
+                        # Verify allow_completed=True was passed
+                        assert mock_elig.call_args.kwargs.get("allow_completed") is True
+
+    def test_start_zero_check_blocked_for_running_wipe(self, client):
+        """Test manual zero-check is blocked when a wipe is running on the drive."""
+        response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
+        assert response.status_code == 200
+
+        # _resolve_drive_for_bay should return a drive with status=RUNNING when
+        # the device is in ERASE_JOBS as running. The eligibility filter should
+        # then block the zero-check.
+        fake_drive = {"bay": "bay1", "present": True, "device": "/dev/sdb", "status": "RUNNING"}
+
+        with patch('routes.drive_routes._resolve_drive_for_bay', return_value=fake_drive):
+            with patch('routes.drive_routes.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+                with patch('routes.drive_routes.get_zero_check_manager'):
+                    response = client.post('/api/drives/bay1/zero-check')
+                    assert response.status_code == 409
+                    data = json.loads(response.data)
+                    assert "wipe is running" in data["error"]
+
+    def test_resolve_drive_for_bay_passes_running_devices(self):
+        """Test that _resolve_drive_for_bay passes running_devices to discover_drives."""
+        from routes import drive_routes
+
+        fake_drives = [{"bay": "bay1", "present": True, "device": "/dev/sdb"}]
+
+        with patch('routes.drive_routes.discover_drives', return_value=fake_drives) as mock_discover:
+            with patch('routes.drive_routes.ERASE_JOBS', {
+                "job1": {"status": "running", "request": {"device": "/dev/sdc"}}
+            }):
+                with patch('routes.drive_routes.ERASE_JOBS_LOCK'):
+                    with patch('routes.drive_routes.get_config_dir', return_value="/tmp"):
+                        result = drive_routes._resolve_drive_for_bay("bay1")
+                        assert result is not None
+                        assert result["bay"] == "bay1"
+                        # Verify running_devices was passed
+                        call_kwargs = mock_discover.call_args
+                        assert call_kwargs.kwargs.get("running_devices") is not None
+                        assert "/dev/sdc" in call_kwargs.kwargs["running_devices"]
+
+    def test_resolve_drive_for_bay_skips_auto_enqueue(self):
+        """Test that _resolve_drive_for_bay passes skip_auto_enqueue=True (Advisory 10)."""
+        from routes import drive_routes
+
+        fake_drives = [{"bay": "bay1", "present": True, "device": "/dev/sdb"}]
+
+        with patch('routes.drive_routes.discover_drives', return_value=fake_drives) as mock_discover:
+            with patch('routes.drive_routes.ERASE_JOBS', {}):
+                with patch('routes.drive_routes.ERASE_JOBS_LOCK'):
+                    with patch('routes.drive_routes.get_config_dir', return_value="/tmp"):
+                        result = drive_routes._resolve_drive_for_bay("bay1")
+                        assert result is not None
+                        call_kwargs = mock_discover.call_args
+                        assert call_kwargs.kwargs.get("skip_auto_enqueue") is True
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

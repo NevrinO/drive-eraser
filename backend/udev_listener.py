@@ -22,6 +22,7 @@ from device_discovery import (
 from disk_ops import invalidate_drive_cache
 from routes.bay_mapping_routes import invalidate_unmapped_drive_cache
 from common import get_config_dir, load_policy
+from zero_check_manager import get_manager as get_zero_check_manager
 
 # Runtime slot state: (enclosure_id, slot_number) -> device_info
 _runtime_slot_state = {}
@@ -283,6 +284,14 @@ def udev_event_listener_thread():
                     for (enc_id, slot_num), state in list(_runtime_slot_state.items()):
                         if state and state.get('logical_device') == final_dev_node:
                             _runtime_slot_state[(enc_id, slot_num)] = None
+
+                            # Clear any per-bay zero-check state so a newly inserted drive
+                            # is not suppressed by a completed check from the previous drive.
+                            bay_id = f"{enc_id}_slot_{slot_num}"
+                            try:
+                                get_zero_check_manager().on_drive_removed(bay_id)
+                            except Exception as e:
+                                logger.debug(f"Failed to clear zero-check state for removed bay {bay_id}: {e}")
 
                             # Broadcast via WebSocket if available
                             if _websocket_manager:

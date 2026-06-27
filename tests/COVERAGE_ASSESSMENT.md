@@ -36,7 +36,7 @@ Core validation and authentication tested. Some error handling paths and edge ca
 
 ## Test Quality Observations
 
-- Tests reference lessons-learned rules (e.g., Lesson #5 for size limits, Lesson #21 for shell=False)
+- Tests reference lessons-learned rules (e.g., Lesson #4 for SQL security, Lesson #20 for shell=False)
 - Mocking used appropriately for external commands
 - Edge cases covered (None inputs, empty strings, invalid formats)
 - Integration tests for routes with Flask test client

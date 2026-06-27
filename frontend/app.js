@@ -78,6 +78,12 @@ function initWebSocket() {
     handleSmartDataUpdate(data);
   });
 
+  socket.on('zero_check_updated', (data) => {
+    if (typeof handleZeroCheckUpdate === 'function') {
+      handleZeroCheckUpdate(data);
+    }
+  });
+
   socket.on('connect_error', (error) => {
     console.warn('WebSocket connection error:', error);
   });

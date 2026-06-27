@@ -4,6 +4,9 @@ import sys
 import os
 from unittest.mock import patch, MagicMock, Mock
 import hashlib
+import threading
+import time
+import io
 
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
@@ -786,6 +789,214 @@ class TestBlockdevRetryLogic:
                             result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
                             assert result["ok"] is True
                             assert mock_sleep.call_count == 1
+
+
+class FakeBlockingProcess:
+    """Simulates a dd subprocess that blocks in stdout.read until killed."""
+
+    def __init__(self):
+        self._killed = threading.Event()
+        self.stdout = FakeBlockingStdout(self._killed)
+        self.stderr = io.BytesIO(b"")
+        self._returncode = None
+
+    def poll(self):
+        return 0 if self._killed.is_set() else None
+
+    def kill(self):
+        self._killed.set()
+
+    def wait(self, timeout=None):
+        self._killed.wait(timeout=timeout)
+        self._returncode = 0
+        return 0
+
+    @property
+    def returncode(self):
+        return self._returncode
+
+
+class FakeBlockingStdout:
+    def __init__(self, killed_event):
+        self._killed = killed_event
+
+    def read(self, n):
+        self._killed.wait()
+        return b""
+
+
+class TestCheckDriveAlreadyZeroed:
+    """Tests for the pre-wipe zero-check helper."""
+
+    def _make_zero_result(self, nonzero=False, bytes_read=0, chunks_read=1, error=None):
+        return {
+            "ok": True,
+            "nonzero": nonzero,
+            "bytes_read": bytes_read,
+            "chunks_read": chunks_read,
+            "error": error,
+        }
+
+    def test_invalid_device_path(self):
+        with patch('crypto_verification.validate_device_path', return_value=False):
+            from crypto_verification import check_drive_already_zeroed
+            result = check_drive_already_zeroed("/dev/invalid")
+            assert result["ok"] is False
+            assert result["error"] == "invalid_device_path"
+
+    def test_dd_not_available(self):
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value=None):
+                from crypto_verification import check_drive_already_zeroed
+                result = check_drive_already_zeroed("/dev/sda")
+                assert result["ok"] is False
+                assert result["error"] == "dd_not_available_for_zero_check"
+
+    def test_zeroed_large_drive(self):
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification._check_interrupted', return_value=False):
+                        with patch('crypto_verification.load_policy', return_value={
+                            "zero_check_total_bytes_gb": 2,
+                            "zero_check_zone_count": 5,
+                            "zero_check_block_size_mb": 16,
+                            "zero_check_small_drive_threshold_gb": 2,
+                            "blockdev_post_wipe_retries": 0,
+                            "blockdev_post_wipe_retry_delay": 0,
+                        }):
+                            with patch('crypto_verification._run_blockdev_getsize64', return_value={"error": None, "capacity": 100 * 1024 * 1024 * 1024}):
+                                with patch('crypto_verification._run_cancellable_zone_read') as mock_zone:
+                                    mock_zone.return_value = self._make_zero_result(
+                                        nonzero=False, bytes_read=429496729, chunks_read=27
+                                    )
+                                    from crypto_verification import check_drive_already_zeroed
+                                    result = check_drive_already_zeroed("/dev/sda")
+                                    assert result["ok"] is True
+                                    assert result["result"] == "zeroed"
+                                    assert result["is_zeroed"] is True
+                                    assert mock_zone.call_count == 5
+
+    def test_data_present_detected(self):
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification._check_interrupted', return_value=False):
+                        with patch('crypto_verification.load_policy', return_value={
+                            "zero_check_total_bytes_gb": 2,
+                            "zero_check_zone_count": 5,
+                            "zero_check_block_size_mb": 16,
+                            "zero_check_small_drive_threshold_gb": 2,
+                            "blockdev_post_wipe_retries": 0,
+                            "blockdev_post_wipe_retry_delay": 0,
+                        }):
+                            with patch('crypto_verification._run_blockdev_getsize64', return_value={"error": None, "capacity": 100 * 1024 * 1024 * 1024}):
+                                with patch('crypto_verification._run_cancellable_zone_read') as mock_zone:
+                                    def side_effect(*args, **kwargs):
+                                        side_effect.calls += 1
+                                        if side_effect.calls == 1:
+                                            return self._make_zero_result(
+                                                nonzero=True, bytes_read=16 * 1024 * 1024, chunks_read=1
+                                            )
+                                        return self._make_zero_result(
+                                            nonzero=False, bytes_read=429496729, chunks_read=27
+                                        )
+                                    side_effect.calls = 0
+                                    mock_zone.side_effect = side_effect
+                                    from crypto_verification import check_drive_already_zeroed
+                                    result = check_drive_already_zeroed("/dev/sda")
+                                    assert result["ok"] is True
+                                    assert result["result"] == "data_present"
+                                    assert result["is_zeroed"] is False
+
+    def test_small_drive_read_whole(self):
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification._check_interrupted', return_value=False):
+                        with patch('crypto_verification.load_policy', return_value={
+                            "zero_check_total_bytes_gb": 2,
+                            "zero_check_zone_count": 5,
+                            "zero_check_block_size_mb": 16,
+                            "zero_check_small_drive_threshold_gb": 2,
+                            "blockdev_post_wipe_retries": 0,
+                            "blockdev_post_wipe_retry_delay": 0,
+                        }):
+                            with patch('crypto_verification._run_blockdev_getsize64', return_value={"error": None, "capacity": 1 * 1024 * 1024 * 1024}):
+                                with patch('crypto_verification._run_cancellable_zone_read') as mock_zone:
+                                    mock_zone.return_value = self._make_zero_result(
+                                        nonzero=False, bytes_read=1 * 1024 * 1024 * 1024, chunks_read=68
+                                    )
+                                    from crypto_verification import check_drive_already_zeroed
+                                    result = check_drive_already_zeroed("/dev/sda")
+                                    assert result["ok"] is True
+                                    assert result["result"] == "zeroed"
+
+    def test_timeout_returns_inconclusive(self):
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification._check_interrupted', return_value=False):
+                        with patch('crypto_verification.load_policy', return_value={
+                            "zero_check_total_bytes_gb": 2,
+                            "zero_check_zone_count": 5,
+                            "zero_check_block_size_mb": 16,
+                            "zero_check_small_drive_threshold_gb": 2,
+                            "blockdev_post_wipe_retries": 0,
+                            "blockdev_post_wipe_retry_delay": 0,
+                        }):
+                            with patch('crypto_verification._run_blockdev_getsize64', return_value={"error": None, "capacity": 100 * 1024 * 1024 * 1024}):
+                                with patch('crypto_verification.subprocess.Popen') as mock_popen:
+                                    fake_proc = FakeBlockingProcess()
+                                    mock_popen.return_value = fake_proc
+                                    from crypto_verification import check_drive_already_zeroed
+                                    result = check_drive_already_zeroed("/dev/sda", timeout_seconds=0.5)
+                                    assert result["ok"] is True
+                                    assert result["result"] == "inconclusive"
+                                    assert result["error"] == "timeout"
+
+    def test_cancellation_kills_blocking_read(self):
+        cancel_event = threading.Event()
+
+        def trigger_cancel():
+            time.sleep(0.1)
+            cancel_event.set()
+
+        threading.Thread(target=trigger_cancel, daemon=True).start()
+
+        with patch('crypto_verification.validate_device_path', return_value=True):
+            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+                with patch('crypto_verification.get_device_lock') as mock_lock:
+                    mock_lock.return_value.__enter__ = Mock(return_value=None)
+                    mock_lock.return_value.__exit__ = Mock(return_value=None)
+                    with patch('crypto_verification._check_interrupted', return_value=False):
+                        with patch('crypto_verification.load_policy', return_value={
+                            "zero_check_total_bytes_gb": 2,
+                            "zero_check_zone_count": 5,
+                            "zero_check_block_size_mb": 16,
+                            "zero_check_small_drive_threshold_gb": 2,
+                            "blockdev_post_wipe_retries": 0,
+                            "blockdev_post_wipe_retry_delay": 0,
+                        }):
+                            with patch('crypto_verification._run_blockdev_getsize64', return_value={"error": None, "capacity": 100 * 1024 * 1024 * 1024}):
+                                with patch('crypto_verification.subprocess.Popen') as mock_popen:
+                                    fake_proc = FakeBlockingProcess()
+                                    mock_popen.return_value = fake_proc
+                                    from crypto_verification import check_drive_already_zeroed
+                                    result = check_drive_already_zeroed(
+                                        "/dev/sda", cancel_event=cancel_event, timeout_seconds=60
+                                    )
+                                    assert result["ok"] is False
+                                    assert result["result"] == "cancelled"
+                                    assert result["error"] == "cancelled"
 
 
 if __name__ == "__main__":

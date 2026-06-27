@@ -474,7 +474,7 @@ def admin_policy():
             
             # Apply mutations after validation passes
             old_background_smart_max_workers = current_policy.get("background_smart_max_workers")
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_spot_check", "post_erase_marker", "allow_method_override", "secondary_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
+            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_zero_detection_enabled", "zero_detection_concurrency_limit", "post_erase_marker", "allow_method_override", "secondary_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
             for field in updatable_fields:
                 if field in payload:
                     current_policy[field] = payload[field]
@@ -498,6 +498,11 @@ def admin_policy():
             # Restart the background SMART pool so a changed worker count takes effect immediately
             if "background_smart_max_workers" in payload and current_policy.get("background_smart_max_workers") != old_background_smart_max_workers:
                 stop_extended_smart_pool(wait=False)
+
+            # Update zero-check manager concurrency when the policy limit changes
+            if "zero_detection_concurrency_limit" in payload:
+                from zero_check_manager import get_manager as get_zero_check_manager
+                get_zero_check_manager().set_concurrency(current_policy.get("zero_detection_concurrency_limit", 8))
             
             logger.info("Operational policies modified successfully by administrator.")
             return jsonify({"status": "success", "message": "System policies updated successfully."}), 200

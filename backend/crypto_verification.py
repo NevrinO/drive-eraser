@@ -166,6 +166,272 @@ def resolve_verify_command_path(command_name):
     from disk_utils import get_command_path
     return get_command_path(command_name)
 
+def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, cancel_event, deadline):
+    """
+    Run a single-zone dd read that can be killed by cancel_event or deadline.
+
+    Returns:
+        {"ok": True, "nonzero": bool, "bytes_read": int, "chunks_read": int, "error": None}
+        {"ok": False, "error": str, "details": str}
+    """
+    logger = logging.getLogger("app")
+    cmd = [
+        "sudo",
+        dd_cmd,
+        f"if={device}",
+        f"bs={block_size}",
+        f"skip={offset}",
+        f"count={zone_size}",
+        "iflag=skip_bytes,count_bytes,direct",
+        "status=none",
+    ]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+    except Exception as e:
+        logger.warning(f"Failed to start zero-check dd for {device}: {e}")
+        return {"ok": False, "error": "zero_check_read_failed", "details": str(e)}
+
+    kill_reason = [None]
+    kill_lock = threading.Lock()
+
+    def _watcher():
+        try:
+            while proc.poll() is None:
+                with kill_lock:
+                    if cancel_event is not None and cancel_event.is_set():
+                        kill_reason[0] = "cancelled"
+                        break
+                    if deadline is not None and time.time() >= deadline:
+                        kill_reason[0] = "timeout"
+                        break
+                time.sleep(0.5)
+            if kill_reason[0] is not None and proc.poll() is None:
+                try:
+                    proc.kill()
+                except Exception as e:
+                    logger.debug(f"Error killing zero-check subprocess for {device}: {e}")
+        except Exception as e:
+            logger.warning(f"Zero-check watcher error for {device}: {e}")
+
+    watcher = threading.Thread(target=_watcher, daemon=True)
+    watcher.start()
+
+    bytes_read = 0
+    chunks_read = 0
+    try:
+        while True:
+            chunk = proc.stdout.read(block_size)
+            if not chunk:
+                break
+            bytes_read += len(chunk)
+            chunks_read += 1
+            if any(memoryview(chunk)):
+                with kill_lock:
+                    if kill_reason[0] is None:
+                        kill_reason[0] = "nonzero"
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                break
+    except Exception as e:
+        logger.warning(f"Zero-check read error for {device}: {e}")
+        with kill_lock:
+            if kill_reason[0] is None:
+                kill_reason[0] = "read_error"
+        try:
+            proc.kill()
+        except Exception:
+            pass
+    finally:
+        if proc.poll() is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=2)
+        except Exception:
+            pass
+        watcher.join(timeout=2)
+
+    with kill_lock:
+        reason = kill_reason[0]
+
+    if reason == "cancelled":
+        return {"ok": False, "error": "cancelled", "details": "Zero check cancelled by user"}
+    if reason == "timeout":
+        return {"ok": False, "error": "timeout", "details": "Zero check exceeded timeout"}
+    if reason == "nonzero":
+        return {"ok": True, "nonzero": True, "bytes_read": bytes_read, "chunks_read": chunks_read, "error": None}
+    if reason == "read_error":
+        return {"ok": False, "error": "zero_check_read_error", "details": "Error reading from device"}
+
+    # No kill reason: process finished on its own.
+    if bytes_read == 0:
+        stderr = ""
+        try:
+            stderr = proc.stderr.read(1024).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        return {"ok": False, "error": "drive_disappeared_or_empty_read", "details": f"Read returned empty data at offset {offset}: {stderr}"}
+
+    if proc.returncode != 0:
+        stderr = ""
+        try:
+            stderr = proc.stderr.read(1024).decode("utf-8", errors="replace")
+        except Exception:
+            pass
+        logger.warning(f"Zero-check dd failed for {device}: exit={proc.returncode}, stderr={stderr}")
+        return {"ok": False, "error": "zero_check_read_failed", "details": stderr}
+
+    return {"ok": True, "nonzero": False, "bytes_read": bytes_read, "chunks_read": chunks_read, "error": None}
+
+
+def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
+    """
+    Pre-wipe zero detection: read a flat 2 GB sample from 5 zones and check
+    whether the sampled bytes are all zero. Drives <= 2 GB are read in one pass.
+
+    Args:
+        device: Device path (e.g., /dev/sda)
+        cancel_event: Optional threading.Event that aborts the check when set.
+        timeout_seconds: Hard timeout; if exceeded, result is "inconclusive".
+
+    Returns:
+        dict with keys: ok, result, is_zeroed, chunks_checked, bytes_checked,
+        failed_at_chunk, error, details.
+    """
+    if not validate_device_path(device):
+        return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_device_path", "details": "Device path validation failed"}
+
+    logger = logging.getLogger("app")
+    dd_cmd = resolve_verify_command_path("dd")
+    if not dd_cmd:
+        return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
+
+    # Load policy once for both zero-check and blockdev parameters
+    try:
+        policy = load_policy()
+        total_bytes_gb = policy.get("zero_check_total_bytes_gb", 2)
+        zone_count = policy.get("zero_check_zone_count", 5)
+        block_size_mb = policy.get("zero_check_block_size_mb", 16)
+        small_threshold_gb = policy.get("zero_check_small_drive_threshold_gb", 2)
+        blockdev_retries = policy.get("blockdev_post_wipe_retries", 3)
+        blockdev_retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
+    except Exception:
+        logger.warning("Failed to load policy for zero check, using defaults")
+        total_bytes_gb = 2
+        zone_count = 5
+        block_size_mb = 16
+        small_threshold_gb = 2
+        blockdev_retries = 3
+        blockdev_retry_delay = 5
+
+    total_bytes = total_bytes_gb * 1024 * 1024 * 1024
+    block_size = block_size_mb * 1024 * 1024
+    small_threshold_bytes = small_threshold_gb * 1024 * 1024 * 1024
+
+    device_lock = get_device_lock(device)
+    deadline = time.time() + timeout_seconds
+
+    def _is_timed_out():
+        return time.time() >= deadline
+
+    def _is_cancelled():
+        return cancel_event is not None and cancel_event.is_set()
+
+    # Acquire device lock only for the brief metadata read (blockdev).
+    # The actual streaming read is performed by a separate subprocess that can
+    # be killed on timeout or cancellation, so the lock is released during I/O.
+    with device_lock:
+        if _check_interrupted():
+            return {"ok": False, "result": "failed", "is_zeroed": False, "error": "verification_interrupted", "details": "Operation interrupted by signal"}
+
+        # Get capacity using blockdev with retry logic (policy already loaded above)
+        result = _run_blockdev_getsize64(device, blockdev_retries, blockdev_retry_delay)
+        if result["error"]:
+            return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+        capacity = result["capacity"]
+
+    if capacity <= 0:
+        return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_capacity", "details": f"Drive reported zero capacity: {capacity}"}
+
+    # Determine read strategy
+    if capacity <= small_threshold_bytes:
+        # Small drive: read the whole device in one pass
+        zones = [(0, capacity)]
+    else:
+        zone_size = total_bytes // zone_count
+        # Align zone_size and offsets to block_size for O_DIRECT compatibility
+        zone_size = (zone_size // block_size) * block_size
+        if zone_size <= 0:
+            zone_size = block_size
+        zones = [
+            (0, zone_size),  # start
+            ((capacity // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 25% center
+            ((capacity // 2 - zone_size // 2) // block_size * block_size, zone_size),  # middle
+            (((3 * capacity) // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 75% center
+            (((capacity - zone_size) // block_size) * block_size, zone_size),  # end
+        ]
+
+    chunks_checked = 0
+    bytes_checked = 0
+    zone_names = ["start", "25%", "50%", "75%", "end"]
+
+    try:
+        for zone_idx, (offset, zone_size) in enumerate(zones):
+            if _is_cancelled():
+                return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
+            if _is_timed_out():
+                return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+
+            # Clamp zone to device bounds
+            offset = max(0, min(offset, capacity))
+            zone_size = min(zone_size, capacity - offset)
+            if zone_size <= 0:
+                continue
+
+            zone_result = _run_cancellable_zone_read(
+                dd_cmd, device, offset, zone_size, block_size, cancel_event, deadline
+            )
+            if not zone_result["ok"]:
+                if zone_result["error"] == "cancelled":
+                    return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
+                if zone_result["error"] == "timeout":
+                    return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+                return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": zone_result["error"], "details": zone_result["details"]}
+
+            bytes_checked += zone_result["bytes_read"]
+            chunks_checked += zone_result["chunks_read"]
+            if zone_result.get("nonzero"):
+                return {
+                    "ok": True,
+                    "result": "data_present",
+                    "is_zeroed": False,
+                    "chunks_checked": chunks_checked,
+                    "bytes_checked": bytes_checked,
+                    "failed_at_chunk": zone_idx,
+                    "error": None,
+                    "details": {"zone": zone_names[zone_idx] if zone_idx < len(zone_names) else zone_idx, "offset": offset}
+                }
+
+    except Exception as e:
+        logger.warning(f"Zero check unexpected error for {device}: {e}")
+        return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": None, "error": "unexpected_error", "details": str(e)}
+
+    return {
+        "ok": True,
+        "result": "zeroed",
+        "is_zeroed": True,
+        "chunks_checked": chunks_checked,
+        "bytes_checked": bytes_checked,
+        "failed_at_chunk": None,
+        "error": None,
+        "details": {"zones": zone_names[:len(zones)], "capacity": capacity}
+    }
+
+
 def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*1024*1024, max_read_bytes=10*1024*1024*1024):
     """
     Performs a secondary zero-validation check by reading the first 32MB and

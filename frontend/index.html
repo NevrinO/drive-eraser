@@ -370,6 +370,12 @@
             </div>
           </div>
 
+          <div id="zeroCheckWarning" class="hidden" style="margin-top: 16px; padding: 12px; background: rgba(6, 182, 212, 0.14); border: 1px solid var(--color-teal); border-radius: 4px;">
+            <div style="font-weight: 700; color: var(--color-teal); margin-bottom: 4px;">Zeroed Drives Detected</div>
+            <div style="font-size: 0.8rem; color: var(--color-text);">The following staged bays appear to already be zero-filled based on the sampled check. This is informational only; you may still proceed with sanitization if required.</div>
+            <div id="zeroCheckWarningList" style="margin-top: 8px; font-size: 0.8rem; color: var(--color-text-muted);"></div>
+          </div>
+
           <div class="confirmation-section">
             <label>
               Typed Confirmation
@@ -755,15 +761,17 @@
       <div class="modal-content">
         <div id="systemConfigError" class="test-result-label hidden mb-3"></div>
         <form id="systemConfigForm" novalidate>
+          <div class="modal-section-header">Notifications</div>
           <div class="form-fields-stack">
-            <div class="modal-section-header">Notifications</div>
             <label>
               Slack Webhook URL
               <input type="url" id="slack_webhook_url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
               <small class="text-muted-xs">Slack webhook URL for wipe completion/failure notifications</small>
             </label>
+          </div>
 
-            <div class="modal-section-header">Verification Mode</div>
+          <div class="modal-section-header">Verification Mode</div>
+          <div class="form-fields-stack">
             <label>
               Post-Wipe Secondary Verification
               <select id="secondary_verification_mode" name="secondary_verification_mode">
@@ -773,8 +781,10 @@
               </select>
               <small class="text-muted-xs">Additional verification pass after the drive reports a successful erase</small>
             </label>
+          </div>
 
-            <div class="modal-section-header">Performance Settings</div>
+          <div class="modal-section-header">Performance Settings</div>
+          <div class="form-fields-stack">
             <label>
               Discovery Max Workers
               <input type="number" id="discovery_max_workers" name="discovery_max_workers" min="1" max="32" step="1">
@@ -785,8 +795,10 @@
               <input type="number" id="max_concurrent_wipes" name="max_concurrent_wipes" min="1" max="256" step="1">
               <small class="text-muted-xs">Maximum simultaneous wipe operations (1-256)</small>
             </label>
+          </div>
 
-            <div class="modal-section-header">Post-Wipe Retry Settings</div>
+          <div class="modal-section-header">Post-Wipe Retry Settings</div>
+          <div class="form-fields-stack">
             <label>
               Blockdev Post-Wipe Retries
               <input type="number" id="blockdev_post_wipe_retries" name="blockdev_post_wipe_retries" min="0" max="10" step="1">
@@ -797,8 +809,10 @@
               <input type="number" id="blockdev_post_wipe_retry_delay" name="blockdev_post_wipe_retry_delay" min="0" max="60" step="1">
               <small class="text-muted-xs">Delay between retry attempts in seconds (0-60)</small>
             </label>
+          </div>
 
-            <div class="modal-section-header">Audit Mode</div>
+          <div class="modal-section-header">Audit Mode</div>
+          <div class="form-fields-stack">
             <label>
               Strict Audit Mode
               <select id="strict_audit_mode" name="strict_audit_mode">
@@ -812,8 +826,10 @@
               <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase">
               <small class="text-muted-xs">Passphrase for marker HMAC signing (min 8 characters when strict mode is enabled). Changing this invalidates existing marker verification results.</small>
             </label>
+          </div>
 
-            <div class="modal-section-header">Pre-Wipe Health Gate</div>
+          <div class="modal-section-header">Pre-Wipe Health Gate</div>
+          <div class="form-fields-stack">
             <label>
               Enable Health Gate
               <select id="prewipe_health_gate_enabled" name="prewipe_health_gate_enabled">
@@ -875,6 +891,24 @@
               <small class="text-muted-xs">Health score drop threshold for intake history comparison (0-100)</small>
             </label>
           </div>
+
+          <div class="modal-section-header">Pre-Wipe Zero Detection</div>
+          <div class="form-fields-stack">
+            <label>
+              Enable Zero Detection
+              <select id="prewipe_zero_detection_enabled" name="prewipe_zero_detection_enabled">
+                <option value="true">Enabled (auto-check internal drives after discovery)</option>
+                <option value="false">Disabled</option>
+              </select>
+              <small class="text-muted-xs">Background, non-blocking visual check for pre-wiped zero-filled drives</small>
+            </label>
+            <label>
+              Zero Detection Concurrency Limit
+              <input type="number" id="zero_detection_concurrency_limit" name="zero_detection_concurrency_limit" min="1" max="32" step="1">
+              <small class="text-muted-xs">Maximum parallel zero-check reads (1-32)</small>
+            </label>
+          </div>
+
           <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>
         </form>
       </div>

@@ -9,12 +9,70 @@ if (!bayDetailModal || !bayDetailContent) {
   console.error("Critical: bayDetailModal or bayDetailContent element not found in DOM");
 }
 
+function renderZeroCheckDetailSection(drive) {
+  if (!drive.present || drive.locked || drive.role === "os" || drive.role === "reserved") return "";
+  if (String(drive.status).toUpperCase() === "RUNNING") return "";
+
+  const zc = drive.zero_check || {};
+  const status = zc.status || "not_started";
+
+  let statusText = "Not started";
+  let statusClass = "status-empty";
+  let details = "";
+
+  if (status === "running" || status === "queued") {
+    statusText = status === "running" ? "Zero check running" : "Zero check queued";
+    statusClass = "status-ready";
+  } else if (status === "completed") {
+    if (zc.result === "zeroed") {
+      statusText = "Likely zeroed (sampled)";
+      statusClass = "status-complete";
+    } else if (zc.result === "data_present") {
+      statusText = "Data present (sampled)";
+      statusClass = "status-warning";
+    } else if (zc.result === "inconclusive") {
+      statusText = "Inconclusive (timed out)";
+      statusClass = "status-view-only";
+    } else {
+      statusText = "Completed";
+      statusClass = "status-view-only";
+    }
+    if (zc.chunks_checked) {
+      details += `<div class="kv"><span>Chunks checked:</span><span>${zc.chunks_checked}</span></div>`;
+    }
+    if (zc.bytes_checked) {
+      const mb = Math.round(zc.bytes_checked / (1024 * 1024));
+      details += `<div class="kv"><span>Bytes checked:</span><span>${mb} MB</span></div>`;
+    }
+  } else if (status === "failed" || status === "cancelled") {
+    statusText = status === "failed" ? "Zero check failed" : "Zero check cancelled";
+    statusClass = "status-failed";
+    if (zc.error) {
+      details += `<div class="kv"><span>Error:</span><span>${escapeHtml(zc.error)}</span></div>`;
+    }
+  }
+
+  const isRunning = status === "running" || status === "queued";
+  const action = isRunning ? "cancel" : "start";
+  const label = isRunning ? "Cancel Zero Check" : (status === "not_started" ? "Check Zero" : "Re-check Zero");
+
+  return `
+    <div class="detail-section">
+      <h4>Pre-Wipe Zero Detection</h4>
+      <div class="kv"><span>Status:</span><span class="status-chip ${statusClass}">${escapeHtml(statusText)}</span></div>
+      ${details}
+      <button type="button" class="btn btn--secondary" data-zero-check-action="${action}" data-bay="${escapeHtml(drive.bay)}">${label}</button>
+    </div>
+  `;
+}
+
 function renderLiveDetails(drive) {
   if (!drive) return;
   
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
-  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const hasValidMarker = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const isCompleted = hasValidMarker;
   
   let displayStatus = "IDLE / READY";
   let statusClass = "status-empty";
@@ -154,12 +212,14 @@ function renderLiveDetails(drive) {
       <div class="kv"><span>Comments:</span><span>${escapeHtml(rec.comment)}</span></div>
     </div>
 
+    ${hasValidMarker ? `
     <div class="detail-section">
       <h4>Compliance Marker Integrity</h4>
       <div class="kv"><span>Marker Status:</span><span class="status-chip ${markerClass}">${escapeHtml(markerStatusText)}</span></div>
       <div class="kv"><span>Last Ticket:</span><span>${escapeHtml(drive.marker?.details?.ticket_number || "-")}</span></div>
       <div class="kv"><span>Wiped on:</span><span>${escapeHtml(formatIsoDate(drive.marker?.details?.finished_at))}</span></div>
     </div>
+    ` : renderZeroCheckDetailSection(drive)}
 
     <div class="detail-section">
       <h4>Normalized SMART Essentials</h4>
@@ -212,6 +272,17 @@ document.addEventListener("click", (event) => {
     const interfaceType = button.dataset.interface;
     // Keep bay detail modal open - deep dive will stack on top (nested modal)
     openSmartDeepDive(device, serial, interfaceType);
+  }
+});
+
+// Event delegation for zero-check buttons in detail modal
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-zero-check-action]");
+  if (!button) return;
+  if (typeof handleZeroCheckAction === "function") {
+    const bay = button.dataset.bay;
+    const action = button.dataset.zeroCheckAction;
+    handleZeroCheckAction(bay, action);
   }
 });
 

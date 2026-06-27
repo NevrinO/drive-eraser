@@ -2,6 +2,7 @@
 # Main entry point for Drive Eraser Flask application
 # This file imports and registers all modular components
 
+import hmac
 import signal
 import threading
 import time
@@ -34,7 +35,7 @@ def security_gate():
     expected_token = calculate_session_token(lan_passphrase)
     cookie_token = request.cookies.get("admin_session")
 
-    if cookie_token == expected_token:
+    if hmac.compare_digest(cookie_token or "", expected_token):
         return None
 
     return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
@@ -43,6 +44,7 @@ from database import init_wipe_db
 from common import validate_policy
 import api_routes  # Import all route handlers
 import udev_listener  # Event-driven discovery with pyudev
+from zero_check_manager import get_manager as get_zero_check_manager
 
 # Critical #1: Centralized signal handler to prevent handler overwrites
 # Import all modules with signal interruption flags
@@ -89,8 +91,7 @@ def add_security_headers(response):
 def handle_exception(e):
     """Global exception handler to return JSON for all errors."""
     logger.error(f"Unhandled exception: {e}", exc_info=True)
-    # Return JSON error response for all exceptions
-    return jsonify({"error": str(e)}), 500
+    return jsonify({"error": "Internal server error"}), 500
 
 # Initialize database on module import (required for WSGI deployments)
 init_wipe_db()
@@ -100,6 +101,12 @@ udev_listener.set_websocket_manager(socketio)
 
 # Set WebSocket manager for disk_ops (SMART data updates)
 disk_ops.set_websocket_manager(socketio)
+
+# Initialize background zero-check manager with current policy concurrency limit
+config_dir = get_config_dir()
+_policy = load_policy(config_dir)
+ZERO_CHECK_CONCURRENCY = int(_policy.get("zero_detection_concurrency_limit", 8))
+zero_check_manager = get_zero_check_manager(socketio=socketio, max_concurrency=ZERO_CHECK_CONCURRENCY)
 
 # Start udev event listener for real-time device discovery
 udev_listener.start_udev_listener()

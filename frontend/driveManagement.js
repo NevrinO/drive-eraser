@@ -53,6 +53,8 @@ const batchEraseForm = document.getElementById("batchEraseForm");
 const selectedDrivesConfigList = document.getElementById("selectedDrivesConfigList");
 const dynamicConfirmationHint = document.getElementById("dynamicConfirmationHint");
 const confirmationText = document.getElementById("confirmationText");
+const zeroCheckWarning = document.getElementById("zeroCheckWarning");
+const zeroCheckWarningList = document.getElementById("zeroCheckWarningList");
 const healthGateWarningModal = document.getElementById("healthGateWarningModal");
 const healthGateWarningContent = document.getElementById("healthGateWarningContent");
 const healthGateOverrideSection = document.getElementById("healthGateOverrideSection");
@@ -107,6 +109,27 @@ function stopPolling() {
   if (pollingIntervalId !== null) {
     clearInterval(pollingIntervalId);
     pollingIntervalId = null;
+  }
+}
+
+let _zeroCheckRenderTimer = null;
+
+function handleZeroCheckUpdate(data) {
+  const { bay, zero_check } = data || {};
+  if (!bay || !zero_check) return;
+  const driveIndex = currentDrives.findIndex(d => d.bay === bay);
+  if (driveIndex !== -1) {
+    currentDrives[driveIndex].zero_check = zero_check;
+    if (document.getElementById('workbenchPanel').classList.contains('active')) {
+      clearTimeout(_zeroCheckRenderTimer);
+      _zeroCheckRenderTimer = setTimeout(() => renderBays(currentDrives), 100);
+    }
+    // Refresh the bay detail modal if it is open for the affected bay
+    const modal = document.getElementById('bayDetailModal');
+    if (modal && modal.classList.contains('open') && currentDetailDrive && currentDetailDrive.bay === bay) {
+      currentDetailDrive = currentDrives[driveIndex];
+      renderLiveDetails(currentDetailDrive);
+    }
   }
 }
 
@@ -466,6 +489,35 @@ function renderBaysLegacy(drives) {
   baysGrid.innerHTML = gridHtml;
 }
 
+function getZeroCheckStateClass(drive) {
+  const zc = drive.zero_check || {};
+  const status = zc.status;
+  if (status === "running") return "zero_check_running";
+  if (status === "queued") return "zero_check_running";
+  if (status === "completed") {
+    if (zc.result === "zeroed") return "zero_check_zeroed";
+    if (zc.result === "data_present") return "zero_check_data_present";
+    if (zc.result === "inconclusive") return "zero_check_inconclusive";
+  }
+  if (status === "failed") return "zero_check_failed";
+  if (status === "cancelled") return "zero_check_failed";
+  return null;
+}
+
+function getZeroCheckBannerLabel(drive) {
+  const zc = drive.zero_check || {};
+  if (zc.status === "running") return "ZERO CHECK RUNNING";
+  if (zc.status === "queued") return "ZERO CHECK QUEUED";
+  if (zc.status === "completed") {
+    if (zc.result === "zeroed") return "LIKELY ZEROED";
+    if (zc.result === "data_present") return "DATA PRESENT";
+    if (zc.result === "inconclusive") return "ZERO CHECK INCONCLUSIVE";
+  }
+  if (zc.status === "failed") return "ZERO CHECK FAILED";
+  if (zc.status === "cancelled") return "ZERO CHECK CANCELLED";
+  return null;
+}
+
 function renderBayCard(drive) {
   const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
   const isEmpty = !drive.present;
@@ -475,6 +527,8 @@ function renderBayCard(drive) {
   const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
   const isUnconfigured = isBayUnconfigured(drive);
   const isSmartTestRunning = drive.smart_test_status === "running" || drive.smart_test_status === "in_progress";
+  const zeroCheckClass = (!isEmpty && !isRunning && !isSmartTestRunning && !isCompleted && !isMarkerDisabled && !drive.locked && drive.role !== "os" && drive.role !== "reserved") ? getZeroCheckStateClass(drive) : null;
+  const zeroCheckLabel = zeroCheckClass ? getZeroCheckBannerLabel(drive) : null;
 
   let stateClass = "healthy";
   let bannerLabel = "READY / UNPROCESSED";
@@ -503,6 +557,9 @@ function renderBayCard(drive) {
   } else if (isCompleted) {
     stateClass = "completed";
     bannerLabel = "SANITIZED & VERIFIED";
+  } else if (zeroCheckClass) {
+    stateClass = zeroCheckClass;
+    bannerLabel = zeroCheckLabel;
   } else if (isUnconfigured) {
     stateClass = "unconfigured";
     bannerLabel = "⚠️ UNCONFIGURED BAY";
@@ -616,6 +673,29 @@ baysGrid.addEventListener("click", (event) => {
   }
 });
 
+async function handleZeroCheckAction(bay, action) {
+  try {
+    const method = action === "start" ? "POST" : "DELETE";
+    const response = await safeFetch(`/api/drives/${encodeURIComponent(bay)}/zero-check`, { method });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      console.error(`Zero-check ${action} failed for ${bay}:`, data.error || response.status);
+      return;
+    }
+    await loadDrives(true);
+    const modal = document.getElementById('bayDetailModal');
+    if (modal.classList.contains('open') && currentDetailDrive && currentDetailDrive.bay === bay) {
+      const updated = currentDrives.find(d => d.bay === bay);
+      if (updated) {
+        currentDetailDrive = updated;
+        renderLiveDetails(updated);
+      }
+    }
+  } catch (e) {
+    console.error(`Zero-check ${action} error for ${bay}:`, e);
+  }
+}
+
 function toggleBaySelection(bay) {
   if (selectedBays.has(bay)) {
     selectedBays.delete(bay);
@@ -715,6 +795,21 @@ async function renderBatchModalForm() {
   }
   dynamicConfirmationHint.textContent = hintText;
   confirmationText.value = "";
+
+  // Informational warning for drives that appear zeroed
+  const zeroedBays = [];
+  for (const bay of selectedBays) {
+    const drive = currentDrives.find(d => d.bay === bay);
+    if (drive?.zero_check?.status === "completed" && drive.zero_check.result === "zeroed") {
+      const label = drive.display_number ? `BAY ${drive.display_number}` : bay.toUpperCase();
+      zeroedBays.push(label);
+    }
+  }
+  if (zeroCheckWarning && zeroCheckWarningList) {
+    const hasZeroed = zeroedBays.length > 0;
+    zeroCheckWarning.classList.toggle("hidden", !hasZeroed);
+    zeroCheckWarningList.textContent = hasZeroed ? zeroedBays.join(", ") : "";
+  }
 }
 
 batchEraseForm.addEventListener("submit", async (event) => {
