@@ -815,9 +815,11 @@ input:focus, select:focus {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
+  width: 100%;
   max-width: min(680px, 94vw);
   max-height: 85vh;
   overflow-y: auto;
+  overflow-x: hidden;
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-lg);
   background: var(--color-surface-3);
@@ -924,6 +926,10 @@ input:focus, select:focus {
   grid-template-columns: 1fr 1fr;
   gap: 16px;
   margin-bottom: 16px;
+}
+
+.form-fields-stack > * {
+  min-width: 0;
 }
 
 .detail-section {
