@@ -513,8 +513,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
             data = dd_result["data"]
             total_verified_bytes += len(data)
 
-            # Highly optimized C-level block evaluation in Python
-            if data != b'\x00' * len(data):
+            if any(memoryview(data)):
                 non_zero_found = True
                 first_non_zero_offset = offset
                 break
@@ -744,7 +743,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                             }
                         }
                     data = dd_result["data"]
-                    if data and data != b'\x00' * len(data):
+                    if data and any(memoryview(data)):
                         unchanged_nonzero_found = True
                         first_nonzero_offset = offset
                 
@@ -816,7 +815,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 else:
                     data = dd_result["data"]
                     if data:
-                        is_all_zeros = data == b'\x00' * len(data)
+                        is_all_zeros = not any(memoryview(data))
                         if is_all_zeros:
                             return {
                                 "ok": True,

@@ -487,6 +487,26 @@ function renderSlotAssignment() {
     savedSlots = adminEnclosures[editEnclosureId].slots || null;
   }
 
+  // Collect current label and role values from DOM to preserve user modifications
+  // across re-renders (e.g., when starting slot number changes)
+  let domLabels = {};
+  let domRoles = {};
+  const existingTable = container.querySelector('.slot-validation-table');
+  if (existingTable) {
+    container.querySelectorAll('.slot-label-input').forEach(input => {
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
+      if (!isNaN(slotIndex)) {
+        domLabels[String(slotIndex)] = input.value;
+      }
+    });
+    container.querySelectorAll('.slot-role-select').forEach(select => {
+      const slotIndex = parseInt(select.dataset.slotIndex, 10);
+      if (!isNaN(slotIndex)) {
+        domRoles[String(slotIndex)] = select.value;
+      }
+    });
+  }
+
   for (let slotIndex = 0; slotIndex < positions.length; slotIndex++) {
     const { row, col } = positions[slotIndex];
     const isHybrid = template.hybrid_slots && template.hybrid_slots.includes(slotIndex);
@@ -522,9 +542,9 @@ function renderSlotAssignment() {
 
     slots.push({
       physical_slot_number: physicalSlot,
-      label: savedSlot ? savedSlot.label : `Bay ${slotIndex}`,
-      role: savedSlot ? savedSlot.role : (template.default_role || "wipe"),
-      locked: savedSlot ? savedSlot.locked : false,
+      label: domLabels[slotKey] !== undefined ? domLabels[slotKey] : (savedSlot ? savedSlot.label : `Bay ${slotIndex}`),
+      role: domRoles[slotKey] !== undefined ? domRoles[slotKey] : (savedSlot ? savedSlot.role : (template.default_role || "wipe")),
+      locked: domRoles[slotKey] !== undefined ? (domRoles[slotKey] === 'os') : (savedSlot ? savedSlot.locked : false),
       mappings: {
         sas_sata: savedSasMapping ? {
           slot_type: savedSasMapping.slot_type || sasSlotType,
@@ -547,6 +567,11 @@ function renderSlotAssignment() {
       }
     });
   }
+
+  const nvmeSlotIds = masterSlotMap
+    .filter(e => e.slot_type === 'pcie_nvme')
+    .map(e => e.hardware_identifier)
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
   let html = `
     <div class="form-group" style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
@@ -629,15 +654,9 @@ function renderSlotAssignment() {
         }
       }
 
-      // Build NVMe slot dropdown from master slot map
-      const nvmeSlots = masterSlotMap
-        .filter(e => e.slot_type === 'pcie_nvme')
-        .map(e => e.hardware_identifier)
-        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
-
       let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
       
-      nvmeSlots.forEach(slot => {
+      nvmeSlotIds.forEach(slot => {
         const selected = nvmeHwId === slot ? 'selected' : '';
         nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
       });
@@ -772,6 +791,59 @@ document.getElementById("wizardPrevBtn")?.addEventListener("click", () => {
   renderWizardStep();
 });
 
+function collectSlotMappingsFromDOM(container) {
+  const slotMappings = {};
+
+  container.querySelectorAll('.slot-label-input').forEach(input => {
+    const slotIndex = parseInt(input.dataset.slotIndex, 10);
+    if (isNaN(slotIndex)) {
+      console.error("Invalid slot index for label input");
+      return;
+    }
+    const slotKey = String(slotIndex);
+    if (!slotMappings[slotKey]) {
+      slotMappings[slotKey] = {};
+    }
+    slotMappings[slotKey].label = input.value;
+  });
+
+  container.querySelectorAll('.slot-role-select').forEach(select => {
+    const slotIndex = parseInt(select.dataset.slotIndex, 10);
+    if (isNaN(slotIndex)) {
+      console.error("Invalid slot index for role select");
+      return;
+    }
+    const slotKey = String(slotIndex);
+    if (slotMappings[slotKey]) {
+      slotMappings[slotKey].role = select.value;
+      slotMappings[slotKey].locked = select.value === 'os';
+    }
+  });
+
+  container.querySelectorAll('.hw-id-input').forEach(input => {
+    const slotIndex = parseInt(input.dataset.slotIndex, 10);
+    const interfaceType = input.dataset.interface;
+    const slotType = input.dataset.slotType;
+    if (isNaN(slotIndex)) {
+      console.error("Invalid slot index for HW ID input");
+      return;
+    }
+    const slotKey = String(slotIndex);
+    if (!slotMappings[slotKey]) {
+      slotMappings[slotKey] = {};
+    }
+    if (!slotMappings[slotKey].mappings) {
+      slotMappings[slotKey].mappings = {};
+    }
+    slotMappings[slotKey].mappings[interfaceType] = {
+      slot_type: slotType,
+      hardware_identifier: input.value
+    };
+  });
+
+  return slotMappings;
+}
+
 async function handleSaveEnclosure() {
   try {
     // Generate and validate enclosure ID from trimmed name
@@ -784,55 +856,7 @@ async function handleSaveEnclosure() {
 
     // Get slot mappings from the slot assignment table
     const container = document.getElementById("slotAssignmentContainer");
-    const slotMappings = {};
-    
-    container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex, 10);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for label input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      slotMappings[slotKey].label = input.value;
-    });
-    
-    container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex, 10);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for role select");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (slotMappings[slotKey]) {
-        slotMappings[slotKey].role = select.value;
-        slotMappings[slotKey].locked = select.value === 'os';
-      }
-    });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex, 10);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      if (!slotMappings[slotKey].mappings) {
-        slotMappings[slotKey].mappings = {};
-      }
-      slotMappings[slotKey].mappings[interfaceType] = {
-        slot_type: slotType,
-        hardware_identifier: input.value
-      };
-    });
+    const slotMappings = collectSlotMappingsFromDOM(container);
 
     const payload = {
       id: enclosureId,
@@ -886,55 +910,7 @@ async function handleEditEnclosure() {
 
     // Get slot mappings from the slot assignment table
     const container = document.getElementById("slotAssignmentContainer");
-    const slotMappings = {};
-    
-    container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex, 10);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for label input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      slotMappings[slotKey].label = input.value;
-    });
-    
-    container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex, 10);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for role select");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (slotMappings[slotKey]) {
-        slotMappings[slotKey].role = select.value;
-        slotMappings[slotKey].locked = select.value === 'os';
-      }
-    });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex, 10);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      if (!slotMappings[slotKey].mappings) {
-        slotMappings[slotKey].mappings = {};
-      }
-      slotMappings[slotKey].mappings[interfaceType] = {
-        slot_type: slotType,
-        hardware_identifier: input.value
-      };
-    });
+    const slotMappings = collectSlotMappingsFromDOM(container);
 
     const payload = {
       name: trimmedName,

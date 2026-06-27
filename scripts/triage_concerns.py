@@ -72,7 +72,8 @@ PATTERN_RULES = [
 
     ("concurrency_lock", "Concurrency: missing/improper locks",
      "Add locks around shared mutable state or restructure lock scope",
-     [r"missing lock", r"without lock", r"lock scope", r"non-reentrant", r"deadlock", r"thread.safe"],
+     [r"missing lock", r"without lock", r"lock scope", r"non-reentrant", r"deadlock", r"thread.safe",
+      r"double lock", r"lock acquisition", r"re-acquire"],
      [r"flag.*never reset", r"permanently disables"]),
 
     ("memory_leak", "Unbounded dict/list growth (memory leak)",
@@ -88,8 +89,8 @@ PATTERN_RULES = [
 
     ("error_swallowing", "Error swallowing: bare except / silent failures",
      "Add logging to except blocks, catch specific exceptions",
-     [r"swallow", r"except.*pass", r"silent", r"no logging"],
-     [r"schema", r"additionalProperties"]),
+     [r"swallow", r"except.*pass", r"silent.*(?:swallow|fail|error|except|disabled)", r"no logging"],
+     [r"schema", r"additionalProperties", r"cross-module", r"coupling", r"duplicat"]),
 
     ("input_validation", "Input validation gaps",
      "Validate input types, formats, and enforce size limits",
@@ -97,12 +98,17 @@ PATTERN_RULES = [
      [r"stray line", r"EOF marker"]),
 
     # ── Generic patterns (check last — prone to false positives) ──
-    ("perf_caching", "Performance: repeated disk I/O without caching",
-     "Add TTL cache or file-mtime-based cache",
-     [r"every.*request", r"every.*call", r"no caching", r"re-read", r"disk i/o",
-      r"loaded on every", r"reloaded on every"],
+    ("perf_caching", "Performance: repeated config file reads without caching",
+     "Add TTL cache or file-mtime-based cache for config file reads",
+     [r"every.*(?:request|call|invocation|event).*(?:disk|policy|json|bay_map|config)",
+      r"no caching", r"re-read.*(?:policy|config|json|bay_map|file)",
+      r"disk i/o.*(?:every|each|frequent)",
+      r"loaded on every", r"reloaded on every",
+      r"reads.*from disk.*parses.*json"],
      [r"flag.*never reset", r"permanently disables", r"interrupted.*flag",
-      r"_job_interrupted", r"_discovery_interrupted"]),
+      r"_job_interrupted", r"_discovery_interrupted",
+      r"double lock", r"lock acquisition", r"re-acquire",
+      r"chunk", r"hash"]),
 
     ("dead_code", "Dead code: unused functions/classes/CSS",
      "Remove dead code or wire it into a caller if the feature was intended",
@@ -261,9 +267,17 @@ def detect_patterns(issue: dict) -> list[str]:
 
 
 def detect_dependencies(issues: list[dict]) -> list[dict]:
-    """Detect dependencies using structured Depends-on field from canonical format."""
+    """Detect dependencies using structured Depends-on field from canonical format.
+
+    Filters out chains where both sides are completed (noise reduction).
+    Uses multi-valued lookup to handle duplicate IDs gracefully.
+    """
     deps = []
-    by_id = {i["id"]: i for i in issues}
+    by_id = defaultdict(list)
+    for i in issues:
+        by_id[i["id"]].append(i)
+
+    pending_ids = {i["id"] for i in issues if not i["completed"]}
 
     for issue in issues:
         # Use structured depends_on field
@@ -284,6 +298,9 @@ def detect_dependencies(issues: list[dict]) -> list[dict]:
                     "reason": f"{issue['id']} is related to {rel_id} (soft dependency)",
                     "soft": True,
                 })
+
+    # Filter: only include chains where at least one side has a pending issue
+    deps = [d for d in deps if d["must_do_first"] in pending_ids or d["unblocks"] in pending_ids]
 
     # Deduplicate
     seen = set()
@@ -474,6 +491,20 @@ def _make_group(gid: str, name: str, fix_shape: str, issues: list[dict], pattern
     return result
 
 
+def _warn_duplicate_ids(issues: list[dict]) -> None:
+    """Warn about duplicate issue IDs in the source file."""
+    id_counts = defaultdict(int)
+    for issue in issues:
+        id_counts[issue["id"]] += 1
+    for issue_id, count in id_counts.items():
+        if count > 1:
+            titles = [i["title"][:60] for i in issues if i["id"] == issue_id]
+            print(f"WARNING: Duplicate issue ID '{issue_id}' found {count}x:", file=sys.stderr)
+            for t in titles:
+                print(f"  - {t}", file=sys.stderr)
+            print(f"  Fix code_concerns.md to use unique IDs.", file=sys.stderr)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Triage code_concerns.md into grouped fix batches")
     parser.add_argument("--input", default="code_concerns.md", help="Path to code_concerns.md")
@@ -481,6 +512,7 @@ def main():
     args = parser.parse_args()
 
     issues = parse_concerns(args.input)
+    _warn_duplicate_ids(issues)
     pending = [i for i in issues if not i["completed"]]
     completed = [i for i in issues if i["completed"]]
 

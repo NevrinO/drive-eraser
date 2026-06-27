@@ -78,7 +78,7 @@ class ZeroCheckManager:
             status = self._status.get(bay, self._base_status())
             status.update(updates)
             self._status[bay] = status
-        self._emit_update(bay)
+        self._emit_update(bay, status)
         return status
 
     def _next_generation(self, bay):
@@ -102,13 +102,14 @@ class ZeroCheckManager:
             status = self._status.get(bay, self._base_status())
             status.update(updates)
             self._status[bay] = status
-        self._emit_update(bay)
+        self._emit_update(bay, status)
         return status
 
-    def _emit_update(self, bay):
+    def _emit_update(self, bay, status=None):
         try:
             if self._socketio:
-                status = self._get_status(bay)
+                if status is None:
+                    status = self._get_status(bay)
                 self._socketio.emit("zero_check_updated", {"bay": bay, "zero_check": status})
         except Exception as e:
             logging.getLogger("app").warning(f"Failed to emit zero_check_updated for {bay}: {e}")

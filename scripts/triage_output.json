@@ -1,24 +1,14 @@
 {
   "total_issues": 125,
-  "completed": 87,
-  "pending": 38,
+  "completed": 94,
+  "pending": 31,
   "groups": [
     {
       "id": "G1",
-      "pattern": "Performance: repeated disk I/O without caching",
+      "pattern": "Performance: repeated config file reads without caching",
       "pattern_id": "perf_caching",
-      "fix_shape": "Add TTL cache or file-mtime-based cache",
+      "fix_shape": "Add TTL cache or file-mtime-based cache for config file reads",
       "issues": [
-        {
-          "id": "A16",
-          "title": "`verify_crypto_hash_comparison` Re-reads Unchanged Chunks Unnecessarily",
-          "file": "backend/crypto_verification.py",
-          "line": "736-769",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "Pre-compute all-zeros hash once, skip re-reading chunks whose before-hash differs from it."
-        },
         {
           "id": "A1",
           "title": "`load_policy()` Called on Every API Request",
@@ -48,108 +38,27 @@
           "difficulty": "medium",
           "category": "Performance",
           "suggestion": "Cache with file mtime check or use inotify-based file watcher."
-        },
-        {
-          "id": "A32",
-          "title": "`_emit_update` double lock acquisition",
-          "file": "backend/zero_check_manager.py",
-          "line": "80, 104, 196",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Pass the status dict directly to `_emit_update` instead of re-reading it."
         }
       ],
       "issue_ids": [
-        "A16",
         "A1",
         "A21",
-        "A31",
-        "A32"
+        "A31"
       ],
       "files": [
         "backend/app.py",
-        "backend/crypto_verification.py",
         "backend/disk_ops.py",
-        "backend/udev_listener.py",
-        "backend/zero_check_manager.py"
-      ],
-      "weight": 18,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 4
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G2",
-      "pattern": "TOCTOU: os.path.exists() pre-checks",
-      "pattern_id": "toctou",
-      "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
-      "issues": [
-        {
-          "id": "A10",
-          "title": "`get_data_dir()` / `get_config_dir()` TOCTOU Pattern",
-          "file": "backend/common.py",
-          "line": "291-300, 377-386",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Return the path without the isdir check, or handle errors at the point of use."
-        },
-        {
-          "id": "A30",
-          "title": "`os.path.exists` TOCTOU patterns",
-          "file": "backend/udev_listener.py",
-          "line": "82, 231",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Use direct `os.listdir()` in try/except `OSError`."
-        },
-        {
-          "id": "A35",
-          "title": "`os.path.exists` TOCTOU patterns",
-          "file": "backend/routes/admin_routes.py",
-          "line": "269, 389, 403, 407, 587, 611, 668, 2042, 2366, 2412",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Use direct operation + exception handling."
-        },
-        {
-          "id": "A57",
-          "title": "Pervasive TOCTOU `os.path.exists` / `os.path.isdir` patterns",
-          "file": "backend/device_discovery.py",
-          "line": "249, 315, 759, 853, 872, 895, 1005, 1066, 1105, 1114, 1119, 1146, 1192, 1232, 1384, 1388, 1416, 1525",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Replace pre-check patterns with direct `try: operation() except (OSError, IOError): handle_error()`. For `os.listdir()`, attempt directly and catch `OSError`. For `os.path.realpath()`, attempt directl"
-        }
-      ],
-      "issue_ids": [
-        "A10",
-        "A30",
-        "A35",
-        "A57"
-      ],
-      "files": [
-        "backend/common.py",
-        "backend/device_discovery.py",
-        "backend/routes/admin_routes.py",
         "backend/udev_listener.py"
       ],
-      "weight": 16,
+      "weight": 12,
       "difficulty_breakdown": {
-        "medium": 4
+        "medium": 3
       },
       "session_size": "medium",
       "action": "batch_fix"
     },
     {
-      "id": "G3",
+      "id": "G2",
       "pattern": "Input validation gaps",
       "pattern_id": "input_validation",
       "fix_shape": "Validate input types, formats, and enforce size limits",
@@ -240,21 +149,11 @@
       "action": "batch_fix"
     },
     {
-      "id": "G4",
+      "id": "G3",
       "pattern": "DRY: duplicated logic across functions/files",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
       "issues": [
-        {
-          "id": "C9",
-          "title": "Massive Code Duplication Between `_collect_drive_data` and `_process_single_drive_extended_smart`",
-          "file": "backend/disk_ops.py",
-          "line": "299-358 vs 689-751",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Extract `_build_drive_payload(smart, interface_type, capabilities, marker_status, recommendation, health_score, penalty_breakdown, drive_type, command_diagnostics, smart_polling)` helper."
-        },
         {
           "id": "A18",
           "title": "`_discover_drives_enclosure` and `_discover_drives_legacy` ~80% Duplicated",
@@ -265,53 +164,6 @@
           "category": "Architecture",
           "suggestion": "Extract shared logic into helpers: `_init_bay_info()`, `_build_path_to_dev()`, `_submit_extended_smart_for_results()`, `_finalize_discovery()`."
         },
-        {
-          "id": "A80",
-          "title": "Duplicated slot mapping collection logic between `handleSaveEnclosure` and `handleEditEnclosure`",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "779-829 (`handleSaveEnclosure`) vs 881-931 (`handleEditEnclosure`)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "DRY",
-          "suggestion": "Extract `collectSlotMappingsFromDOM(container)` helper that returns the `slotMappings` object. Both functions call it, then construct their respective payloads."
-        },
-        {
-          "id": "A82",
-          "title": "`renderSlotAssignment` loses user modifications on re-render",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "445-737 (particularly 654-657)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Correctness",
-          "suggestion": "Before re-rendering, collect current slot values from the DOM (using the same logic as `handleSaveEnclosure`) and merge them into `wizardData.slots`. Then use `wizardData.slots` as the source of truth"
-        }
-      ],
-      "issue_ids": [
-        "C9",
-        "A18",
-        "A80",
-        "A82"
-      ],
-      "files": [
-        "backend/disk_ops.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 16,
-      "difficulty_breakdown": {
-        "medium": 4
-      },
-      "session_size": "medium",
-      "action": "batch_fix",
-      "related_groups": [
-        "G5"
-      ]
-    },
-    {
-      "id": "G5",
-      "pattern": "DRY: duplicated logic across functions/files (batch 2)",
-      "pattern_id": "dry_violation",
-      "fix_shape": "Extract shared helper function and update all call sites to use it",
-      "issues": [
         {
           "id": "A70",
           "title": "File Size 1148 Lines Exceeds 800-Line Threshold",
@@ -334,6 +186,7 @@
         }
       ],
       "issue_ids": [
+        "A18",
         "A70",
         "A53"
       ],
@@ -341,15 +194,79 @@
         "backend/device_discovery.py",
         "backend/disk_ops.py"
       ],
-      "weight": 16,
+      "weight": 20,
       "difficulty_breakdown": {
+        "medium": 1,
         "high": 2
       },
-      "session_size": "medium",
+      "session_size": "large",
       "action": "plan",
       "related_groups": [
         "G4"
       ]
+    },
+    {
+      "id": "G4",
+      "pattern": "DRY: duplicated logic across functions/files (batch 2)",
+      "pattern_id": "dry_violation",
+      "fix_shape": "Extract shared helper function and update all call sites to use it",
+      "issues": [
+        {
+          "id": "A83",
+          "title": "`SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend",
+          "file": "frontend/admin/enclosureManagement.js",
+          "line": "394-441",
+          "severity": "advisory",
+          "difficulty": "high",
+          "category": "Architecture",
+          "suggestion": "Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data "
+        }
+      ],
+      "issue_ids": [
+        "A83"
+      ],
+      "files": [
+        "frontend/admin/enclosureManagement.js"
+      ],
+      "weight": 8,
+      "difficulty_breakdown": {
+        "high": 1
+      },
+      "session_size": "small",
+      "action": "plan",
+      "related_groups": [
+        "G3"
+      ]
+    },
+    {
+      "id": "G5",
+      "pattern": "Concurrency: missing/improper locks",
+      "pattern_id": "concurrency_lock",
+      "fix_shape": "Add locks around shared mutable state or restructure lock scope",
+      "issues": [
+        {
+          "id": "A32",
+          "title": "`_emit_update` double lock acquisition",
+          "file": "backend/zero_check_manager.py",
+          "line": "80, 104, 196",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Concurrency",
+          "suggestion": "Pass the status dict directly to `_emit_update` instead of re-reading it."
+        }
+      ],
+      "issue_ids": [
+        "A32"
+      ],
+      "files": [
+        "backend/zero_check_manager.py"
+      ],
+      "weight": 4,
+      "difficulty_breakdown": {
+        "medium": 1
+      },
+      "session_size": "small",
+      "action": "batch_fix"
     },
     {
       "id": "G6",
@@ -358,8 +275,8 @@
       "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
       "issues": [
         {
-          "id": "A70",
-          "title": "`str(e)` in error responses — information disclosure",
+          "id": "A97",
+          "title": "[DOCUMENTED] [Advisory] `str(e)` in error responses — information disclosure",
           "file": "backend/smart_parsing.py",
           "line": "654, 656 (`run_smart_test`), 918, 920 (`get_smart_test_status`)",
           "severity": "advisory",
@@ -369,7 +286,7 @@
         },
         {
           "id": "A34",
-          "title": "`str(e)` in API responses throughout (information disclosure)",
+          "title": "[DOCUMENTED] [Advisory] `str(e)` in API responses throughout (information disclosure)",
           "file": "backend/routes/admin_routes.py",
           "line": "178, 212, 263, 428, 446, 509, 577, 1008, 1049, 1353, 1558, 1582, 1644, 1694, 1720, 1780, 1812, 1871, 1914, 1941, 1967, 2027, 2051, 2345, 2494, 2587",
           "severity": "advisory",
@@ -379,7 +296,7 @@
         },
         {
           "id": "A40",
-          "title": "`str(e)` in error responses",
+          "title": "[DOCUMENTED] [Advisory] `str(e)` in error responses",
           "file": "backend/routes/drive_routes.py",
           "line": "131, 205, 218",
           "severity": "advisory",
@@ -389,7 +306,7 @@
         }
       ],
       "issue_ids": [
-        "A70",
+        "A97",
         "A34",
         "A40"
       ],
@@ -498,49 +415,6 @@
     },
     {
       "id": "G9",
-      "pattern": "Error swallowing: bare except / silent failures",
-      "pattern_id": "error_swallowing",
-      "fix_shape": "Add logging to except blocks, catch specific exceptions",
-      "issues": [
-        {
-          "id": "A75",
-          "title": "`get_smart_test_status` cache key construction assumes disk_ops internal format",
-          "file": "backend/smart_parsing.py",
-          "line": "775",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Expose a `get_cached_smart_data(device)` function from `disk_ops` that encapsulates the cache key construction, and call that from `smart_parsing.py` instead."
-        },
-        {
-          "id": "A83",
-          "title": "`SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "394-441",
-          "severity": "advisory",
-          "difficulty": "high",
-          "category": "Architecture",
-          "suggestion": "Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data "
-        }
-      ],
-      "issue_ids": [
-        "A75",
-        "A83"
-      ],
-      "files": [
-        "backend/smart_parsing.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 12,
-      "difficulty_breakdown": {
-        "medium": 1,
-        "high": 1
-      },
-      "session_size": "medium",
-      "action": "plan"
-    },
-    {
-      "id": "G10",
       "pattern": "Misc: Architecture",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -574,32 +448,53 @@
           "difficulty": "medium",
           "category": "Architecture",
           "suggestion": "Document that cache keys are schema-specific, or unify on `(dev_node, dev_node)` for both modes."
+        },
+        {
+          "id": "A75",
+          "title": "`get_smart_test_status` cache key construction assumes disk_ops internal format",
+          "file": "backend/smart_parsing.py",
+          "line": "775",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Expose a `get_cached_smart_data(device)` function from `disk_ops` that encapsulates the cache key construction, and call that from `smart_parsing.py` instead."
         }
       ],
       "issue_ids": [
         "A72",
         "A6",
-        "A23"
+        "A23",
+        "A75"
       ],
       "files": [
         "backend/app.py",
         "backend/disk_ops.py",
         "backend/smart_parsing.py"
       ],
-      "weight": 10,
+      "weight": 14,
       "difficulty_breakdown": {
         "low": 1,
-        "medium": 2
+        "medium": 3
       },
       "session_size": "medium",
       "action": "batch_fix"
     },
     {
-      "id": "G11",
+      "id": "G10",
       "pattern": "Misc: Performance",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
       "issues": [
+        {
+          "id": "A16",
+          "title": "`verify_crypto_hash_comparison` Re-reads Unchanged Chunks Unnecessarily",
+          "file": "backend/crypto_verification.py",
+          "line": "736-769",
+          "severity": "advisory",
+          "difficulty": "low",
+          "category": "Performance",
+          "suggestion": "Pre-compute all-zeros hash once, skip re-reading chunks whose before-hash differs from it."
+        },
         {
           "id": "A69",
           "title": "`_get_os_by_path_cached` Race Causes Redundant Work",
@@ -652,6 +547,7 @@
         }
       ],
       "issue_ids": [
+        "A16",
         "A69",
         "A58",
         "A76",
@@ -665,9 +561,9 @@
         "backend/smart_parsing.py",
         "frontend/admin/enclosureManagement.js"
       ],
-      "weight": 12,
+      "weight": 14,
       "difficulty_breakdown": {
-        "low": 4,
+        "low": 5,
         "medium": 1
       },
       "session_size": "medium",
@@ -676,123 +572,15 @@
   ],
   "dependency_chains": [
     {
-      "must_do_first": "C17",
-      "unblocks": "C16",
-      "reason": "C16 is related to C17 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A47",
-      "unblocks": "A46",
-      "reason": "A46 is related to A47 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A48",
-      "unblocks": "A46",
-      "reason": "A46 is related to A48 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A46",
-      "unblocks": "A47",
-      "reason": "A47 is related to A46 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A48",
-      "unblocks": "A47",
-      "reason": "A47 is related to A48 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A46",
-      "unblocks": "A48",
-      "reason": "A48 is related to A46 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A47",
-      "unblocks": "A48",
-      "reason": "A48 is related to A47 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "C16",
-      "unblocks": "A49",
-      "reason": "A49 is related to C16 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "C16",
-      "unblocks": "A50",
-      "reason": "A50 is related to C16 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "C21",
-      "unblocks": "C20",
-      "reason": "C20 is related to C21 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "C20",
-      "unblocks": "C21",
-      "reason": "C21 is related to C20 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A19",
-      "unblocks": "A57",
-      "reason": "A57 is related to A19 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A30",
-      "unblocks": "A57",
-      "reason": "A57 is related to A30 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "C26",
-      "unblocks": "C27",
-      "reason": "C27 is related to C26 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A19",
-      "unblocks": "A69",
-      "reason": "A69 is related to A19 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A30",
-      "unblocks": "A69",
-      "reason": "A69 is related to A30 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A35",
-      "unblocks": "A69",
-      "reason": "A69 is related to A35 (soft dependency)",
-      "soft": true
-    },
-    {
       "must_do_first": "A34",
-      "unblocks": "A70",
-      "reason": "A70 is related to A34 (soft dependency)",
+      "unblocks": "A97",
+      "reason": "A97 is related to A34 (soft dependency)",
       "soft": true
     },
     {
       "must_do_first": "A52",
       "unblocks": "A78",
       "reason": "A78 is related to A52 (soft dependency)",
-      "soft": true
-    },
-    {
-      "must_do_first": "A82",
-      "unblocks": "A89",
-      "reason": "A89 is related to A82 (soft dependency)",
       "soft": true
     },
     {

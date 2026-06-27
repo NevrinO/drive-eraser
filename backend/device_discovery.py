@@ -481,13 +481,10 @@ def get_enclosure_hardware_info() -> List[Dict]:
                 continue
 
         # Count total and occupied slots
+        # Reuse slot_ids from the earlier os.listdir(enc_path) call —
+        # the directory listing doesn't change between the two loops.
         total_slots = 0
         occupied_slots = 0
-
-        try:
-            slot_ids = os.listdir(enc_path)
-        except (OSError, IOError):
-            continue
 
         for slot_id in slot_ids:
             if slot_id in METADATA_DIRS:

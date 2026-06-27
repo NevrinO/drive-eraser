@@ -291,13 +291,43 @@ def _get_os_by_path_cached():
     with _OS_BY_PATH_LOCK:
         if _OS_BY_PATH_CACHE['data'] is not None:
             return _OS_BY_PATH_CACHE['data']
-    data = get_os_by_path()
-    if data and data[0]:
-        with _OS_BY_PATH_LOCK:
+        data = get_os_by_path()
+        if data and data[0]:
             _OS_BY_PATH_CACHE['data'] = data
-    return data
+        return data
 
 # --- DISCOVERY ENGINE ---
+
+def _process_marker_status(marker_status, interface_type, smart):
+    """Check marker status and update is_pristine/state fields in-place.
+
+    Shared by _collect_drive_data and _process_single_drive_extended_smart.
+    """
+    if marker_status.get("status") == "checksum_valid":
+        is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
+        marker_status["is_pristine"] = is_pristine
+        marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
+
+
+def _build_drive_payload(dev_node, smart, interface_type, capabilities, marker_status, recommendation,
+                         health_score, penalty_breakdown, drive_type, command_diagnostics, smart_polling):
+    """Build the standardized drive payload dict from collected data.
+
+    Shared by _collect_drive_data and _process_single_drive_extended_smart.
+    """
+    return {
+        "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
+        "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
+        "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
+        "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
+        "smart": {
+            "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
+            "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
+            "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+            "penalty_breakdown": penalty_breakdown, "smart_polling": smart_polling
+        }
+    }
+
 
 def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, configured_type, passphrase, use_identity_only=False):
     """Collect all expensive per-drive data (SMART, capabilities, marker) for one device.
@@ -321,11 +351,7 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
     interface_type = detect_interface_type(resolved_active_path or configured_active_path, dev_node, configured_type, smart.get("raw"))
     capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
     marker_status = read_marker_status(dev_node, interface_type, passphrase)
-
-    if marker_status.get("status") == "checksum_valid":
-        is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
-        marker_status["is_pristine"] = is_pristine
-        marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
+    _process_marker_status(marker_status, interface_type, smart)
 
     # Set health score to null when using identity-only (polling in background)
     if smart.get("smart_polling"):
@@ -348,18 +374,8 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         except Exception as e:
             logging.getLogger(__name__).warning(f"Failed to record intake snapshot for {serial}: {e}")
 
-    return {
-        "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
-        "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
-        "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
-        "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
-        "smart": {
-            "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
-            "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
-            "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
-            "penalty_breakdown": penalty_breakdown, "smart_polling": smart.get("smart_polling", False)
-        }
-    }
+    return _build_drive_payload(dev_node, smart, interface_type, capabilities, marker_status, recommendation,
+                                health_score, penalty_breakdown, drive_type, command_diagnostics, smart.get("smart_polling", False))
 
 def _apply_drive_payload(bay_info, payload, is_os_drive):
     """Merge a (possibly cached) drive data payload into a bay record.
@@ -705,11 +721,7 @@ def _process_single_drive_extended_smart(item, passphrase):
         interface_type = detect_interface_type(resolved_path or configured_path, dev_node, configured_type, smart.get("raw"))
         capabilities = detect_drive_capabilities(interface_type, dev_node, command_diagnostics)
         marker_status = read_marker_status(dev_node, interface_type, passphrase)
-
-        if marker_status.get("status") == "checksum_valid":
-            is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
-            marker_status["is_pristine"] = is_pristine
-            marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
+        _process_marker_status(marker_status, interface_type, smart)
 
         thresholds = get_triage_thresholds()
         health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
@@ -725,18 +737,8 @@ def _process_single_drive_extended_smart(item, passphrase):
                 logger.warning(f"Failed to record intake snapshot for {serial}: {e}")
 
         # Build full payload with smart_polling: false
-        payload = {
-            "present": True, "device": dev_node, "serial": smart.get("serial"), "model": smart.get("model"), "status": smart.get("status", "UNKNOWN"), "interface_type": interface_type, "drive_type": drive_type, "capacity_str": smart.get("capacity_str", "-"),
-            "capabilities": capabilities, "marker": marker_status, "recommendation": recommendation, "health_score": health_score,
-            "supported_methods": [m for m, s in {"crypto": capabilities.get("supports_crypto_erase", False), "block": capabilities.get("supports_block_erase", False), "secure_erase": capabilities.get("supports_secure_erase", False), "enhanced_secure_erase": capabilities.get("supports_enhanced_secure_erase", False), "overwrite": capabilities.get("supports_overwrite", False)}.items() if s],
-            "diagnostics": {"mapping": {"ok": True, "reason": None}, "commands": command_diagnostics},
-            "smart": {
-                "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
-                "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
-                "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
-                "penalty_breakdown": penalty_breakdown, "smart_polling": False
-            }
-        }
+        payload = _build_drive_payload(dev_node, smart, interface_type, capabilities, marker_status, recommendation,
+                                       health_score, penalty_breakdown, drive_type, command_diagnostics, False)
 
         # Update cache with full data
         _store_drive_payload(cache_key, payload)
