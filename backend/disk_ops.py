@@ -67,9 +67,10 @@ def _is_eligible_for_zero_check(drive, manager=None, allow_completed=False):
         bay = drive.get("bay")
         if bay:
             status = manager.get_status(bay)
-            blocked = ("queued", "running")
-            if not allow_completed:
-                blocked = blocked + ("completed",)
+            if allow_completed:
+                blocked = ("queued", "running")
+            else:
+                blocked = ("queued", "running", "completed", "failed", "cancelled")
             if status.get("status") in blocked:
                 return False, "zero check already in progress or completed"
     if not drive.get("device"):

@@ -643,24 +643,8 @@ function renderBayCard(drive) {
           <span>${escapeHtml(drive.capacity_str)}</span>
           <span>${escapeHtml(devicePath)}</span>
         </div>
-        ${renderZeroCheckControls(drive)}
       `}
     </article>
-  `;
-}
-
-function renderZeroCheckControls(drive) {
-  if (!drive.present || drive.locked || drive.role === "os" || drive.role === "reserved") return "";
-  if (String(drive.status).toUpperCase() === "RUNNING") return "";
-  const zc = drive.zero_check || {};
-  const isRunning = zc.status === "running" || zc.status === "queued";
-  const hasStatus = zc.status && zc.status !== "not_started";
-  const label = isRunning ? "Cancel Check" : (hasStatus ? "Re-check Zero" : "Check Zero");
-  const action = isRunning ? "cancel" : "start";
-  return `
-    <div class="zero-check-controls">
-      <button type="button" class="btn btn--small" data-zero-check-action="${action}" data-bay="${escapeHtml(drive.bay)}" ${isBatchMode ? 'disabled' : ''}>${label}</button>
-    </div>
   `;
 }
 
@@ -669,15 +653,6 @@ baysGrid.addEventListener("click", (event) => {
   if (checkbox) {
     const bay = checkbox.getAttribute("data-checkbox-bay");
     toggleBaySelection(bay);
-    return;
-  }
-
-  const zeroCheckBtn = event.target.closest("[data-zero-check-action]");
-  if (zeroCheckBtn) {
-    event.stopPropagation();
-    const bay = zeroCheckBtn.getAttribute("data-bay");
-    const action = zeroCheckBtn.getAttribute("data-zero-check-action");
-    handleZeroCheckAction(bay, action);
     return;
   }
 

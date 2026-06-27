@@ -363,12 +363,16 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
         zones = [(0, capacity)]
     else:
         zone_size = total_bytes // zone_count
+        # Align zone_size and offsets to block_size for O_DIRECT compatibility
+        zone_size = (zone_size // block_size) * block_size
+        if zone_size <= 0:
+            zone_size = block_size
         zones = [
             (0, zone_size),  # start
-            (capacity // 4 - zone_size // 2, zone_size),  # 25% center
-            (capacity // 2 - zone_size // 2, zone_size),  # middle
-            ((3 * capacity) // 4 - zone_size // 2, zone_size),  # 75% center
-            (capacity - zone_size, zone_size),  # end
+            ((capacity // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 25% center
+            ((capacity // 2 - zone_size // 2) // block_size * block_size, zone_size),  # middle
+            (((3 * capacity) // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 75% center
+            (((capacity - zone_size) // block_size) * block_size, zone_size),  # end
         ]
 
     chunks_checked = 0

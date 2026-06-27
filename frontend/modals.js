@@ -71,7 +71,8 @@ function renderLiveDetails(drive) {
   
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
-  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const hasValidMarker = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const isCompleted = hasValidMarker;
   
   let displayStatus = "IDLE / READY";
   let statusClass = "status-empty";
@@ -211,14 +212,14 @@ function renderLiveDetails(drive) {
       <div class="kv"><span>Comments:</span><span>${escapeHtml(rec.comment)}</span></div>
     </div>
 
+    ${hasValidMarker ? `
     <div class="detail-section">
       <h4>Compliance Marker Integrity</h4>
       <div class="kv"><span>Marker Status:</span><span class="status-chip ${markerClass}">${escapeHtml(markerStatusText)}</span></div>
       <div class="kv"><span>Last Ticket:</span><span>${escapeHtml(drive.marker?.details?.ticket_number || "-")}</span></div>
       <div class="kv"><span>Wiped on:</span><span>${escapeHtml(formatIsoDate(drive.marker?.details?.finished_at))}</span></div>
     </div>
-
-    ${renderZeroCheckDetailSection(drive)}
+    ` : renderZeroCheckDetailSection(drive)}
 
     <div class="detail-section">
       <h4>Normalized SMART Essentials</h4>
