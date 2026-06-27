@@ -35,7 +35,7 @@ class TestSignalHandler:
         mock_bulk_signal.assert_called_once_with(15, None)
         mock_crypto_signal.assert_called_once_with(15, None)
         mock_disk_signal.assert_called_once_with(15, None)
-        mock_exit.assert_called_once_with(0)
+        mock_exit.assert_called_once_with(130)
 
 
 

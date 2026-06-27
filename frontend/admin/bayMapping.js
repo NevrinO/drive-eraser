@@ -231,7 +231,7 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
 
         <div class="form-group" style="margin-bottom: 8px; display: grid; grid-template-columns: 180px 1fr 1fr; gap: 8px; align-items: end;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Number</label>
-            <input id="display-number-${bayId}" class="display-number-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+            <input id="display-number-${bayId}" class="display-number-input input--number" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
             <label style="font-size: 0.75rem; color: #aaa; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 6px;">
               <input id="override-number-${bayId}" class="override-number-toggle" data-bay="${bayId}" type="checkbox" ${hasOverride ? "checked" : ""} />
               Manual Override
@@ -240,7 +240,7 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
 
         <div class="form-group" style="margin-bottom: 8px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Drive Interface Type</label>
-            <select id="type-${bayId}" class="bay-type-selector" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+            <select id="type-${bayId}" class="bay-type-selector input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
                 <option value="sas_sata" ${!isU2 ? 'selected' : ''}>SAS / SATA</option>
                 <option value="u2" ${isU2 ? 'selected' : ''}>U.2 / U.3 / Hybrid (NVMe capable)</option>
             </select>
@@ -248,13 +248,13 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
 
         <div class="form-group" style="margin-bottom: 8px;">
             <label id="primary-label-${bayId}" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Primary SAS/SATA Controller Port Path</label>
-            <select id="path-${bayId}" class="by-path-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+            <select id="path-${bayId}" class="by-path-select input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
             </select>
         </div>
 
         <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'} margin-bottom: 8px;">
             <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px; color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
-            <select id="path-nvme-${bayId}" class="by-path-nvme-select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+            <select id="path-nvme-${bayId}" class="by-path-nvme-select input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
             </select>
         </div>
         <hr style="border: 0; border-top: 1px solid #333; margin: 16px 0;">

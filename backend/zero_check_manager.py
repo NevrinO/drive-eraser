@@ -1,6 +1,7 @@
 # Background zero-check manager for pre-wipe zero detection.
 # Non-blocking, queue-based, with per-bay cancellation and SocketIO events.
 
+import copy
 from collections import deque
 from datetime import datetime, timezone
 import logging
@@ -200,7 +201,7 @@ class ZeroCheckManager:
 
     def get_all_status(self):
         with self._lock:
-            return {bay: dict(status) for bay, status in self._status.items()}
+            return {bay: copy.deepcopy(status) for bay, status in self._status.items()}
 
     def on_drive_removed(self, bay):
         self.clear_state(bay)

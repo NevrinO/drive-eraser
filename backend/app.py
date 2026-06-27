@@ -69,7 +69,7 @@ def _centralized_signal_handler(signum, frame):
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")
-    sys.exit(0)
+    sys.exit(130)
 
 # Register centralized signal handlers (only in main thread)
 try:
@@ -142,11 +142,6 @@ def update_smart_test_status_background():
                 
                 device = test.get("device")
                 if not device:
-                    continue
-                
-                # Check if device still exists before querying SMART status
-                if not os.path.exists(device):
-                    logger.debug(f"Device {device} no longer exists, skipping SMART status check")
                     continue
                 
                 try:

@@ -79,7 +79,7 @@ def extract_coordinates_from_sysfs(sys_path: str) -> Optional[Dict]:
             sas_device_dir = os.path.join('/'.join(path_parts[:i+1]), path_parts[i+1])
             break
     
-    if sas_device_dir and os.path.exists(sas_device_dir):
+    if sas_device_dir:
         # SAS expander topology
         expander_id = os.path.basename(sas_device_dir)
         

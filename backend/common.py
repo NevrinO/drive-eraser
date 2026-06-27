@@ -298,8 +298,13 @@ def get_data_dir():
         "/opt/drive-eraser/data",
     ]
     for candidate in candidates:
-        if candidate and os.path.isdir(candidate):
+        if not candidate:
+            continue
+        try:
+            os.listdir(candidate)
             return candidate
+        except OSError:
+            continue
     return os.path.join(PROJECT_ROOT, "data")
 
 def get_db_path():
@@ -359,8 +364,13 @@ def get_config_dir():
         "/opt/drive-eraser/config",
     ]
     for candidate in candidates:
-        if candidate and os.path.isdir(candidate):
+        if not candidate:
+            continue
+        try:
+            os.listdir(candidate)
             return candidate
+        except OSError:
+            continue
     return os.path.join(PROJECT_ROOT, "config")
 
 def load_policy(config_dir=None):
@@ -371,8 +381,6 @@ def load_policy(config_dir=None):
     if config_dir is None:
         config_dir = get_config_dir()
     policy_path = os.path.join(config_dir, "policy.json")
-    if not os.path.exists(policy_path):
-        return DEFAULT_POLICY.copy()
     try:
         with open(policy_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -412,6 +420,8 @@ def load_policy(config_dir=None):
                 merged.pop("prewipe_spot_check", None)
 
             return merged
+    except FileNotFoundError:
+        return DEFAULT_POLICY.copy()
     except Exception as e:
         logger.error(f"Failed to load policy configuration: {e}")
         raise ValueError(f"Configuration load failed: {e}")
@@ -486,17 +496,13 @@ def load_bay_map(config_dir=None):
     """
     Load bay map configuration with validation for placeholder values.
     Critical #7: Detects "REPLACE_ME" placeholder values and logs warning but allows load to proceed.
-    Advisory #7: Fixed TOCTOU race condition by moving existence check inside lock.
+    Advisory #7: Fixed TOCTOU race condition by removing existence check and catching FileNotFoundError.
     """
     if config_dir is None:
         config_dir = get_config_dir()
     bay_map_path = os.path.join(config_dir, "bay_map.json")
     
     with BAY_MAP_LOCK:
-        # Advisory #7: Move existence check inside lock to prevent TOCTOU race condition
-        if not os.path.exists(bay_map_path):
-            return {}
-        
         try:
             with open(bay_map_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -512,6 +518,8 @@ def load_bay_map(config_dir=None):
                 logger.warning("Bay map contains placeholder device paths (REPLACE_ME). System will load but drive operations will fail until bays are properly configured.")
             
             return data
+        except FileNotFoundError:
+            return {}
         except Exception as e:
             logger.error(f"Failed to load bay map: {e}")
             return {}

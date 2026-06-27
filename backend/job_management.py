@@ -197,12 +197,11 @@ def get_device_sectors_written(device):
     try:
         dev_name = os.path.basename(device)
         stat_path = f"/sys/block/{dev_name}/stat"
-        if os.path.exists(stat_path):
-            with open(stat_path, "r") as f:
-                content = f.read().strip()
-            parts = content.split()
-            if len(parts) >= 7:
-                return int(parts[6])
+        with open(stat_path, "r") as f:
+            content = f.read().strip()
+        parts = content.split()
+        if len(parts) >= 7:
+            return int(parts[6])
     except Exception as e:
         logging.getLogger(__name__).debug(f"poll failed for sectors written on {device}: {e}")
     return None
@@ -320,11 +319,12 @@ def finalize_failed_job(job_id, error_message):
             
             active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
             failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
-            if os.path.exists(active_log_path):
-                try:
-                    os.rename(active_log_path, failed_log_path)
-                except Exception as e:
-                    logger.warning(f"Failed to rename active log to failed log: {e}")
+            try:
+                os.rename(active_log_path, failed_log_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.warning(f"Failed to rename active log to failed log: {e}")
             try:
                 with open(failed_log_path, "a", encoding="utf-8") as lf:
                     lf.write(f"\n=== JOB CONFIGURATION FAILURE ===\nError Message: {error_message}\n")
@@ -883,11 +883,12 @@ def run_erase_job(job_id):
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Post-erase marker disabled by policy, skipping marker write.")
                 job["marker"] = {"ok": True, "status": "disabled_by_policy", "error": None, "details": {}}
             
-            if os.path.exists(active_log_path):
-                try:
-                    os.remove(active_log_path)
-                except Exception as e:
-                    logger.warning(f"Failed to remove active log: {e}")
+            try:
+                os.remove(active_log_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.warning(f"Failed to remove active log: {e}")
                     
             try:
                 job["certificate"] = build_certificate(job)
@@ -922,11 +923,12 @@ def run_erase_job(job_id):
             logger.error(f"Job {job_id} (Bay {job['request']['bay']}) FAILED: {job['error']}")
 
             failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
-            if os.path.exists(active_log_path):
-                try:
-                    os.rename(active_log_path, failed_log_path)
-                except Exception as e:
-                    logger.warning(f"Failed to rename active log to failed log: {e}")
+            try:
+                os.rename(active_log_path, failed_log_path)
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.warning(f"Failed to rename active log to failed log: {e}")
             try:
                 smart_diagnostics = get_raw_smart_diagnostics(device)
                 with open(failed_log_path, "a", encoding="utf-8") as lf:

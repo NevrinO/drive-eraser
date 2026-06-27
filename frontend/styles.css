@@ -43,7 +43,7 @@
   --color-bay-completed: #062f1c;
   --color-bay-failed: #3c0f12;
   --color-bay-unconfigured: #3c2f0f;
-  --color-bay-warning: #3c2f0f;
+  --color-bay-warning: var(--color-bay-unconfigured);
   --radius-sm: 6px;
   --radius-md: 10px;
   --radius-lg: 14px;
@@ -710,12 +710,6 @@ input:focus, select:focus {
 .status-badge--warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
 .status-badge--empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
 
-/* Backward compatibility aliases */
-.status-badge.complete { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid var(--color-success); }
-.status-badge.failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
-.status-badge.running { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
-.status-badge.queued { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-text-muted); }
-
 .expanded-audit-details {
   margin-top: 16px;
   border-top: 1px solid var(--color-border);
@@ -869,11 +863,6 @@ input:focus, select:focus {
 }
 
 .modal-dialog--wide {
-  width: 1200px !important;
-  max-width: 94vw !important;
-}
-
-.modal--nested .modal-dialog--wide {
   width: 1200px !important;
   max-width: 94vw !important;
 }
@@ -1222,17 +1211,6 @@ input:focus, select:focus {
   line-height: 1.4;
 }
 
-.auth-dialog input {
-  /* Use .input--auth modifier instead */
-  width: 100%;
-  padding: 10px;
-  background: var(--color-surface-3);
-  border: 1px solid var(--color-border);
-  color: var(--color-white);
-  border-radius: var(--radius-sm);
-  font-size: 0.85rem;
-}
-
 .auth-error {
   margin-top: 12px;
   color: var(--color-danger);
@@ -1325,12 +1303,6 @@ input:focus, select:focus {
   margin-bottom: 12px;
 }
 
-.display-number-input {
-  /* Use .input--number modifier instead; base styles inherited from input rule */
-  background: var(--color-surface-3);
-  width: 100%;
-}
-
 .override-number-toggle {
   background: var(--color-surface-2);
   color: var(--color-white);
@@ -1350,15 +1322,8 @@ input:focus, select:focus {
 .bay-type-selector,
 .by-path-select,
 .by-path-nvme-select {
-  /* Use .input--select modifier instead; kept for selector compatibility */
-  background: var(--color-surface-3);
-  color: var(--color-white);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
-  padding: 8px 12px;
+  /* Uses .input--select modifier class in HTML; kept for JS selector compatibility */
   font-size: 0.85rem;
-  font-family: inherit;
-  width: 100%;
 }
 
 .nvme-group {

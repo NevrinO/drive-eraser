@@ -69,7 +69,7 @@ admin_bp = Blueprint('admin_routes', __name__)
 # Device name validation patterns following lesson #9 and #15
 # Use \Z (not $) for strict end-of-string anchor to prevent "/dev/sda\n" bypass
 # Lesson #91: Use specific patterns matching actual system naming conventions
-_SATA_DEVICE_RE = re.compile(r'^sd[a-z]+[0-9]*\Z')
+_SATA_DEVICE_RE = re.compile(r'^sd[a-z]+\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 
@@ -267,9 +267,11 @@ def export_csv_ledger():
 def cleanup_support_bundle(response):
     if request.path == "/api/admin/support-bundle" and response.status_code == 200:
         tar_path = getattr(g, 'support_bundle_tar_path', None)
-        if tar_path and os.path.exists(tar_path):
+        if tar_path:
             try:
                 os.remove(tar_path)
+            except FileNotFoundError:
+                pass
             except Exception:
                 pass
     return response
@@ -387,7 +389,7 @@ def download_support_bundle():
         try:
             policy_dir = get_config_dir()
             policy_path = os.path.join(policy_dir, "policy.json")
-            if os.path.exists(policy_path):
+            try:
                 with open(policy_path, "r", encoding="utf-8") as f:
                     policy_data = json.load(f)
                 for key in ["wipe_passphrase", "slack_webhook_url", "lan_passphrase"]:
@@ -395,18 +397,24 @@ def download_support_bundle():
                         policy_data[key] = "[REDACTED]"
                 with open(os.path.join(workspace_dir, "redacted_policy.json"), "w", encoding="utf-8") as f:
                     json.dump(policy_data, f, indent=2)
+            except FileNotFoundError:
+                pass
         except Exception:
             pass
             
         try:
             logs_dir = get_logs_dir()
             app_log_path = os.path.join(logs_dir, "app.log")
-            if os.path.exists(app_log_path):
+            try:
                 shutil.copy(app_log_path, os.path.join(workspace_dir, "app.log"))
-                
+            except FileNotFoundError:
+                pass
+
             failed_logs_dir = get_failed_logs_dir()
-            if os.path.exists(failed_logs_dir):
+            try:
                 shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
+            except FileNotFoundError:
+                pass
         except Exception:
             pass
             
@@ -666,11 +674,12 @@ def manage_logo():
             except Exception as e:
                 # Clean up temporary file if it exists
                 temp_path = logo_path + ".tmp"
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception:
-                        pass
+                try:
+                    os.remove(temp_path)
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
                 return jsonify({"error": f"Invalid image file: {str(e)}"}), 400
                 
         except Exception as e:
@@ -2059,12 +2068,12 @@ def get_drive_models():
         config_dir = get_config_dir()
         drive_models_path = os.path.join(config_dir, "drive_models.json")
         
-        if not os.path.exists(drive_models_path):
+        try:
+            with open(drive_models_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
             return jsonify({"drive_models": {}, "message": "No drive models configured"}), 200
-        
-        with open(drive_models_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
+
         return jsonify(data), 200
     except Exception as e:
         logger.error(f"Error loading drive models: {e}")

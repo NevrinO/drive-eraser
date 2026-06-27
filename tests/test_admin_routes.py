@@ -621,10 +621,11 @@ class TestAdminRoutes:
             assert is_valid_device_name(name) is True, f"Valid name rejected: {name}"
 
     def test_is_valid_device_name_sata_partitions(self, app):
-        """SATA partitions with multi-letter base names must be accepted."""
+        """SATA partition names must be rejected — SMART tests target whole disks only."""
         from routes.admin_routes import is_valid_device_name
-        assert is_valid_device_name("sdac1") is True
-        assert is_valid_device_name("sdbt12") is True
+        assert is_valid_device_name("sdac1") is False
+        assert is_valid_device_name("sdbt12") is False
+        assert is_valid_device_name("sda1") is False
 
     def test_is_valid_device_name_nvme(self, app):
         """NVMe device names must be accepted."""

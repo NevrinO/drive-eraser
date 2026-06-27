@@ -22,7 +22,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A3: [Advisory] `os.path.exists()` TOCTOU in Background Thread — Difficulty: Medium — Category: Concurrency
+### A3: [COMPLETED] [Advisory] `os.path.exists()` TOCTOU in Background Thread — Difficulty: Medium — Category: Concurrency
 - **Line**: 147 (inside `update_smart_test_status_background`)
 - **Issue**: `os.path.exists(device)` is a TOCTOU pre-check before `get_smart_test_status(device)`. The device could disappear between check and use.
 - **Impact**: Low — the subsequent call is wrapped in try/except (line 199-200), so it won't crash. But the pre-check is unnecessary.
@@ -38,7 +38,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A5: [Advisory] `sys.exit(0)` in Signal Handler Exits with Success Code — Difficulty: Medium — Category: Code Quality
+### A5: [COMPLETED] [Advisory] `sys.exit(0)` in Signal Handler Exits with Success Code — Difficulty: Medium — Category: Code Quality
 - **Line**: 71
 - **Issue**: `sys.exit(0)` indicates a clean exit, but wipe jobs may still be running. The handler sets interruption flags but doesn't wait for jobs to finish.
 - **Impact**: Data integrity risk if jobs are mid-write. Also, exit code 0 is unconventional for signal-triggered shutdown.
@@ -74,7 +74,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C3: [Critical] `load_policy()` TOCTOU on File Existence — Difficulty: Medium — Category: Concurrency
+### C3: [COMPLETED] [Critical] `load_policy()` TOCTOU on File Existence — Difficulty: Medium — Category: Concurrency
 - **Line**: 396-397
 - **Issue**: `os.path.exists(policy_path)` check before `open()` is a TOCTOU race per Lesson #6. File could appear/disappear between check and open.
 - **Impact**: Low probability, but violates explicit guardrail. Could produce confusing error if file is deleted mid-check.
@@ -82,7 +82,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A7: [Advisory] `load_bay_map()` TOCTOU on File Existence — Difficulty: Medium — Category: DRY
+### A7: [COMPLETED] [Advisory] `load_bay_map()` TOCTOU on File Existence — Difficulty: Medium — Category: DRY
 - **Line**: 510-511
 - **Issue**: `os.path.exists(bay_map_path)` inside `BAY_MAP_LOCK`. The lock prevents concurrent Python threads but not external processes (admin editing file in another terminal). Comment claims "Fixed TOCTOU" but only fixed thread-level race, not filesystem-level.
 - **Impact**: Low — same as C3 but with a misleading comment.
@@ -106,7 +106,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A10: [Advisory] `get_data_dir()` / `get_config_dir()` TOCTOU Pattern — Difficulty: Medium — Category: Concurrency
+### A10: [COMPLETED] `get_data_dir()` / `get_config_dir()` TOCTOU Pattern — Difficulty: Medium — Category: Concurrency
 - **Lines**: 291-300, 377-386
 - **Issue**: `os.path.isdir(candidate)` check before returning path. Directory could be removed between check and use.
 - **Impact**: Low — callers typically use `os.makedirs(path, exist_ok=True)` downstream, but pattern is inconsistent with Lesson #6.
@@ -150,7 +150,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A12: [Advisory] Duplicated Offset Generation Logic — Difficulty: Medium — Category: DRY
+### A12: [COMPLETED] [Advisory] Duplicated Offset Generation Logic — Difficulty: Medium — Category: DRY
 - **Lines**: 470-498 (`verify_sampled_zero_check`) and 591-619 (`capture_before_state`)
 - **Issue**: ~28 lines of nearly identical offset generation logic (calculate target bytes, determine chunk count, generate spaced random offsets).
 - **Impact**: Maintenance burden — sampling strategy changes must be applied in two places.
@@ -234,7 +234,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A19: [Advisory] TOCTOU `os.path.exists` Patterns Throughout — Difficulty: Low — Category: Concurrency
+### A19: [COMPLETED] [Advisory] TOCTOU `os.path.exists` Patterns Throughout — Difficulty: Low — Category: Concurrency
 - **Line**: 205, 223, 238, 251, 267, 499, 555, 567, 579, 585
 - **Issue**: Multiple `os.path.exists()` checks before `open()`/`os.listdir()`/`os.path.realpath()` operations. Per Lesson #5, should use `try: operation() except OSError: handle_error()` without pre-checks.
 - **Impact**: Low — read-only operations on system paths that rarely disappear.
@@ -365,7 +365,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A25: [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Trivial — Category: Concurrency
+### A25: [COMPLETED] [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Trivial — Category: Concurrency
 - **Lines**: 188, 311, 866, 905
 - **Issue**: Multiple `os.path.exists()` checks followed by file operations (stat read, log rename, log remove). Per Lesson #5 (TOCTOU Prevention).
 - **Impact**: Low — race window is small, but pattern is fragile.
@@ -417,7 +417,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A30: [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Medium — Category: Concurrency
+### A30: [COMPLETED] `os.path.exists` TOCTOU patterns — Difficulty: Medium — Category: Concurrency
 - **Lines**: 82, 231
 - **Issue**: `os.path.exists(sas_device_dir)` before `os.listdir()`, `os.path.isdir('/dev/mapper')` before listing. Per Lesson #5.
 - **Impact**: Low — race window is small.
@@ -445,7 +445,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A33: [Advisory] `get_all_status` shallow copy of status dicts — Difficulty: Medium — Category: Code Quality
+### A33: [COMPLETED] [Advisory] `get_all_status` shallow copy of status dicts — Difficulty: Medium — Category: Code Quality
 - **Lines**: 203
 - **Issue**: `dict(status)` creates a shallow copy. Nested dicts (if added in future) would be shared references.
 - **Impact**: Low — currently safe since status dicts contain only primitives.
@@ -481,7 +481,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A35: [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Medium — Category: Concurrency
+### A35: [COMPLETED] `os.path.exists` TOCTOU patterns — Difficulty: Medium — Category: Concurrency
 - **Lines**: 269, 389, 403, 407, 587, 611, 668, 2042, 2366, 2412
 - **Issue**: Multiple `os.path.exists()` checks before file operations. Per Lesson #5.
 - **Impact**: Low — race window is small.
@@ -505,7 +505,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A38: [Advisory] `_SATA_DEVICE_RE` allows partition names for SMART test endpoint — Difficulty: Medium — Category: Code Quality
+### A38: [COMPLETED] [Advisory] `_SATA_DEVICE_RE` allows partition names for SMART test endpoint — Difficulty: Medium — Category: Code Quality
 - **Lines**: 71
 - **Issue**: `^sd[a-z]+[0-9]*\Z` allows partition names like `sda1`. SMART tests target whole disks, not partitions.
 - **Impact**: Low — `smartctl` may handle gracefully, but the endpoint should reject partition names for test operations.
@@ -609,7 +609,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A45: [Advisory] `--color-bay-warning` duplicate of `--color-bay-unconfigured` — Difficulty: Trivial — Category: DRY
+### A45: [COMPLETED] [Advisory] `--color-bay-warning` duplicate of `--color-bay-unconfigured` — Difficulty: Trivial — Category: DRY
 - **Lines**: 47-48
 - **Issue**: `--color-bay-warning: #3c2f0f` and `--color-bay-unconfigured: #3c2f0f` have identical values. Used for different semantic states (zero_check_data_present vs unconfigured) but share the same color.
 - **Impact**: Low — if one state's color needs to change, the other won't update, potentially causing confusion.
@@ -617,7 +617,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A46: [Advisory] `.auth-dialog input` duplicates `.input--auth` — Difficulty: Low — Category: DRY
+### A46: [COMPLETED] [Advisory] `.auth-dialog input` duplicates `.input--auth` — Difficulty: Low — Category: DRY
 - **Lines**: 1222-1231 vs 518-522
 - **Issue**: `.auth-dialog input` defines the same properties as `.input--auth` (width, padding, background, border, color, border-radius, font-size). The comment at line 1223 says "Use .input--auth modifier instead" but the full duplicate remains.
 - **Impact**: Low — maintenance burden. Changes to auth input styling must be applied in two places.
@@ -625,7 +625,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A47, A48
 
-### A47: [Advisory] `.display-number-input` duplicates `.input--number` — Difficulty: Low — Category: DRY
+### A47: [COMPLETED] [Advisory] `.display-number-input` duplicates `.input--number` — Difficulty: Low — Category: DRY
 - **Lines**: 1325-1329 vs 524-528
 - **Issue**: `.display-number-input` duplicates `background` and `width` from `.input--number`. Comment says "Use .input--number modifier instead; base styles inherited from input rule."
 - **Impact**: Low — same as A46.
@@ -633,7 +633,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A46, A48
 
-### A48: [Advisory] `.bay-type-selector`, `.by-path-select`, `.by-path-nvme-select` duplicate `.input--select` — Difficulty: Low — Category: DRY
+### A48: [COMPLETED] [Advisory] `.bay-type-selector`, `.by-path-select`, `.by-path-nvme-select` duplicate `.input--select` — Difficulty: Low — Category: DRY
 - **Lines**: 1347-1359 vs 530-535
 - **Issue**: Three selectors duplicate the same properties as `.input--select`. Comment says "Use .input--select modifier instead; kept for selector compatibility." Used by `bayMapping.js` (6 references).
 - **Impact**: Low — maintenance burden. Changes to select styling must be applied in four places.
@@ -649,7 +649,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C16
 
-### A50: [Advisory] Backward compat status badge aliases duplicate BEM modifiers — Difficulty: Low — Category: DRY
+### A50: [COMPLETED] [Advisory] Backward compat status badge aliases duplicate BEM modifiers — Difficulty: Low — Category: DRY
 - **Lines**: 711-714 vs 701-704
 - **Issue**: `.status-badge.complete/failed/running/queued` (backward compat) are exact duplicates of `.status-badge--complete/failed/running/queued` (BEM). Used by `auditLedger.js:99` which constructs `class="status-badge ${uiBadge}"` where `uiBadge` is `complete`, `failed`, `running`, or `queued`.
 - **Impact**: Low — 8 lines of duplicated CSS. Both are needed since JS uses the dot-style naming.
@@ -657,7 +657,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C16
 
-### A51: [Advisory] `.modal--nested .modal-dialog--wide` redundant duplicate — Difficulty: Trivial — Category: DRY
+### A51: [COMPLETED] [Advisory] `.modal--nested .modal-dialog--wide` redundant duplicate — Difficulty: Trivial — Category: DRY
 - **Lines**: 873-876 vs 868-871
 - **Issue**: `.modal--nested .modal-dialog--wide` repeats the exact same `width` and `max-width` values as `.modal-dialog--wide`. Both use `1200px !important` and `94vw !important`.
 - **Impact**: None — redundant selector. The nested version adds no new properties.
@@ -740,7 +740,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A57: [Advisory] Pervasive TOCTOU `os.path.exists` / `os.path.isdir` patterns — Difficulty: Medium — Category: Concurrency
+### A57: [COMPLETED] Pervasive TOCTOU `os.path.exists` / `os.path.isdir` patterns — Difficulty: Medium — Category: Concurrency
 - **Lines**: 249, 315, 759, 853, 872, 895, 1005, 1066, 1105, 1114, 1119, 1146, 1192, 1232, 1384, 1388, 1416, 1525
 - **Issue**: 18 locations use `os.path.exists()` or `os.path.isdir()` as pre-checks before `os.listdir()`, `os.path.realpath()`, `open()`, or `os.path.islink()`. Per Lesson #5 (TOCTOU Prevention): "The correct fix is to remove the pre-check entirely and handle exceptions from the actual operation."
 - **Impact**: Low — these are read-only operations on sysfs paths that rarely disappear. But the pattern is fragile and inconsistent with Lesson #5.
@@ -865,7 +865,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A1 (same pattern in `app.py`)
 
-### A66: [Advisory] `get_triage_thresholds()` duplicate defaults dict — DRY violation — Difficulty: Low — Category: DRY
+### A66: [COMPLETED] [Advisory] `get_triage_thresholds()` duplicate defaults dict — DRY violation — Difficulty: Low — Category: DRY
 - **Lines**: 14-67
 - **Issue**: The defaults dict (18 keys) is fully duplicated between the `try` block (lines 20-42) and the `except` block (lines 45-67). Any threshold change must be applied in both locations.
 - **Impact**: Low — maintenance burden. Missing one copy creates silent defaults mismatch.
@@ -889,7 +889,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A69: [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Low — Category: Concurrency
+### A69: [COMPLETED] [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Low — Category: Concurrency
 - **Lines**: 356 (`drive_models_path`), 408 (`sys_vendor_path`), 416 (`sys_device_path`), 1113 (`state_path`)
 - **Issue**: Four `os.path.exists()` checks before file/directory operations. Per Lesson #5: "The correct fix is to remove the pre-check entirely and handle exceptions from the actual operation."
 - **Impact**: Low — read-only operations on sysfs/config paths that rarely disappear. But pattern is inconsistent with Lesson #5.
@@ -929,7 +929,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A74: [Advisory] `get_drive_recommendation` line 997 — unreadable ternary expression — Difficulty: Low — Category: Code Quality
+### A74: [COMPLETED] [Advisory] `get_drive_recommendation` line 997 — unreadable ternary expression — Difficulty: Low — Category: Code Quality
 - **Line**: 997
 - **Issue**: The return statement spans a complex nested ternary: `return {"status": "USED_HEAVY" if poh >= ssd_high_poh_thresh else "USED_GOOD", "comment": f"..." if poh >= ssd_high_poh_thresh else "..."} if remaining_life >= ssd_life_good_thresh else {"status": "USED_HEAVY", "comment": "..."}`. This is extremely difficult to read and maintain.
 - **Impact**: Low — code quality and maintainability concern.
@@ -1042,7 +1042,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A87: [Advisory] Save button handler inconsistency in `openNewEnclosureWizard` fallback — Difficulty: Low — Category: Correctness
+### A87: [COMPLETED] [Advisory] Save button handler inconsistency in `openNewEnclosureWizard` fallback — Difficulty: Low — Category: Correctness
 - **Lines**: 99-102 vs 970-979 vs 1017-1026
 - **Issue**: Three locations attach a click listener to `wizardSaveBtn`:
   1. Module-level (lines 970-979): Attaches an `isEditMode`-aware wrapper that dispatches to `handleEditEnclosure` or `handleSaveEnclosure`. Sets `dataset.enclosureListener = "true"`.

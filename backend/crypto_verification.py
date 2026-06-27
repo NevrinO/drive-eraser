@@ -16,6 +16,34 @@ from common import get_device_lock, load_policy
 _verification_interrupted = False
 _verification_interrupt_lock = threading.Lock()
 
+def _generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes):
+    """Generate spaced random offsets spanning the entire LBA for sampled verification."""
+    offsets = []
+    target_read_bytes = int(capacity * sample_ratio)
+    if max_read_bytes and target_read_bytes > max_read_bytes:
+        target_read_bytes = max_read_bytes
+
+    num_chunks = max(1, target_read_bytes // chunk_size_bytes)
+    if capacity < chunk_size_bytes:
+        chunk_size_bytes = capacity
+        num_chunks = 1
+    if num_chunks == 0:
+        num_chunks = 1
+
+    interval_size = capacity // num_chunks
+    for i in range(num_chunks):
+        start = i * interval_size
+        end = max(start, (i + 1) * interval_size - chunk_size_bytes)
+        if end > start:
+            offset = random.randint(start, end)
+            if offset != 0:
+                offsets.append(offset)
+        else:
+            if start != 0:
+                offsets.append(start)
+
+    return offsets
+
 def _handle_verification_signal(signum, frame):
     """Signal handler for SIGTERM/SIGINT during verification operations.
     
@@ -461,33 +489,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
 
         # Always check first 32MB (holds VBR/partition table)
         offsets = [0]
-
-        # Calculate total bytes to verify based on sample ratio
-        target_read_bytes = int(capacity * sample_ratio)
-        if max_read_bytes and target_read_bytes > max_read_bytes:
-            target_read_bytes = max_read_bytes
-
-        # Determine chunk count for spaced sampling
-        num_chunks = max(1, target_read_bytes // chunk_size_bytes)
-        if capacity < chunk_size_bytes:
-            chunk_size_bytes = capacity
-            num_chunks = 1
-        # Guard against division by zero for very small drives
-        if num_chunks == 0:
-            num_chunks = 1
-
-        # Generate spaced random offsets spanning the entire LBA
-        interval_size = capacity // num_chunks
-        for i in range(num_chunks):
-            start = i * interval_size
-            end = max(start, (i + 1) * interval_size - chunk_size_bytes)
-            if end > start:
-                offset = random.randint(start, end)
-                if offset != 0:  # Don't duplicate the first 32MB check
-                    offsets.append(offset)
-            else:
-                if start != 0:
-                    offsets.append(start)
+        offsets.extend(_generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes))
 
         total_verified_bytes = 0
         non_zero_found = False
@@ -581,33 +583,7 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
 
         # Always capture first 32MB (holds VBR/partition table)
         offsets = [0]
-
-        # Calculate total bytes to capture based on sample ratio
-        target_read_bytes = int(capacity * sample_ratio)
-        if max_read_bytes and target_read_bytes > max_read_bytes:
-            target_read_bytes = max_read_bytes
-
-        # Determine chunk count for spaced sampling
-        num_chunks = max(1, target_read_bytes // chunk_size_bytes)
-        if capacity < chunk_size_bytes:
-            chunk_size_bytes = capacity
-            num_chunks = 1
-        # Guard against division by zero for very small drives
-        if num_chunks == 0:
-            num_chunks = 1
-
-        # Generate spaced random offsets spanning the entire LBA
-        interval_size = capacity // num_chunks
-        for i in range(num_chunks):
-            start = i * interval_size
-            end = max(start, (i + 1) * interval_size - chunk_size_bytes)
-            if end > start:
-                offset = random.randint(start, end)
-                if offset != 0:  # Don't duplicate the first 32MB check
-                    offsets.append(offset)
-            else:
-                if start != 0:
-                    offsets.append(start)
+        offsets.extend(_generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes))
 
         hashes = []
         total_captured_bytes = 0

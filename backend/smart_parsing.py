@@ -19,6 +19,30 @@ logger = logging.getLogger(__name__)
 _DRIVE_MODELS_CACHE = {'data': None, 'mtime': None}
 _DRIVE_MODELS_LOCK = threading.Lock()
 
+_DEFAULT_TRIAGE_THRESHOLDS = {
+    "ssd_new_poh_threshold": 720,
+    "ssd_high_poh_threshold": 43800,
+    "hdd_new_poh_threshold": 720,
+    "hdd_high_poh_threshold": 40000,
+    "health_score_destroy_threshold": 30,
+    "health_score_scratch_threshold": 50,
+    "ssd_remaining_life_destroy_threshold": 10,
+    "ssd_remaining_life_scratch_threshold": 50,
+    "ssd_remaining_life_good_threshold": 80,
+    "ssd_new_fdw_threshold": 0.06,
+    "hdd_new_fdw_threshold": 2.0,
+    "hdd_heavy_fdw_threshold": 200,
+    "realloc_raw_new_threshold": 0,
+    "pending_sectors_destroy_threshold": 10,
+    "pending_sectors_scratch_threshold": 10,
+    "sas_grown_defect_fail_threshold": 10000,
+    "sas_grown_defect_scratch_threshold": 100,
+    "sas_nme_advisory_threshold": 1000000,
+    "sas_nme_penalty_threshold": 100000000,
+    "sas_sticky_lba_threshold": 3,
+    "sas_high_poh_threshold": 50000
+}
+
 def _load_drive_models():
     """Load drive_models.json with file-mtime-based caching."""
     try:
@@ -43,54 +67,9 @@ def get_triage_thresholds():
         config_dir = get_config_dir()
         policy = load_policy(config_dir)
         thresholds = policy.get("triage_thresholds", {})
-        return {
-            "ssd_new_poh_threshold": thresholds.get("ssd_new_poh_threshold", 720),
-            "ssd_high_poh_threshold": thresholds.get("ssd_high_poh_threshold", 43800),
-            "hdd_new_poh_threshold": thresholds.get("hdd_new_poh_threshold", 720),
-            "hdd_high_poh_threshold": thresholds.get("hdd_high_poh_threshold", 40000),
-            "health_score_destroy_threshold": thresholds.get("health_score_destroy_threshold", 30),
-            "health_score_scratch_threshold": thresholds.get("health_score_scratch_threshold", 50),
-            "ssd_remaining_life_destroy_threshold": thresholds.get("ssd_remaining_life_destroy_threshold", 10),
-            "ssd_remaining_life_scratch_threshold": thresholds.get("ssd_remaining_life_scratch_threshold", 50),
-            "ssd_remaining_life_good_threshold": thresholds.get("ssd_remaining_life_good_threshold", 80),
-            "ssd_new_fdw_threshold": thresholds.get("ssd_new_fdw_threshold", 0.06),
-            "hdd_new_fdw_threshold": thresholds.get("hdd_new_fdw_threshold", 2.0),
-            "hdd_heavy_fdw_threshold": thresholds.get("hdd_heavy_fdw_threshold", 200),
-            "realloc_raw_new_threshold": thresholds.get("realloc_raw_new_threshold", 0),
-            "pending_sectors_destroy_threshold": thresholds.get("pending_sectors_destroy_threshold", 10),
-            "pending_sectors_scratch_threshold": thresholds.get("pending_sectors_scratch_threshold", 10),
-            "sas_grown_defect_fail_threshold": thresholds.get("sas_grown_defect_fail_threshold", 10000),
-            "sas_grown_defect_scratch_threshold": thresholds.get("sas_grown_defect_scratch_threshold", 100),
-            "sas_nme_advisory_threshold": thresholds.get("sas_nme_advisory_threshold", 1000000),
-            "sas_nme_penalty_threshold": thresholds.get("sas_nme_penalty_threshold", 100000000),
-            "sas_sticky_lba_threshold": thresholds.get("sas_sticky_lba_threshold", 3),
-            "sas_high_poh_threshold": thresholds.get("sas_high_poh_threshold", 50000)
-        }
+        return {key: thresholds.get(key, default) for key, default in _DEFAULT_TRIAGE_THRESHOLDS.items()}
     except Exception:
-        # Fallback to defaults if policy loading fails
-        return {
-            "ssd_new_poh_threshold": 720,
-            "ssd_high_poh_threshold": 43800,
-            "hdd_new_poh_threshold": 720,
-            "hdd_high_poh_threshold": 40000,
-            "health_score_destroy_threshold": 30,
-            "health_score_scratch_threshold": 50,
-            "ssd_remaining_life_destroy_threshold": 10,
-            "ssd_remaining_life_scratch_threshold": 50,
-            "ssd_remaining_life_good_threshold": 80,
-            "ssd_new_fdw_threshold": 0.06,
-            "hdd_new_fdw_threshold": 2.0,
-            "hdd_heavy_fdw_threshold": 200,
-            "realloc_raw_new_threshold": 0,
-            "pending_sectors_destroy_threshold": 10,
-            "pending_sectors_scratch_threshold": 10,
-            "sas_grown_defect_fail_threshold": 10000,
-            "sas_grown_defect_scratch_threshold": 100,
-            "sas_nme_advisory_threshold": 1000000,
-            "sas_nme_penalty_threshold": 100000000,
-            "sas_sticky_lba_threshold": 3,
-            "sas_high_poh_threshold": 50000
-        }
+        return _DEFAULT_TRIAGE_THRESHOLDS.copy()
 
 def classify_interface_from_smart(smart_output):
     output = str(smart_output or "").strip()
@@ -431,20 +410,18 @@ def detect_interface_type(by_path_value, device, configured_type=None, smart_out
     dev_name = os.path.basename(dev)
     if dev_name and dev.startswith("/dev/sd"):
         sys_vendor_path = f"/sys/block/{dev_name}/device/vendor"
-        if os.path.exists(sys_vendor_path):
-            try:
-                with open(sys_vendor_path, "r") as f:
-                    vendor = f.read().strip()
-                if "ATA" in vendor:
-                    return "sata"
-                else:
-                    sys_device_path = f"/sys/block/{dev_name}/device"
-                    if os.path.exists(sys_device_path):
-                        real_sys_path = os.path.realpath(sys_device_path)
-                        if "sas" in real_sys_path.lower():
-                            return "sas"
-            except Exception:
-                pass
+        try:
+            with open(sys_vendor_path, "r") as f:
+                vendor = f.read().strip()
+            if "ATA" in vendor:
+                return "sata"
+            else:
+                sys_device_path = f"/sys/block/{dev_name}/device"
+                real_sys_path = os.path.realpath(sys_device_path)
+                if "sas" in real_sys_path.lower():
+                    return "sas"
+        except (FileNotFoundError, OSError):
+            pass
 
     return "sata" if dev.startswith("/dev/sd") else "unknown"
 
@@ -1020,7 +997,11 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
         if remaining_life < ssd_life_destroy_thresh: return {"status": "DESTROY", "comment": "SSD wear is fully depleted (remaining life below threshold)."}
         if remaining_life < ssd_life_scratch_thresh: return {"status": "SCRATCH", "comment": "SSD remaining life is heavily worn (under 60%). Relegate to scratch."}
         if poh < ssd_new_poh_thresh and fdw < ssd_new_fdw_thresh and remaining_life == 100 and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "This drive is practically new (low runtime, pristine life and sectors)."}
-        return {"status": "USED_HEAVY" if poh >= ssd_high_poh_thresh else "USED_GOOD", "comment": f"Excellent health, but high runtime (exceeds {ssd_high_poh_thresh:,} hours)." if poh >= ssd_high_poh_thresh else "This drive is used but still has excellent remaining life."} if remaining_life >= ssd_life_good_thresh else {"status": "USED_HEAVY", "comment": "This drive is heavily used but still has life."}
+        if remaining_life >= ssd_life_good_thresh:
+            if poh >= ssd_high_poh_thresh:
+                return {"status": "USED_HEAVY", "comment": f"Excellent health, but high runtime (exceeds {ssd_high_poh_thresh:,} hours)."}
+            return {"status": "USED_GOOD", "comment": "This drive is used but still has excellent remaining life."}
+        return {"status": "USED_HEAVY", "comment": "This drive is heavily used but still has life."}
     else:
         hdd_high_poh_thresh = thresholds["hdd_high_poh_threshold"]
         hdd_new_poh_thresh = thresholds["hdd_new_poh_threshold"]
@@ -1030,7 +1011,9 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
         
         if poh >= hdd_high_poh_thresh: return {"status": "USED_HEAVY", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
         if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
-        return {"status": "USED_HEAVY" if fdw >= hdd_heavy_fdw_thresh else "USED_GOOD", "comment": "High workload or raw sector writes history. Monitor closely." if fdw >= hdd_heavy_fdw_thresh else "Used but has clean write history and moderate runtime."}
+        if fdw >= hdd_heavy_fdw_thresh:
+            return {"status": "USED_HEAVY", "comment": "High workload or raw sector writes history. Monitor closely."}
+        return {"status": "USED_GOOD", "comment": "Used but has clean write history and moderate runtime."}
 
 
 def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
@@ -1137,9 +1120,10 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
     if device_name:
         try:
             state_path = f"/sys/block/{device_name}/device/state"
-            if os.path.exists(state_path):
-                with open(state_path, "r") as f:
-                    device_state = f.read().strip()
+            with open(state_path, "r") as f:
+                device_state = f.read().strip()
+        except (FileNotFoundError, OSError):
+            pass
         except Exception as e:
             logger.warning(f"Failed to read device state from {state_path}: {e}")
 

@@ -95,7 +95,13 @@ async function openNewEnclosureWizard() {
   // Ensure save button listener is attached (modal may not exist at module load)
   const saveBtn = document.getElementById("wizardSaveBtn");
   if (saveBtn && !saveBtn.dataset.enclosureListener) {
-    saveBtn.addEventListener("click", handleSaveEnclosure);
+    saveBtn.addEventListener("click", () => {
+      if (isEditMode) {
+        handleEditEnclosure();
+      } else {
+        handleSaveEnclosure();
+      }
+    });
     saveBtn.dataset.enclosureListener = "true";
   }
 

@@ -1,7 +1,7 @@
 {
   "total_issues": 125,
-  "completed": 63,
-  "pending": 62,
+  "completed": 87,
+  "pending": 38,
   "groups": [
     {
       "id": "G1",
@@ -80,152 +80,11 @@
         "medium": 4
       },
       "session_size": "large",
-      "action": "batch_fix",
-      "related_groups": [
-        "G2"
-      ]
+      "action": "batch_fix"
     },
     {
       "id": "G2",
-      "pattern": "Performance: repeated disk I/O without caching (batch 2)",
-      "pattern_id": "perf_caching",
-      "fix_shape": "Add TTL cache or file-mtime-based cache",
-      "issues": [
-        {
-          "id": "A65",
-          "title": "`get_triage_thresholds()` called redundantly — loads policy from disk 3+ times per function",
-          "file": "backend/smart_parsing.py",
-          "line": "342 (`get_smart_data`), 447 + 454 + 516 (`calculate_drive_health_score`), 924 + 1148 (`get_drive_recommendation` + `pre_wipe_health_gate`)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Performance",
-          "suggestion": "Call `get_triage_thresholds()` once at the top of each function and pass the result to sub-functions, or cache the result with a short TTL."
-        },
-        {
-          "id": "A77",
-          "title": "`drive_models.json` loaded on every `get_smart_data` call",
-          "file": "backend/smart_parsing.py",
-          "line": "352-365",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Performance",
-          "suggestion": "Cache with file mtime check, or load once at module level with a manual invalidation function."
-        }
-      ],
-      "issue_ids": [
-        "A65",
-        "A77"
-      ],
-      "files": [
-        "backend/smart_parsing.py"
-      ],
-      "weight": 8,
-      "difficulty_breakdown": {
-        "medium": 2
-      },
-      "session_size": "small",
-      "action": "batch_fix",
-      "related_groups": [
-        "G1"
-      ]
-    },
-    {
-      "id": "G3",
       "pattern": "TOCTOU: os.path.exists() pre-checks",
-      "pattern_id": "toctou",
-      "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
-      "issues": [
-        {
-          "id": "A25",
-          "title": "`os.path.exists` TOCTOU patterns",
-          "file": "backend/job_management.py",
-          "line": "188, 311, 866, 905",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Concurrency",
-          "suggestion": "Use direct operation + exception handling (`try: os.rename(...) except FileNotFoundError: pass`)."
-        },
-        {
-          "id": "A19",
-          "title": "TOCTOU `os.path.exists` Patterns Throughout",
-          "file": "backend/disk_ops.py",
-          "line": "205, 223, 238, 251, 267, 499, 555, 567, 579, 585",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Concurrency",
-          "suggestion": "Replace pre-check patterns with direct `try/except (OSError, IOError)`."
-        },
-        {
-          "id": "A69",
-          "title": "`os.path.exists` TOCTOU patterns",
-          "file": "backend/smart_parsing.py",
-          "line": "356 (`drive_models_path`), 408 (`sys_vendor_path`), 416 (`sys_device_path`), 1113 (`state_path`)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Concurrency",
-          "suggestion": "Replace with direct `try: operation() except (OSError, IOError): handle_error()`."
-        },
-        {
-          "id": "A3",
-          "title": "`os.path.exists()` TOCTOU in Background Thread",
-          "file": "backend/app.py",
-          "line": "147 (inside `update_smart_test_status_background`)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Remove the `os.path.exists` check and let `get_smart_test_status` handle the missing device, catching the exception."
-        },
-        {
-          "id": "C3",
-          "title": "`load_policy()` TOCTOU on File Existence",
-          "file": "backend/common.py",
-          "line": "396-397",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Remove `os.path.exists` check, attempt `open()` directly, catch `FileNotFoundError`."
-        },
-        {
-          "id": "A7",
-          "title": "`load_bay_map()` TOCTOU on File Existence",
-          "file": "backend/common.py",
-          "line": "510-511",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "DRY",
-          "suggestion": "Attempt `open()` directly, catch `FileNotFoundError`."
-        }
-      ],
-      "issue_ids": [
-        "A25",
-        "A19",
-        "A69",
-        "A3",
-        "C3",
-        "A7"
-      ],
-      "files": [
-        "backend/app.py",
-        "backend/common.py",
-        "backend/disk_ops.py",
-        "backend/job_management.py",
-        "backend/smart_parsing.py"
-      ],
-      "weight": 17,
-      "difficulty_breakdown": {
-        "trivial": 1,
-        "low": 2,
-        "medium": 3
-      },
-      "session_size": "large",
-      "action": "batch_fix",
-      "related_groups": [
-        "G4"
-      ]
-    },
-    {
-      "id": "G4",
-      "pattern": "TOCTOU: os.path.exists() pre-checks (batch 2)",
       "pattern_id": "toctou",
       "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
       "issues": [
@@ -287,13 +146,10 @@
         "medium": 4
       },
       "session_size": "medium",
-      "action": "batch_fix",
-      "related_groups": [
-        "G3"
-      ]
+      "action": "batch_fix"
     },
     {
-      "id": "G5",
+      "id": "G3",
       "pattern": "Input validation gaps",
       "pattern_id": "input_validation",
       "fix_shape": "Validate input types, formats, and enforce size limits",
@@ -384,135 +240,8 @@
       "action": "batch_fix"
     },
     {
-      "id": "G6",
+      "id": "G4",
       "pattern": "DRY: duplicated logic across functions/files",
-      "pattern_id": "dry_violation",
-      "fix_shape": "Extract shared helper function and update all call sites to use it",
-      "issues": [
-        {
-          "id": "A45",
-          "title": "`--color-bay-warning` duplicate of `--color-bay-unconfigured`",
-          "file": "frontend/styles.css",
-          "line": "47-48",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "DRY",
-          "suggestion": "Either consolidate into one variable, or document that they intentionally share a color."
-        },
-        {
-          "id": "A51",
-          "title": "`.modal--nested .modal-dialog--wide` redundant duplicate",
-          "file": "frontend/styles.css",
-          "line": "873-876 vs 868-871",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "DRY",
-          "suggestion": "Remove the `.modal--nested .modal-dialog--wide` block since the base `.modal-dialog--wide` already sets these values."
-        },
-        {
-          "id": "A46",
-          "title": "`.auth-dialog input` duplicates `.input--auth`",
-          "file": "frontend/styles.css",
-          "line": "1222-1231 vs 518-522",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "DRY",
-          "suggestion": "Remove the properties from `.auth-dialog input` and add `class=\"input--auth\"` to the auth dialog inputs in HTML, or use `.auth-dialog input { /* inherits from input + .input--auth */ }` with only over"
-        },
-        {
-          "id": "A47",
-          "title": "`.display-number-input` duplicates `.input--number`",
-          "file": "frontend/styles.css",
-          "line": "1325-1329 vs 524-528",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "DRY",
-          "suggestion": "Remove duplicate properties, rely on `.input--number` class in HTML."
-        },
-        {
-          "id": "A48",
-          "title": "`.bay-type-selector`, `.by-path-select`, `.by-path-nvme-select` duplicate `.input--select`",
-          "file": "frontend/styles.css",
-          "line": "1347-1359 vs 530-535",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "DRY",
-          "suggestion": "Update `bayMapping.js` to use `.input--select` class, then remove the three duplicate selectors."
-        },
-        {
-          "id": "A50",
-          "title": "Backward compat status badge aliases duplicate BEM modifiers",
-          "file": "frontend/styles.css",
-          "line": "711-714 vs 701-704",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "DRY",
-          "suggestion": "Update `auditLedger.js` to use BEM-style (`status-badge--${uiBadge}`), then remove the backward compat aliases. Or accept the duplication as a cost of supporting both naming conventions."
-        },
-        {
-          "id": "A66",
-          "title": "`get_triage_thresholds()` duplicate defaults dict — DRY violation",
-          "file": "backend/smart_parsing.py",
-          "line": "14-67",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "DRY",
-          "suggestion": "Define `_DEFAULT_TRIAGE_THRESHOLDS` as a module-level constant and reference it in both blocks."
-        },
-        {
-          "id": "A87",
-          "title": "Save button handler inconsistency in `openNewEnclosureWizard` fallback",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "99-102 vs 970-979 vs 1017-1026",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Correctness",
-          "suggestion": "Change line 100 to attach the same `isEditMode`-aware wrapper as locations 1 and 3, or remove the fallback entirely since the module-level code handles it."
-        },
-        {
-          "id": "A12",
-          "title": "Duplicated Offset Generation Logic",
-          "file": "backend/crypto_verification.py",
-          "line": "470-498 (`verify_sampled_zero_check`) and 591-619 (`capture_before_state`)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "DRY",
-          "suggestion": "Extract `_generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes)` helper."
-        }
-      ],
-      "issue_ids": [
-        "A45",
-        "A51",
-        "A46",
-        "A47",
-        "A48",
-        "A50",
-        "A66",
-        "A87",
-        "A12"
-      ],
-      "files": [
-        "backend/crypto_verification.py",
-        "backend/smart_parsing.py",
-        "frontend/admin/enclosureManagement.js",
-        "frontend/styles.css"
-      ],
-      "weight": 18,
-      "difficulty_breakdown": {
-        "trivial": 2,
-        "low": 6,
-        "medium": 1
-      },
-      "session_size": "large",
-      "action": "batch_fix",
-      "related_groups": [
-        "G7",
-        "G8"
-      ]
-    },
-    {
-      "id": "G7",
-      "pattern": "DRY: duplicated logic across functions/files (batch 2)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
       "issues": [
@@ -574,13 +303,12 @@
       "session_size": "medium",
       "action": "batch_fix",
       "related_groups": [
-        "G6",
-        "G8"
+        "G5"
       ]
     },
     {
-      "id": "G8",
-      "pattern": "DRY: duplicated logic across functions/files (batch 3)",
+      "id": "G5",
+      "pattern": "DRY: duplicated logic across functions/files (batch 2)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
       "issues": [
@@ -620,12 +348,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G6",
-        "G7"
+        "G4"
       ]
     },
     {
-      "id": "G9",
+      "id": "G6",
       "pattern": "Information disclosure: str(e) in API responses",
       "pattern_id": "info_disclosure",
       "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
@@ -680,7 +407,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G10",
+      "id": "G7",
       "pattern": "File organization: domain mixing / god modules",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -721,11 +448,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G11"
+        "G8"
       ]
     },
     {
-      "id": "G11",
+      "id": "G8",
       "pattern": "File organization: domain mixing / god modules (batch 2)",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -766,11 +493,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G10"
+        "G7"
       ]
     },
     {
-      "id": "G12",
+      "id": "G9",
       "pattern": "Error swallowing: bare except / silent failures",
       "pattern_id": "error_swallowing",
       "fix_shape": "Add logging to except blocks, catch specific exceptions",
@@ -813,97 +540,7 @@
       "action": "plan"
     },
     {
-      "id": "G13",
-      "pattern": "Misc: Code Quality",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "C6",
-          "title": "`capture_before_state()` Uses Raw `blockdev` Without Retry",
-          "file": "backend/crypto_verification.py",
-          "line": "585-589",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Code Quality",
-          "suggestion": "Replace with `_run_blockdev_getsize64(device, retries, retry_delay)` using policy-loaded retry values, matching the pattern in `verify_sampled_zero_check` (line 465)."
-        },
-        {
-          "id": "A74",
-          "title": "`get_drive_recommendation` line 997 — unreadable ternary expression",
-          "file": "backend/smart_parsing.py",
-          "line": "997",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Code Quality",
-          "suggestion": "Extract to if/elif/else blocks for readability."
-        },
-        {
-          "id": "A5",
-          "title": "`sys.exit(0)` in Signal Handler Exits with Success Code",
-          "file": "backend/app.py",
-          "line": "71",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Consider `sys.exit(130)` (conventional for SIGINT) or at minimum log a warning if jobs are still active before exiting."
-        },
-        {
-          "id": "A33",
-          "title": "`get_all_status` shallow copy of status dicts",
-          "file": "backend/zero_check_manager.py",
-          "line": "203",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Use `copy.deepcopy()` if nested structures are added in the future."
-        },
-        {
-          "id": "C14",
-          "title": "Hardcoded OS device paths in SMART test endpoint",
-          "file": "backend/routes/admin_routes.py",
-          "line": "2411-2418",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Use the same `get_os_by_path()` function used by `job_management.py` for robust OS drive detection."
-        },
-        {
-          "id": "A38",
-          "title": "`_SATA_DEVICE_RE` allows partition names for SMART test endpoint",
-          "file": "backend/routes/admin_routes.py",
-          "line": "71",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Use a stricter regex for the SMART test endpoint, or validate that the device is a whole disk before proceeding."
-        }
-      ],
-      "issue_ids": [
-        "C6",
-        "A74",
-        "A5",
-        "A33",
-        "C14",
-        "A38"
-      ],
-      "files": [
-        "backend/app.py",
-        "backend/crypto_verification.py",
-        "backend/routes/admin_routes.py",
-        "backend/smart_parsing.py",
-        "backend/zero_check_manager.py"
-      ],
-      "weight": 20,
-      "difficulty_breakdown": {
-        "low": 2,
-        "medium": 4
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G14",
+      "id": "G10",
       "pattern": "Misc: Architecture",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -958,7 +595,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G15",
+      "id": "G11",
       "pattern": "Misc: Performance",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1034,36 +671,6 @@
         "medium": 1
       },
       "session_size": "medium",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G16",
-      "pattern": "Ungrouped: backend/crypto_verification.py",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "A15",
-          "title": "`resolve_verify_command_path()` Defined Twice",
-          "file": "backend/crypto_verification.py",
-          "line": "156-167 (also in `verification.py:39`)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "DRY",
-          "suggestion": "Import from one location, or move to `disk_utils` and import from there."
-        }
-      ],
-      "issue_ids": [
-        "A15"
-      ],
-      "files": [
-        "backend/crypto_verification.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "medium": 1
-      },
-      "session_size": "small",
       "action": "batch_fix"
     }
   ],

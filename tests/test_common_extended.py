@@ -53,23 +53,31 @@ class TestGetDataDir:
         """Test that environment variable takes priority."""
         from common import get_data_dir
         with patch('os.getenv', return_value='/custom/data'):
-            with patch('os.path.isdir', return_value=True):
+            with patch('os.listdir', return_value=[]):
                 result = get_data_dir()
                 assert result == '/custom/data'
 
     def test_project_root_data_dir(self):
         """Test fallback to project root data directory."""
         from common import get_data_dir, PROJECT_ROOT
+        def listdir_side(path):
+            if path == os.path.join(PROJECT_ROOT, "data"):
+                return []
+            raise OSError()
         with patch('os.getenv', return_value=None):
-            with patch('os.path.isdir', side_effect=lambda x: x == os.path.join(PROJECT_ROOT, "data")):
+            with patch('os.listdir', side_effect=listdir_side):
                 result = get_data_dir()
                 assert result == os.path.join(PROJECT_ROOT, "data")
 
     def test_system_data_dir_fallback(self):
         """Test fallback to system data directory."""
         from common import get_data_dir
+        def listdir_side(path):
+            if path == "/opt/drive-eraser/data":
+                return []
+            raise OSError()
         with patch('os.getenv', return_value=None):
-            with patch('os.path.isdir', side_effect=lambda x: x == "/opt/drive-eraser/data"):
+            with patch('os.listdir', side_effect=listdir_side):
                 result = get_data_dir()
                 assert result == "/opt/drive-eraser/data"
 
@@ -77,7 +85,7 @@ class TestGetDataDir:
         """Test that project root is returned when no directories exist."""
         from common import get_data_dir, PROJECT_ROOT
         with patch('os.getenv', return_value=None):
-            with patch('os.path.isdir', return_value=False):
+            with patch('os.listdir', side_effect=OSError):
                 result = get_data_dir()
                 assert result == os.path.join(PROJECT_ROOT, "data")
 
@@ -89,23 +97,31 @@ class TestGetConfigDir:
         """Test that environment variable takes priority."""
         from common import get_config_dir
         with patch('os.getenv', return_value='/custom/config'):
-            with patch('os.path.isdir', return_value=True):
+            with patch('os.listdir', return_value=[]):
                 result = get_config_dir()
                 assert result == '/custom/config'
 
     def test_project_root_config_dir(self):
         """Test fallback to project root config directory."""
         from common import get_config_dir, PROJECT_ROOT
+        def listdir_side(path):
+            if path == os.path.join(PROJECT_ROOT, "config"):
+                return []
+            raise OSError()
         with patch('os.getenv', return_value=None):
-            with patch('os.path.isdir', side_effect=lambda x: x == os.path.join(PROJECT_ROOT, "config")):
+            with patch('os.listdir', side_effect=listdir_side):
                 result = get_config_dir()
                 assert result == os.path.join(PROJECT_ROOT, "config")
 
     def test_system_config_dir_fallback(self):
         """Test fallback to system config directory."""
         from common import get_config_dir
+        def listdir_side(path):
+            if path == "/opt/drive-eraser/config":
+                return []
+            raise OSError()
         with patch('os.getenv', return_value=None):
-            with patch('os.path.isdir', side_effect=lambda x: x == "/opt/drive-eraser/config"):
+            with patch('os.listdir', side_effect=listdir_side):
                 result = get_config_dir()
                 assert result == "/opt/drive-eraser/config"
 
@@ -344,9 +360,7 @@ class TestLoadBayMap:
                 json.dump(bay_map_data, f)
             
             with patch('common.get_config_dir', return_value=tmpdir):
-                with patch('logging.getLogger') as mock_get_logger:
-                    mock_logger = MagicMock()
-                    mock_get_logger.return_value = mock_logger
+                with patch('common.logger') as mock_logger:
                     result = load_bay_map()
                     mock_logger.warning.assert_called()
                     assert "REPLACE_ME" in str(mock_logger.warning.call_args)
@@ -360,9 +374,7 @@ class TestLoadBayMap:
                 f.write("invalid json")
             
             with patch('common.get_config_dir', return_value=tmpdir):
-                with patch('logging.getLogger') as mock_get_logger:
-                    mock_logger = MagicMock()
-                    mock_get_logger.return_value = mock_logger
+                with patch('common.logger') as mock_logger:
                     result = load_bay_map()
                     assert result == {}
                     mock_logger.error.assert_called()

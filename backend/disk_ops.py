@@ -209,12 +209,14 @@ def get_os_parent_device():
         
         uevent_path = f"/sys/dev/block/{major}:{minor}/uevent"
         devname = None
-        if os.path.exists(uevent_path):
+        try:
             with open(uevent_path, "r") as f:
                 for line in f.read().splitlines():
                     if line.startswith("DEVNAME="):
                         devname = line.strip().split("=")[1]
                         break
+        except (FileNotFoundError, OSError):
+            pass
                         
         if not devname:
             try:
@@ -227,7 +229,7 @@ def get_os_parent_device():
                 pass
                 
         if not devname:
-            if os.path.exists("/proc/mounts"):
+            try:
                 with open("/proc/mounts", "r") as f:
                     for line in f.read().splitlines():
                         parts = line.split()
@@ -236,14 +238,14 @@ def get_os_parent_device():
                             if src.startswith("/dev/"):
                                 devname = src[5:]
                                 break
+            except (FileNotFoundError, OSError):
+                pass
 
         if not devname:
             return None
             
         def resolve_leaf_parent(name):
             sys_path = f"/sys/class/block/{name}"
-            if not os.path.exists(sys_path):
-                return name
             real_path = os.path.realpath(sys_path)
             if "/block/" in real_path:
                 parts = real_path.split("/block/")
@@ -271,7 +273,7 @@ def get_os_by_path():
         
     dev_node = f"/dev/{parent_name}"
     by_path_dir = "/dev/disk/by-path/"
-    if os.path.exists(by_path_dir):
+    try:
         for entry in os.listdir(by_path_dir):
             full_path = os.path.join(by_path_dir, entry)
             if os.path.islink(full_path):
@@ -279,7 +281,9 @@ def get_os_by_path():
                     continue
                 if os.path.realpath(full_path) == os.path.realpath(dev_node):
                     return dev_node, entry
-                    
+    except (FileNotFoundError, OSError):
+        pass
+
     return dev_node, None
 
 def _get_os_by_path_cached():
@@ -496,8 +500,6 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         return None
 
     by_path_dir = '/dev/disk/by-path/'
-    if not os.path.exists(by_path_dir):
-        return None
 
     try:
         by_path_entries = os.listdir(by_path_dir)
@@ -552,10 +554,12 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         if hw_identifier.startswith('pci-') and 'nvme' in hw_identifier:
             # Direct by-path match - return the device if it exists
             by_path_dir = '/dev/disk/by-path'
-            if os.path.exists(by_path_dir):
+            try:
                 full_path = os.path.join(by_path_dir, hw_identifier)
                 if os.path.islink(full_path):
                     return os.path.realpath(full_path)
+            except (OSError, IOError):
+                pass
             return None
         
         # Otherwise, treat as slot number and use PCI slot matching
@@ -564,50 +568,45 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         
         # Read the expected PCI address from the slot's address file
         expected_pci_addr = None
-        if os.path.exists(slot_address_file):
-            try:
-                with open(slot_address_file, 'r') as f:
-                    expected_pci_addr = f.read().strip()
-            except (OSError, IOError):
-                pass
+        try:
+            with open(slot_address_file, 'r') as f:
+                expected_pci_addr = f.read().strip()
+        except (OSError, IOError):
+            pass
         
         if not expected_pci_addr:
             return None
         
         # Scan NVMe devices and match PCI address
         block_dir = '/sys/class/block'
-        if os.path.exists(block_dir):
-            try:
-                for dev_name in os.listdir(block_dir):
-                    if dev_name.startswith('nvme'):
-                        # Get the device's sysfs path
-                        sys_path = f"/sys/class/block/{dev_name}"
-                        if not os.path.exists(sys_path):
-                            continue
-                        
-                        real_path = os.path.realpath(sys_path)
-                        
-                        # Traverse up to find the PCI device directory
-                        # Path structure: /sys/devices/pci0000:17/0000:17:02.0/0000:18:00.0/nvme/nvme0/nvme0n1
-                        # We need to find the LAST PCI device directory (the actual NVMe controller, not the bridge)
-                        path_parts = real_path.split('/')
-                        device_pci_addr = None
-                        
-                        for part in reversed(path_parts):
-                            # PCI device addresses match pattern: xxxx:xx:xx.x
-                            if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
-                                device_pci_addr = part
-                                break
-                        
-                        # Normalize PCI addresses for comparison (strip function number if present)
-                        # Slot addresses may be "0000:18:00" while device addresses are "0000:18:00.0"
-                        normalized_device = device_pci_addr.split('.')[0] if device_pci_addr else None
-                        normalized_expected = expected_pci_addr.split('.')[0] if expected_pci_addr else None
-                        
-                        if normalized_device and normalized_device == normalized_expected:
-                            return f"/dev/{dev_name}"
-            except (OSError, IOError):
-                pass
+        try:
+            for dev_name in os.listdir(block_dir):
+                if dev_name.startswith('nvme'):
+                    # Get the device's sysfs path
+                    sys_path = f"/sys/class/block/{dev_name}"
+                    real_path = os.path.realpath(sys_path)
+                    
+                    # Traverse up to find the PCI device directory
+                    # Path structure: /sys/devices/pci0000:17/0000:17:02.0/0000:18:00.0/nvme/nvme0/nvme0n1
+                    # We need to find the LAST PCI device directory (the actual NVMe controller, not the bridge)
+                    path_parts = real_path.split('/')
+                    device_pci_addr = None
+                    
+                    for part in reversed(path_parts):
+                        # PCI device addresses match pattern: xxxx:xx:xx.x
+                        if re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]$', part):
+                            device_pci_addr = part
+                            break
+                    
+                    # Normalize PCI addresses for comparison (strip function number if present)
+                    # Slot addresses may be "0000:18:00" while device addresses are "0000:18:00.0"
+                    normalized_device = device_pci_addr.split('.')[0] if device_pci_addr else None
+                    normalized_expected = expected_pci_addr.split('.')[0] if expected_pci_addr else None
+                    
+                    if normalized_device and normalized_device == normalized_expected:
+                        return f"/dev/{dev_name}"
+        except (OSError, IOError):
+            pass
 
     return None
 
@@ -698,11 +697,6 @@ def _process_single_drive_extended_smart(item, passphrase):
         cached = _get_cached_drive_payload(cache_key)
         if cached is not None and not cached.get("smart", {}).get("smart_polling", True):
             logger.debug(f"Skipping extended SMART for {dev_node}, already cached")
-            return
-
-        # Check if device still exists
-        if not os.path.exists(dev_node):
-            logger.info(f"Device {dev_node} removed during background SMART collection, skipping")
             return
 
         # Collect full extended SMART data
@@ -829,11 +823,13 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
     # Build by-path lookup for legacy compatibility
     path_to_dev = {}
     by_path_dir = '/dev/disk/by-path/'
-    if os.path.exists(by_path_dir):
+    try:
         for entry in os.listdir(by_path_dir):
             full_path = os.path.join(by_path_dir, entry)
             if os.path.islink(full_path):
                 path_to_dev[entry] = os.path.realpath(full_path)
+    except (OSError, IOError):
+        pass
 
     results, passphrase = [], None
     try:
@@ -1006,10 +1002,12 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
 
     path_to_dev = {}
     by_path_dir = '/dev/disk/by-path/'
-    if os.path.exists(by_path_dir):
+    try:
         for entry in os.listdir(by_path_dir):
             full_path = os.path.join(by_path_dir, entry)
             if os.path.islink(full_path): path_to_dev[entry] = os.path.realpath(full_path)
+    except (OSError, IOError):
+        pass
 
     results, passphrase = [], None
     try:
