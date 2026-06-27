@@ -19,7 +19,7 @@ register_blueprints(app)
 # Must be registered after blueprints to avoid Flask's "first request" state
 @app.before_request
 def security_gate():
-    from flask import request, jsonify
+    from flask import request
     from app_config import is_localhost, load_policy, calculate_session_token
     
     if not request.path.startswith("/api/"):
@@ -64,8 +64,8 @@ def _centralized_signal_handler(signum, frame):
     crypto_verification._handle_verification_signal(signum, frame)
     disk_ops._handle_discovery_signal(signum, frame)
     udev_listener.stop_udev_listener()
-    stop_smart_test_update_thread()
-    disk_ops.stop_extended_smart_pool(wait=True)
+    stop_smart_test_update_thread(wait=False)
+    disk_ops.stop_extended_smart_pool(wait=False)
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")
@@ -115,6 +115,7 @@ udev_listener.start_udev_listener()
 SMART_TEST_UPDATE_INTERVAL = 30  # Check every 30 seconds
 smart_test_update_thread = None
 smart_test_update_stop_event = threading.Event()
+smart_test_update_thread_lock = threading.Lock()
 
 def update_smart_test_status_background():
     """Background thread to update SMART test status in database.
@@ -210,19 +211,34 @@ def update_smart_test_status_background():
 def start_smart_test_update_thread():
     """Start the background thread for SMART test status updates."""
     global smart_test_update_thread
-    if smart_test_update_thread is None or not smart_test_update_thread.is_alive():
-        smart_test_update_stop_event.clear()
-        smart_test_update_thread = threading.Thread(target=update_smart_test_status_background, daemon=True)
-        smart_test_update_thread.start()
-        logger.info("Started SMART test status background thread")
+    with smart_test_update_thread_lock:
+        if smart_test_update_thread is None or not smart_test_update_thread.is_alive():
+            smart_test_update_stop_event.clear()
+            smart_test_update_thread = threading.Thread(target=update_smart_test_status_background, daemon=True)
+            smart_test_update_thread.start()
+            logger.info("Started SMART test status background thread")
 
-def stop_smart_test_update_thread():
-    """Stop the background thread for SMART test status updates."""
+def stop_smart_test_update_thread(wait=True):
+    """Stop the background thread for SMART test status updates.
+
+    Args:
+        wait: If True, join the thread (up to 5s). If False, just signal
+              and nullify without joining — used from signal handlers where
+              blocking is unsafe. The daemon thread is killed on process exit.
+    """
     global smart_test_update_thread
-    if smart_test_update_thread and smart_test_update_thread.is_alive():
-        smart_test_update_stop_event.set()
-        smart_test_update_thread.join(timeout=5)
-        logger.info("Stopped SMART test status background thread")
+    with smart_test_update_thread_lock:
+        thread = smart_test_update_thread
+        if thread and thread.is_alive():
+            smart_test_update_stop_event.set()
+        else:
+            return
+    if wait:
+        thread.join(timeout=5)
+    with smart_test_update_thread_lock:
+        if smart_test_update_thread is thread:
+            smart_test_update_thread = None
+    logger.info("Stopped SMART test status background thread")
 
 # Start the background thread
 start_smart_test_update_thread()

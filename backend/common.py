@@ -502,7 +502,6 @@ def load_bay_map(config_dir=None):
                 data = json.load(f)
             
             # Critical #7: Detect placeholder values and log warning
-            logger = __import__("logging").getLogger("app")
             has_placeholders = False
             for bay_id, bay_config in data.items():
                 if isinstance(bay_config, dict) and bay_config.get("by_path") == "REPLACE_ME":
@@ -514,7 +513,6 @@ def load_bay_map(config_dir=None):
             
             return data
         except Exception as e:
-            logger = __import__("logging").getLogger("app")
             logger.error(f"Failed to load bay map: {e}")
             return {}
 # --- END OF FILE backend/common.py ---

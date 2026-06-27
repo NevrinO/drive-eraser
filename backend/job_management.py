@@ -183,6 +183,16 @@ def create_erase_job(validated):
         },
     }
 
+def get_device_logical_block_size(device):
+    """Read logical block size from sysfs. Falls back to 512 if unavailable."""
+    try:
+        dev_name = os.path.basename(device)
+        bs_path = f"/sys/block/{dev_name}/queue/logical_block_size"
+        with open(bs_path, "r") as f:
+            return int(f.read().strip())
+    except Exception:
+        return 512
+
 def get_device_sectors_written(device):
     try:
         dev_name = os.path.basename(device)
@@ -193,8 +203,8 @@ def get_device_sectors_written(device):
             parts = content.split()
             if len(parts) >= 7:
                 return int(parts[6])
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"poll failed for sectors written on {device}: {e}")
     return None
 
 def poll_nvme_sanitize_progress(device):
@@ -208,8 +218,8 @@ def poll_nvme_sanitize_progress(device):
                         match = re.search(r"sprog\s*[:=]\s*(\d+)", line, re.IGNORECASE)
                         if match:
                             return int(match.group(1))
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"poll failed for NVMe sanitize on {device}: {e}")
     return None
 
 def poll_sas_sanitize_progress(device):
@@ -223,8 +233,8 @@ def poll_sas_sanitize_progress(device):
                         match = re.search(r"(\d+\.?\d*)\s*%", line)
                         if match:
                             return float(match.group(1))
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"poll failed for SAS sanitize on {device}: {e}")
     return None
 
 def poll_sata_sanitize_progress(device):
@@ -238,8 +248,8 @@ def poll_sata_sanitize_progress(device):
                         match = re.search(r"(\d+\.?\d*)\s*%", line)
                         if match:
                             return float(match.group(1))
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).debug(f"poll failed for SATA sanitize on {device}: {e}")
     return None
 
 def prepare_erase_command(device, interface_type, method):
@@ -478,10 +488,12 @@ def run_erase_job(job_id):
     initial_sectors = None
     last_sectors = None
     last_progress_time = None
+    logical_block_size = 512
     if method == "overwrite":
         initial_sectors = get_device_sectors_written(device)
         last_sectors = initial_sectors
         last_progress_time = start_time
+        logical_block_size = get_device_logical_block_size(device)
 
     active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
     try:
@@ -549,7 +561,7 @@ def run_erase_job(job_id):
                 current_sectors = get_device_sectors_written(device)
                 if current_sectors is not None and initial_sectors is not None:
                     delta_sectors = max(0, current_sectors - initial_sectors)
-                    wrote_bytes = delta_sectors * 512
+                    wrote_bytes = delta_sectors * logical_block_size
                     progress = min(99.9, (wrote_bytes / capacity_bytes) * 100)
                     
                     # Calculate ETA based on write speed
@@ -558,7 +570,7 @@ def run_erase_job(job_id):
                         time_since_last = elapsed - (last_progress_time - start_time).total_seconds()
                         if time_since_last > 0:
                             sectors_since_last = max(0, current_sectors - last_sectors)
-                            bytes_since_last = sectors_since_last * 512
+                            bytes_since_last = sectors_since_last * logical_block_size
                             write_speed = bytes_since_last / time_since_last  # bytes per second
                             # Minimum write speed threshold to prevent extremely large ETA estimates
                             min_write_speed = 1024 * 1024  # 1 MB/s minimum
@@ -943,4 +955,3 @@ def run_erase_job(job_id):
         logger.warning(f"Failed to purge old logs: {e}")
 
 # --- END OF FILE backend/job_management.py ---
-    # Validate input is a list and enforce size limit for DoS prevention

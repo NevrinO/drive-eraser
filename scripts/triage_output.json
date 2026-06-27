@@ -1,7 +1,7 @@
 {
   "total_issues": 125,
-  "completed": 28,
-  "pending": 97,
+  "completed": 63,
+  "pending": 62,
   "groups": [
     {
       "id": "G1",
@@ -131,49 +131,6 @@
     },
     {
       "id": "G3",
-      "pattern": "Concurrency: missing/improper locks",
-      "pattern_id": "concurrency_lock",
-      "fix_shape": "Add locks around shared mutable state or restructure lock scope",
-      "issues": [
-        {
-          "id": "A2",
-          "title": "`smart_test_update_thread` Global Without Lock",
-          "file": "backend/app.py",
-          "line": "210-225 (`start_smart_test_update_thread` / `stop_smart_test_update_thread`)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Concurrency",
-          "suggestion": "Add a `Lock` around the check-and-start sequence."
-        },
-        {
-          "id": "C8",
-          "title": "Signal Handler Uses `threading.Lock` — Potential Deadlock",
-          "file": "backend/disk_ops.py",
-          "line": "161-167",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Use `threading.Event` instead of `Lock`+boolean. `Event.set()` and `Event.is_set()` are lock-free and async-signal-safe in CPython."
-        }
-      ],
-      "issue_ids": [
-        "A2",
-        "C8"
-      ],
-      "files": [
-        "backend/app.py",
-        "backend/disk_ops.py"
-      ],
-      "weight": 6,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G4",
       "pattern": "TOCTOU: os.path.exists() pre-checks",
       "pattern_id": "toctou",
       "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
@@ -263,11 +220,11 @@
       "session_size": "large",
       "action": "batch_fix",
       "related_groups": [
-        "G5"
+        "G4"
       ]
     },
     {
-      "id": "G5",
+      "id": "G4",
       "pattern": "TOCTOU: os.path.exists() pre-checks (batch 2)",
       "pattern_id": "toctou",
       "fix_shape": "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
@@ -332,108 +289,11 @@
       "session_size": "medium",
       "action": "batch_fix",
       "related_groups": [
-        "G4"
+        "G3"
       ]
     },
     {
-      "id": "G6",
-      "pattern": "Import hygiene: lazy/redundant imports",
-      "pattern_id": "import_hygiene",
-      "fix_shape": "Move imports to module level, remove duplicates",
-      "issues": [
-        {
-          "id": "A4",
-          "title": "Redundant Import in `security_gate`",
-          "file": "backend/app.py",
-          "line": "21",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Code Quality",
-          "suggestion": "Change to `from flask import request`."
-        },
-        {
-          "id": "A71",
-          "title": "Lazy imports inside `get_smart_test_status`",
-          "file": "backend/smart_parsing.py",
-          "line": "773 (`from disk_ops import _get_cached_drive_payload`), 774 (`import time`), 799 (`from database import get_historical_poh_for_serial`), 802 (`import logging`)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Code Quality",
-          "suggestion": "Move `import time` and `import logging` to module level. Keep `disk_ops` and `database` imports lazy if circular dependencies require it, but add a comment explaining why."
-        },
-        {
-          "id": "A9",
-          "title": "`__import__(\"logging\")` Anti-Pattern in `load_bay_map`",
-          "file": "backend/common.py",
-          "line": "519, 531",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Performance",
-          "suggestion": "Use the module-level `logger` directly."
-        }
-      ],
-      "issue_ids": [
-        "A4",
-        "A71",
-        "A9"
-      ],
-      "files": [
-        "backend/app.py",
-        "backend/common.py",
-        "backend/smart_parsing.py"
-      ],
-      "weight": 8,
-      "difficulty_breakdown": {
-        "low": 2,
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G7",
-      "pattern": "Unbounded dict/list growth (memory leak)",
-      "pattern_id": "memory_leak",
-      "fix_shape": "Use WeakValueDictionary or add cleanup on release",
-      "issues": [
-        {
-          "id": "C2",
-          "title": "`DEVICE_LOCKS` Dict Grows Unbounded",
-          "file": "backend/common.py",
-          "line": "23-36",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Resource Management",
-          "suggestion": "Use `WeakValueDictionary` or add cleanup when locks are released. Alternatively, document as a known limitation given expected scale."
-        },
-        {
-          "id": "A60",
-          "title": "`_SAS_EXPANDER_CACHE` unbounded dict growth",
-          "file": "backend/device_discovery.py",
-          "line": "47",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Resource Management",
-          "suggestion": "Add a maximum size check (e.g., `MAX_SAS_EXPANDER_CACHE_SIZE = 100`). If exceeded, clear oldest entries. Alternatively, document that the cache is bounded by hardware topology."
-        }
-      ],
-      "issue_ids": [
-        "C2",
-        "A60"
-      ],
-      "files": [
-        "backend/common.py",
-        "backend/device_discovery.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "low": 2
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G8",
+      "id": "G5",
       "pattern": "Input validation gaps",
       "pattern_id": "input_validation",
       "fix_shape": "Validate input types, formats, and enforce size limits",
@@ -524,62 +384,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G9",
-      "pattern": "Signal flags never reset after handler",
-      "pattern_id": "signal_flag_reset",
-      "fix_shape": "Reset interruption flags at start of each operation, or use threading.Event",
-      "issues": [
-        {
-          "id": "C23",
-          "title": "`_discovery_interrupted` Flag Never Reset After Signal",
-          "file": "backend/disk_ops.py",
-          "line": "152, 164-166",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Concurrency",
-          "suggestion": "Reset `_discovery_interrupted = False` at the start of `discover_drives()` (inside the try block, after loading bay map). Alternatively, replace the boolean+lock pattern with `threading.Event` and cal"
-        },
-        {
-          "id": "C5",
-          "title": "`verify_crypto_hash_comparison()` Missing Interruption Check",
-          "file": "backend/crypto_verification.py",
-          "line": "672-872",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Add `_check_interrupted()` checks before each offset read loop, same as `verify_sampled_zero_check` (line 506) and `capture_before_state` (line 626)."
-        },
-        {
-          "id": "C10",
-          "title": "`_job_interrupted` flag never reset after signal",
-          "file": "backend/job_management.py",
-          "line": "420-429",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Performance",
-          "suggestion": "Reset `_job_interrupted = False` at the start of each `run_erase_job` call, or use a per-job interruption flag instead of a module-level flag."
-        }
-      ],
-      "issue_ids": [
-        "C23",
-        "C5",
-        "C10"
-      ],
-      "files": [
-        "backend/crypto_verification.py",
-        "backend/disk_ops.py",
-        "backend/job_management.py"
-      ],
-      "weight": 10,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 2
-      },
-      "session_size": "medium",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G10",
+      "id": "G6",
       "pattern": "DRY: duplicated logic across functions/files",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -701,12 +506,12 @@
       "session_size": "large",
       "action": "batch_fix",
       "related_groups": [
-        "G11",
-        "G12"
+        "G7",
+        "G8"
       ]
     },
     {
-      "id": "G11",
+      "id": "G7",
       "pattern": "DRY: duplicated logic across functions/files (batch 2)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -769,12 +574,12 @@
       "session_size": "medium",
       "action": "batch_fix",
       "related_groups": [
-        "G10",
-        "G12"
+        "G6",
+        "G8"
       ]
     },
     {
-      "id": "G12",
+      "id": "G8",
       "pattern": "DRY: duplicated logic across functions/files (batch 3)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -815,206 +620,12 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G10",
-        "G11"
+        "G6",
+        "G7"
       ]
     },
     {
-      "id": "G13",
-      "pattern": "Timing attack: == instead of hmac.compare_digest",
-      "pattern_id": "timing_attack",
-      "fix_shape": "Replace == with hmac.compare_digest for hash/token comparisons",
-      "issues": [
-        {
-          "id": "A17",
-          "title": "Hash Comparison Uses `==` Instead of `hmac.compare_digest`",
-          "file": "backend/crypto_verification.py",
-          "line": "729",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Use `hmac.compare_digest` for defensive consistency, or document as intentional."
-        },
-        {
-          "id": "A36",
-          "title": "Session token comparison uses `!=` instead of `hmac.compare_digest`",
-          "file": "backend/routes/admin_routes.py",
-          "line": "153",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Use `hmac.compare_digest(session_token, calculate_session_token(lan_passphrase))`."
-        }
-      ],
-      "issue_ids": [
-        "A17",
-        "A36"
-      ],
-      "files": [
-        "backend/crypto_verification.py",
-        "backend/routes/admin_routes.py"
-      ],
-      "weight": 8,
-      "difficulty_breakdown": {
-        "medium": 2
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G14",
-      "pattern": "Inconsistent return types across code paths",
-      "pattern_id": "inconsistent_return",
-      "fix_shape": "Return consistent types (e.g., always list) or raise custom exception",
-      "issues": [
-        {
-          "id": "C7",
-          "title": "`discover_drives` Returns Inconsistent Types",
-          "file": "backend/disk_ops.py",
-          "line": "806, 810, 856, 868, 964, 1026, 1117",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Correctness",
-          "suggestion": "Replace all `return {\"error\": \"...\"}` with `return []` (callers already handle empty lists), or raise a custom exception that callers catch explicitly."
-        },
-        {
-          "id": "A73",
-          "title": "`get_smart_test_status` inconsistent return structure across device types",
-          "file": "backend/smart_parsing.py",
-          "line": "845-860 (SATA), 881-891 (NVMe), 902-912 (SAS), 914 (no tests)",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Include `self_test_log_table: None` in all return paths, or document that it's SATA-only."
-        }
-      ],
-      "issue_ids": [
-        "C7",
-        "A73"
-      ],
-      "files": [
-        "backend/disk_ops.py",
-        "backend/smart_parsing.py"
-      ],
-      "weight": 6,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G15",
-      "pattern": "Error swallowing: bare except / silent failures",
-      "pattern_id": "error_swallowing",
-      "fix_shape": "Add logging to except blocks, catch specific exceptions",
-      "issues": [
-        {
-          "id": "A24",
-          "title": "`_auto_enqueue_zero_checks` Swallows Policy Load Errors Silently",
-          "file": "backend/disk_ops.py",
-          "line": "89-92",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Error Handling",
-          "suggestion": "Add `logging.getLogger(__name__).warning(f\"Failed to load policy for zero-check enqueue: {e}\")` in the except block."
-        },
-        {
-          "id": "A66",
-          "title": "`passphrase=None` Silently Disables Marker HMAC Verification",
-          "file": "backend/disk_ops.py",
-          "line": "838-842 (enclosure), 1014-1016 (legacy)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Error Handling",
-          "suggestion": "Log a warning when policy load fails: `logging.getLogger(__name__).warning(\"Failed to load policy for wipe passphrase, marker HMAC verification disabled\")`. Alternatively, fail discovery entirely if p"
-        },
-        {
-          "id": "A26",
-          "title": "Bare `except Exception: pass` in poll functions swallow all errors",
-          "file": "backend/job_management.py",
-          "line": "194, 209, 224, 239",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Concurrency",
-          "suggestion": "Add `logger.debug(f\"poll failed for {device}: {e}\")` in except blocks."
-        },
-        {
-          "id": "A75",
-          "title": "`get_smart_test_status` cache key construction assumes disk_ops internal format",
-          "file": "backend/smart_parsing.py",
-          "line": "775",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Expose a `get_cached_smart_data(device)` function from `disk_ops` that encapsulates the cache key construction, and call that from `smart_parsing.py` instead."
-        },
-        {
-          "id": "A83",
-          "title": "`SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "394-441",
-          "severity": "advisory",
-          "difficulty": "high",
-          "category": "Architecture",
-          "suggestion": "Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data "
-        }
-      ],
-      "issue_ids": [
-        "A24",
-        "A66",
-        "A26",
-        "A75",
-        "A83"
-      ],
-      "files": [
-        "backend/disk_ops.py",
-        "backend/job_management.py",
-        "backend/smart_parsing.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 18,
-      "difficulty_breakdown": {
-        "low": 3,
-        "medium": 1,
-        "high": 1
-      },
-      "session_size": "large",
-      "action": "plan"
-    },
-    {
-      "id": "G16",
-      "pattern": "Resource leaks in error paths",
-      "pattern_id": "resource_leak",
-      "fix_shape": "Use context managers or close resources in except/finally blocks",
-      "issues": [
-        {
-          "id": "C11",
-          "title": "Log file handle leaked if write/flush fails after successful open",
-          "file": "backend/job_management.py",
-          "line": "482-490",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Use a context manager (`with open(...) as log_file:`) or close `log_file` in the except block before returning."
-        }
-      ],
-      "issue_ids": [
-        "C11"
-      ],
-      "files": [
-        "backend/job_management.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G17",
+      "id": "G9",
       "pattern": "Information disclosure: str(e) in API responses",
       "pattern_id": "info_disclosure",
       "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
@@ -1069,7 +680,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G18",
+      "id": "G10",
       "pattern": "File organization: domain mixing / god modules",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -1110,11 +721,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G19"
+        "G11"
       ]
     },
     {
-      "id": "G19",
+      "id": "G11",
       "pattern": "File organization: domain mixing / god modules (batch 2)",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -1155,65 +766,58 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G18"
+        "G10"
       ]
     },
     {
-      "id": "G20",
+      "id": "G12",
+      "pattern": "Error swallowing: bare except / silent failures",
+      "pattern_id": "error_swallowing",
+      "fix_shape": "Add logging to except blocks, catch specific exceptions",
+      "issues": [
+        {
+          "id": "A75",
+          "title": "`get_smart_test_status` cache key construction assumes disk_ops internal format",
+          "file": "backend/smart_parsing.py",
+          "line": "775",
+          "severity": "advisory",
+          "difficulty": "medium",
+          "category": "Architecture",
+          "suggestion": "Expose a `get_cached_smart_data(device)` function from `disk_ops` that encapsulates the cache key construction, and call that from `smart_parsing.py` instead."
+        },
+        {
+          "id": "A83",
+          "title": "`SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend",
+          "file": "frontend/admin/enclosureManagement.js",
+          "line": "394-441",
+          "severity": "advisory",
+          "difficulty": "high",
+          "category": "Architecture",
+          "suggestion": "Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data "
+        }
+      ],
+      "issue_ids": [
+        "A75",
+        "A83"
+      ],
+      "files": [
+        "backend/smart_parsing.py",
+        "frontend/admin/enclosureManagement.js"
+      ],
+      "weight": 12,
+      "difficulty_breakdown": {
+        "medium": 1,
+        "high": 1
+      },
+      "session_size": "medium",
+      "action": "plan"
+    },
+    {
+      "id": "G13",
       "pattern": "Misc: Code Quality",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
       "issues": [
-        {
-          "id": "A28",
-          "title": "Stray line after END OF FILE marker",
-          "file": "backend/job_management.py",
-          "line": "938",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Remove the stray line."
-        },
-        {
-          "id": "A37",
-          "title": "`MAX_ENCODSURES` typo",
-          "file": "backend/routes/admin_routes.py",
-          "line": "76",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Rename to `MAX_ENCLOSURES`."
-        },
-        {
-          "id": "A55",
-          "title": "`get_controller_for_device` has identical if/else branches",
-          "file": "backend/device_discovery.py",
-          "line": "242-247",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Replace with `sys_path = f\"/sys/class/block/{device_name}\"` and remove the if/else."
-        },
-        {
-          "id": "A68",
-          "title": "`ssd_high_poh_thresh * 2 - ssd_high_poh_thresh` misleading dead math",
-          "file": "backend/smart_parsing.py",
-          "line": "450",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Simplify to `(poh - ssd_high_poh_thresh) / ssd_high_poh_thresh`."
-        },
-        {
-          "id": "A85",
-          "title": "`parseInt` calls without radix parameter",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "299 (x2), 349, 655, 662, 672, 684, 724, 784, 796, 811, 886, 899, 913",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Code Quality",
-          "suggestion": "Add `, 10` to all `parseInt()` calls for consistency."
-        },
         {
           "id": "C6",
           "title": "`capture_before_state()` Uses Raw `blockdev` Without Retry",
@@ -1253,44 +857,7 @@
           "difficulty": "medium",
           "category": "Code Quality",
           "suggestion": "Use `copy.deepcopy()` if nested structures are added in the future."
-        }
-      ],
-      "issue_ids": [
-        "A28",
-        "A37",
-        "A55",
-        "A68",
-        "A85",
-        "C6",
-        "A74",
-        "A5",
-        "A33"
-      ],
-      "files": [
-        "backend/app.py",
-        "backend/crypto_verification.py",
-        "backend/device_discovery.py",
-        "backend/job_management.py",
-        "backend/routes/admin_routes.py",
-        "backend/smart_parsing.py",
-        "backend/zero_check_manager.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 17,
-      "difficulty_breakdown": {
-        "trivial": 5,
-        "low": 2,
-        "medium": 2
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G21",
-      "pattern": "Misc: Code Quality",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
+        },
         {
           "id": "C14",
           "title": "Hardcoded OS device paths in SMART test endpoint",
@@ -1313,21 +880,30 @@
         }
       ],
       "issue_ids": [
+        "C6",
+        "A74",
+        "A5",
+        "A33",
         "C14",
         "A38"
       ],
       "files": [
-        "backend/routes/admin_routes.py"
+        "backend/app.py",
+        "backend/crypto_verification.py",
+        "backend/routes/admin_routes.py",
+        "backend/smart_parsing.py",
+        "backend/zero_check_manager.py"
       ],
-      "weight": 8,
+      "weight": 20,
       "difficulty_breakdown": {
-        "medium": 2
+        "low": 2,
+        "medium": 4
       },
-      "session_size": "small",
+      "session_size": "large",
       "action": "batch_fix"
     },
     {
-      "id": "G22",
+      "id": "G14",
       "pattern": "Misc: Architecture",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1382,85 +958,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G23",
-      "pattern": "Misc: Concurrency",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "C4",
-          "title": "`verify_crypto_hash_comparison()` Missing Device Lock",
-          "file": "backend/crypto_verification.py",
-          "line": "672-872",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Acquire `get_device_lock(device)` at function start, same pattern as `verify_sampled_zero_check` (line 446-449)."
-        },
-        {
-          "id": "A20",
-          "title": "`_get_extended_smart_executor` Lock Acquisition Not Atomic",
-          "file": "backend/disk_ops.py",
-          "line": "658-674",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Check `_shutdown_requested` inside `_EXTENDED_SMART_LOCK` scope, or acquire both locks atomically."
-        },
-        {
-          "id": "A27",
-          "title": "Hardcoded 512-byte sector size assumption",
-          "file": "backend/job_management.py",
-          "line": "544",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Read logical block size from `/sys/block/{dev}/queue/logical_block_size`."
-        },
-        {
-          "id": "C13",
-          "title": "`ERASE_JOBS_LOCK` held during subprocess calls in `kill_all_jobs`",
-          "file": "backend/routes/admin_routes.py",
-          "line": "865-966",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Snapshot job list inside lock, release lock, perform hardware checks, then re-acquire lock to apply kill decisions."
-        },
-        {
-          "id": "C15",
-          "title": "`ERASE_JOBS_LOCK` held during database queries in `get_drives`",
-          "file": "backend/routes/drive_routes.py",
-          "line": "75-117",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Snapshot `ERASE_JOBS` state inside lock, release lock, then perform database queries outside the lock."
-        }
-      ],
-      "issue_ids": [
-        "C4",
-        "A20",
-        "A27",
-        "C13",
-        "C15"
-      ],
-      "files": [
-        "backend/crypto_verification.py",
-        "backend/disk_ops.py",
-        "backend/job_management.py",
-        "backend/routes/admin_routes.py",
-        "backend/routes/drive_routes.py"
-      ],
-      "weight": 20,
-      "difficulty_breakdown": {
-        "medium": 5
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G24",
+      "id": "G15",
       "pattern": "Misc: Performance",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1539,114 +1037,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G25",
-      "pattern": "Misc: Error Handling",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "A61",
-          "title": "`_get_nvme_list_data` redundant exception catching",
-          "file": "backend/device_discovery.py",
-          "line": "432",
-          "severity": "advisory",
-          "difficulty": "trivial",
-          "category": "Error Handling",
-          "suggestion": "Either catch specific exceptions: `except (subprocess.TimeoutExpired, FileNotFoundError, PermissionError, OSError) as e:`, or simplify to `except Exception as e:` and remove the redundant specific exc"
-        },
-        {
-          "id": "A81",
-          "title": "`renderWizardStep` missing null checks on DOM elements",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "144-154",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Error Handling",
-          "suggestion": "Add null checks with early return or console.error for missing elements, matching the pattern used in `renderEnclosureList` (line 58) and `renderConfiguration` (line 172)."
-        },
-        {
-          "id": "A84",
-          "title": "`renderConfiguration` async call without await in template change handler",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "357-360",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Error Handling",
-          "suggestion": "Either add `await` and wrap in try-catch, or add `.catch(e => console.error(\"Failed to re-render configuration:\", e))` after the call."
-        },
-        {
-          "id": "A86",
-          "title": "`deleteEnclosure` — `response.json()` not wrapped in try-catch in error path",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "991-993",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Error Handling",
-          "suggestion": "Wrap in try-catch: `let data; try { data = await response.json(); } catch { throw new Error(\"Failed to delete enclosure\"); }`"
-        }
-      ],
-      "issue_ids": [
-        "A61",
-        "A81",
-        "A84",
-        "A86"
-      ],
-      "files": [
-        "backend/device_discovery.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 7,
-      "difficulty_breakdown": {
-        "trivial": 1,
-        "low": 3
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G26",
-      "pattern": "Misc: Security",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "C27",
-          "title": "`get_raw_smart_diagnostics` does not validate device path",
-          "file": "backend/smart_parsing.py",
-          "line": "383",
-          "severity": "critical",
-          "difficulty": "low",
-          "category": "Security",
-          "suggestion": "Add `if not validate_device_path(device): return \"Invalid device path\\n\"` at function start."
-        },
-        {
-          "id": "C26",
-          "title": "`get_smart_data` and `get_smart_identity` do not validate device paths",
-          "file": "backend/smart_parsing.py",
-          "line": "99 (`get_smart_identity`), 153 (`get_smart_data`)",
-          "severity": "critical",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Add `if not validate_device_path(device): return empty_template` at the top of both functions."
-        }
-      ],
-      "issue_ids": [
-        "C27",
-        "C26"
-      ],
-      "files": [
-        "backend/smart_parsing.py"
-      ],
-      "weight": 6,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G27",
+      "id": "G16",
       "pattern": "Ungrouped: backend/crypto_verification.py",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -1667,36 +1058,6 @@
       ],
       "files": [
         "backend/crypto_verification.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G28",
-      "pattern": "Ungrouped: backend/disk_ops.py",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "A67",
-          "title": "`_collect_pending_parallel` Orphaned Threads on Timeout",
-          "file": "backend/disk_ops.py",
-          "line": "628-657",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Resource Management",
-          "suggestion": "Consider using `executor.shutdown(wait=False, cancel_futures=True)` (Python 3.9+) in the finally block. Alternatively, pass a cancellation token to `_collect_drive_data` so it can check if discovery w"
-        }
-      ],
-      "issue_ids": [
-        "A67"
-      ],
-      "files": [
-        "backend/disk_ops.py"
       ],
       "weight": 4,
       "difficulty_breakdown": {

@@ -14,7 +14,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A2: [Advisory] `smart_test_update_thread` Global Without Lock — Difficulty: Low — Category: Concurrency
+### A2: [COMPLETED] [Advisory] `smart_test_update_thread` Global Without Lock — Difficulty: Low — Category: Concurrency
 - **Lines**: 210-225 (`start_smart_test_update_thread` / `stop_smart_test_update_thread`)
 - **Issue**: `start_smart_test_update_thread` checks `smart_test_update_thread is None or not smart_test_update_thread.is_alive()` then assigns a new thread. Two concurrent callers could both see the thread as dead and start two threads.
 - **Impact**: Unlikely in practice (called once at startup and from signal handling), but violates Lesson #6 concurrency guardrails.
@@ -30,7 +30,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A4: [Advisory] Redundant Import in `security_gate` — Difficulty: Low — Category: Code Quality
+### A4: [COMPLETED] [Advisory] Redundant Import in `security_gate` — Difficulty: Low — Category: Code Quality
 - **Line**: 21
 - **Issue**: `from flask import request, jsonify` — `jsonify` is already imported at module level (line 9). Only `request` needs the local import.
 - **Impact**: No functional impact, just redundant.
@@ -98,7 +98,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A9: [Advisory] `__import__("logging")` Anti-Pattern in `load_bay_map` — Difficulty: Medium — Category: Performance
+### A9: [COMPLETED] [Advisory] `__import__("logging")` Anti-Pattern in `load_bay_map` — Difficulty: Medium — Category: Performance
 - **Lines**: 519, 531
 - **Issue**: `logger = __import__("logging").getLogger("app")` — module already has `logger = logging.getLogger("app")` at line 26. Redundant and non-idiomatic, likely a refactor leftover.
 - **Impact**: No functional impact, just code smell.
@@ -126,7 +126,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/crypto_verification.py
 
-### C4: [Critical] `verify_crypto_hash_comparison()` Missing Device Lock — Difficulty: Medium — Category: Concurrency
+### C4: [COMPLETED] [Critical] `verify_crypto_hash_comparison()` Missing Device Lock — Difficulty: Medium — Category: Concurrency
 - **Line**: 672-872
 - **Issue**: Every other verification function acquires `get_device_lock(device)` before reading. This function does not. Concurrent operations on the same device could produce inconsistent verification results.
 - **Impact**: A concurrent wipe or discovery operation could start on the same device while hash comparison reads are in progress, causing false pass/fail.
@@ -142,7 +142,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C6: [Critical] `capture_before_state()` Uses Raw `blockdev` Without Retry — Difficulty: Low — Category: Code Quality
+### C6: [COMPLETED] [Critical] `capture_before_state()` Uses Raw `blockdev` Without Retry — Difficulty: Low — Category: Code Quality
 - **Lines**: 585-589
 - **Issue**: Uses raw `subprocess.run` for blockdev capacity check while all other functions use `_run_blockdev_getsize64()` with policy-configured retry logic. Also has uncaught `ValueError` on `int(result.stdout.strip())` (line 589).
 - **Impact**: Transient blockdev failure causes before-state capture to fail, which silently downgrades verification from hash comparison to weaker sampled zero check. Uncaught `ValueError` crashes the function.
@@ -174,7 +174,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A15: [Advisory] `resolve_verify_command_path()` Defined Twice — Difficulty: Medium — Category: DRY
+### A15: [COMPLETED] [Advisory] `resolve_verify_command_path()` Defined Twice — Difficulty: Medium — Category: DRY
 - **Line**: 156-167 (also in `verification.py:39`)
 - **Issue**: Same thin wrapper defined in both files, both delegating to `disk_utils.get_command_path`.
 - **Impact**: Maintenance risk — if one is updated and the other isn't, behavior diverges.
@@ -190,7 +190,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A17: [Advisory] Hash Comparison Uses `==` Instead of `hmac.compare_digest` — Difficulty: Medium — Category: Code Quality
+### A17: [COMPLETED] [Advisory] Hash Comparison Uses `==` Instead of `hmac.compare_digest` — Difficulty: Medium — Category: Code Quality
 - **Line**: 729
 - **Issue**: `after_hash == before_hashes[idx]` uses `==` for hash comparison. Not a practical timing attack risk since hashes are of drive data, not secrets, but inconsistent with security best practices.
 - **Impact**: No practical security impact. Consistency concern only.
@@ -202,7 +202,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/disk_ops.py
 
-### C7: [Critical] `discover_drives` Returns Inconsistent Types — Difficulty: Low — Category: Correctness
+### C7: [COMPLETED] [Critical] `discover_drives` Returns Inconsistent Types — Difficulty: Low — Category: Correctness
 - **Line**: 806, 810, 856, 868, 964, 1026, 1117
 - **Issue**: Function returns `[]` (empty list), `{"error": "..."}` (dict), or `results` (list of dicts) depending on code path. All callers treat return value as a list and call `.get()` on elements, which raises `AttributeError` when iterating over a dict's keys (strings).
 - **Impact**: During SIGTERM/SIGINT, `/api/drives` and `/api/erase/start` endpoints return misleading HTTP 500 errors instead of graceful shutdown responses. The meaningful "Discovery interrupted by signal" message is lost.
@@ -210,7 +210,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C8: [Critical] Signal Handler Uses `threading.Lock` — Potential Deadlock — Difficulty: Medium — Category: Concurrency
+### C8: [COMPLETED] [Critical] Signal Handler Uses `threading.Lock` — Potential Deadlock — Difficulty: Medium — Category: Concurrency
 - **Line**: 161-167
 - **Issue**: `_handle_discovery_signal` acquires `_discovery_interrupt_lock` and `_shutdown_lock`. If signal is delivered while `_check_discovery_interrupted()` (line 172) holds `_discovery_interrupt_lock`, the handler deadlocks trying to re-acquire the non-reentrant Lock.
 - **Impact**: Very low probability deadlock during shutdown. If it occurs, process hangs on SIGTERM/SIGINT and requires SIGKILL.
@@ -242,7 +242,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A20: [Advisory] `_get_extended_smart_executor` Lock Acquisition Not Atomic — Difficulty: Medium — Category: Concurrency
+### A20: [COMPLETED] [Advisory] `_get_extended_smart_executor` Lock Acquisition Not Atomic — Difficulty: Medium — Category: Concurrency
 - **Line**: 658-674
 - **Issue**: `_shutdown_lock` is released before `_EXTENDED_SMART_LOCK` is acquired. Between these, `stop_extended_smart_pool()` could shut down the executor. Stale `shutdown_requested = False` causes a new executor to be created after shutdown.
 - **Impact**: Low — leaked ThreadPoolExecutor (never shut down). Subsequent shutdown checks in `_submit_drive_for_extended_smart` and `_process_single_drive_extended_smart` prevent work from being processed.
@@ -274,7 +274,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A24: [Advisory] `_auto_enqueue_zero_checks` Swallows Policy Load Errors Silently — Difficulty: Low — Category: Error Handling
+### A24: [COMPLETED] [Advisory] `_auto_enqueue_zero_checks` Swallows Policy Load Errors Silently — Difficulty: Low — Category: Error Handling
 - **Line**: 89-92
 - **Issue**: `except Exception: return` with no logging. If `load_policy` fails, zero-checks are silently disabled with no diagnostic trail.
 - **Impact**: Low — zero-checks are a pre-wipe convenience. Silent failure means drives won't be auto-checked but wipe workflow is unaffected.
@@ -298,7 +298,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A66: [Advisory] `passphrase=None` Silently Disables Marker HMAC Verification — Difficulty: Low — Category: Error Handling
+### A66: [COMPLETED] [Advisory] `passphrase=None` Silently Disables Marker HMAC Verification — Difficulty: Low — Category: Error Handling
 - **Lines**: 838-842 (enclosure), 1014-1016 (legacy)
 - **Issue**: When `load_policy()` fails (exception), `passphrase` remains `None`. This is passed to `_collect_drive_data` → `read_marker_status(dev_node, interface_type, passphrase=None)`. While `read_marker_status` accepts `passphrase=None` as default, this means marker HMAC verification silently doesn't work. No warning is logged about the policy load failure, unlike `_auto_enqueue_zero_checks` (A24) which at least has the same pattern but is noted. The `except Exception: pass` at lines 841-842 and 1016 swallows the error completely.
 - **Impact**: Medium — if `policy.json` is corrupted or inaccessible, all drives show marker status without HMAC verification. Operators won't know why markers aren't verified. The marker status will show `"pristine_insecure"` instead of `"pristine_secure"` but no diagnostic explains why.
@@ -306,7 +306,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A24 (same pattern in `_auto_enqueue_zero_checks`)
 
-### A67: [Advisory] `_collect_pending_parallel` Orphaned Threads on Timeout — Difficulty: Medium — Category: Resource Management
+### A67: [COMPLETED] [Advisory] `_collect_pending_parallel` Orphaned Threads on Timeout — Difficulty: Medium — Category: Resource Management
 - **Lines**: 628-657
 - **Issue**: When `FuturesTimeoutError` fires (line 650), `future.cancel()` (line 652) only cancels futures that haven't started yet. Already-running futures continue in the background. `executor.shutdown(wait=False)` (line 657) doesn't kill running threads. These orphaned threads continue running `_collect_drive_data()` → `get_smart_data()` (which spawns `smartctl` subprocesses) after discovery has moved on. Their results are discarded since nobody reads the future after timeout.
 - **Impact**: Low — orphaned threads eventually complete and exit when `smartctl` finishes. Wasted CPU and I/O for the duration of the `smartctl` call. In a LAN tool with limited users, unlikely to cause issues. But on a system with many drives, a timeout could leave dozens of `smartctl` processes running.
@@ -373,7 +373,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A26: [Advisory] Bare `except Exception: pass` in poll functions swallow all errors — Difficulty: Low — Category: Concurrency
+### A26: [COMPLETED] [Advisory] Bare `except Exception: pass` in poll functions swallow all errors — Difficulty: Low — Category: Concurrency
 - **Lines**: 194, 209, 224, 239
 - **Issue**: `poll_*_sanitize_progress` functions catch all exceptions and return `None` without logging. Silent swallowing of `PermissionError`, `FileNotFoundError`, `OSError`, etc.
 - **Impact**: Low — progress reporting failures become impossible to debug.
@@ -381,7 +381,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A27: [Advisory] Hardcoded 512-byte sector size assumption — Difficulty: Medium — Category: Concurrency
+### A27: [COMPLETED] [Advisory] Hardcoded 512-byte sector size assumption — Difficulty: Medium — Category: Concurrency
 - **Lines**: 544
 - **Issue**: `wrote_bytes = delta_sectors * 512` assumes 512-byte logical sectors. Modern 4Kn drives use 4096-byte logical sectors.
 - **Impact**: Low — progress calculations off by 8x on 4Kn drives. Does not affect actual wipe.
@@ -389,7 +389,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A28: [Advisory] Stray line after END OF FILE marker — Difficulty: Trivial — Category: Code Quality
+### A28: [COMPLETED] [Advisory] Stray line after END OF FILE marker — Difficulty: Trivial — Category: Code Quality
 - **Lines**: 938
 - **Issue**: Line 938 (`# Validate input is a list and enforce size limit for DoS prevention`) appears after the `# --- END OF FILE ---` marker. Copy-paste artifact from another file.
 - **Impact**: None (comment only), but indicates file corruption or bad merge.
@@ -465,7 +465,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C14: [Critical] Hardcoded OS device paths in SMART test endpoint — Difficulty: Medium — Category: Code Quality
+### C14: [COMPLETED] [Critical] Hardcoded OS device paths in SMART test endpoint — Difficulty: Medium — Category: Code Quality
 - **Lines**: 2411-2418
 - **Issue**: Only checks `/dev/sda` and `/dev/nvme0n1` for OS drive detection. OS could be on `/dev/sdb`, `/dev/nvme1n1`, etc. Safety bypass allows SMART test on OS drive.
 - **Impact**: Medium — SMART test on OS drive could cause system instability.
@@ -489,7 +489,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A36: [Advisory] Session token comparison uses `!=` instead of `hmac.compare_digest` — Difficulty: Medium — Category: Security
+### A36: [COMPLETED] [Advisory] Session token comparison uses `!=` instead of `hmac.compare_digest` — Difficulty: Medium — Category: Security
 - **Lines**: 153
 - **Issue**: `session_token != calculate_session_token(lan_passphrase)` uses string comparison vulnerable to timing attacks. Also appears in `certificate_routes.py:80`.
 - **Impact**: Low — comparing computed hashes, not raw secrets, and LAN-only. But violates best practice.
@@ -497,7 +497,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A37: [Advisory] `MAX_ENCODSURES` typo — Difficulty: Trivial — Category: Code Quality
+### A37: [COMPLETED] [Advisory] `MAX_ENCODSURES` typo — Difficulty: Trivial — Category: Code Quality
 - **Lines**: 76
 - **Issue**: Constant `MAX_ENCODSURES` is misspelled (missing 'L'). Used at lines 1099, 1132-1135.
 - **Impact**: None — cosmetic, but creates confusion.
@@ -717,7 +717,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A55: [Advisory] `get_controller_for_device` has identical if/else branches — Difficulty: Trivial — Category: Code Quality
+### A55: [COMPLETED] [Advisory] `get_controller_for_device` has identical if/else branches — Difficulty: Trivial — Category: Code Quality
 - **Lines**: 242-247
 - **Issue**: The function has an if/else for NVMe vs non-NVMe devices, but both branches produce the same `sys_path`:
   ```python
@@ -772,7 +772,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A61: [Advisory] `_get_nvme_list_data` redundant exception catching — Difficulty: Trivial — Category: Error Handling
+### A61: [COMPLETED] [Advisory] `_get_nvme_list_data` redundant exception catching — Difficulty: Trivial — Category: Error Handling
 - **Line**: 432
 - **Issue**: `except (subprocess.TimeoutExpired, FileNotFoundError, Exception) as e:` — `Exception` already catches both `TimeoutExpired` and `FileNotFoundError`, making the specific exceptions redundant. This suggests the author intended to handle them differently but never implemented it. Catching bare `Exception` can also mask unexpected errors like `PermissionError` or `OSError`.
 - **Impact**: Low — the function correctly avoids caching on failure (Lesson #32). But the redundant exception list is misleading.
@@ -841,7 +841,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C26: [Critical] `get_smart_data` and `get_smart_identity` do not validate device paths — Difficulty: Medium — Category: Security
+### C26: [COMPLETED] [Critical] `get_smart_data` and `get_smart_identity` do not validate device paths — Difficulty: Medium — Category: Security
 - **Lines**: 99 (`get_smart_identity`), 153 (`get_smart_data`)
 - **Issue**: Neither function calls `validate_device_path(device)` before passing the device to `run_command([smartctl_cmd, "-j", "-x", device], ...)` or `run_command([smartctl_cmd, "-j", "-i", device], ...)`. While most callers pass paths from system discovery, `admin_routes.py:2000` and `admin_routes.py:2075` call `get_smart_data(device_path)` where `device_path` originates from user request data. Per Lesson #12: "Apply validation at the ingestion point, not just at the point of use, even when data comes from trusted discovery APIs."
 - **Impact**: Medium — defense-in-depth violation. If any caller passes an unvalidated path, it reaches `subprocess` without filtering. `shell=False` prevents command injection, but path traversal to non-device files is possible.
@@ -849,7 +849,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A53 (validate_device_path triplication)
 
-### C27: [Critical] `get_raw_smart_diagnostics` does not validate device path — Difficulty: Low — Category: Security
+### C27: [COMPLETED] [Critical] `get_raw_smart_diagnostics` does not validate device path — Difficulty: Low — Category: Security
 - **Line**: 383
 - **Issue**: `get_raw_smart_diagnostics(device)` passes `device` directly to `subprocess.run(["sudo", smartctl_cmd, "-a", device], ...)` without calling `validate_device_path`. Called from `job_management.py:321` and `job_management.py:911` with device paths from job requests. While job creation validates the path, this function provides no defense-in-depth.
 - **Impact**: Low — callers currently pass validated paths. But per Lesson #12, validation should be at the ingestion point.
@@ -857,7 +857,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C26
 
-### A65: [Advisory] `get_triage_thresholds()` called redundantly — loads policy from disk 3+ times per function — Difficulty: Medium — Category: Performance
+### A65: [COMPLETED] [Advisory] `get_triage_thresholds()` called redundantly — loads policy from disk 3+ times per function — Difficulty: Medium — Category: Performance
 - **Lines**: 342 (`get_smart_data`), 447 + 454 + 516 (`calculate_drive_health_score`), 924 + 1148 (`get_drive_recommendation` + `pre_wipe_health_gate`)
 - **Issue**: `get_triage_thresholds()` reads `policy.json` from disk, parses JSON, and constructs a dict on every call. `calculate_drive_health_score` calls it 3 times (lines 447, 454, 516). `pre_wipe_health_gate` calls `get_smart_data` (which calls it once), then `calculate_drive_health_score` (3 more calls), then calls it again at line 1148 — 5 total policy loads per health gate check.
 - **Impact**: Low — tolerable for a LAN tool, but wasteful. Each policy load is a disk read + JSON parse.
@@ -881,7 +881,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A68: [Advisory] `ssd_high_poh_thresh * 2 - ssd_high_poh_thresh` misleading dead math — Difficulty: Trivial — Category: Code Quality
+### A68: [COMPLETED] [Advisory] `ssd_high_poh_thresh * 2 - ssd_high_poh_thresh` misleading dead math — Difficulty: Trivial — Category: Code Quality
 - **Line**: 450
 - **Issue**: `20 * ((poh - ssd_high_poh_thresh) / (ssd_high_poh_thresh * 2 - ssd_high_poh_thresh)) ** 2` — the denominator `ssd_high_poh_thresh * 2 - ssd_high_poh_thresh` simplifies to just `ssd_high_poh_thresh`. The `* 2 -` is misleading dead math.
 - **Impact**: None — functionally correct but confusing to read.
@@ -905,7 +905,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A34, A40 (same pattern in other files)
 
-### A71: [Advisory] Lazy imports inside `get_smart_test_status` — Difficulty: Low — Category: Code Quality
+### A71: [COMPLETED] [Advisory] Lazy imports inside `get_smart_test_status` — Difficulty: Low — Category: Code Quality
 - **Lines**: 773 (`from disk_ops import _get_cached_drive_payload`), 774 (`import time`), 799 (`from database import get_historical_poh_for_serial`), 802 (`import logging`)
 - **Issue**: Four imports inside a function body, inside a try block. `disk_ops` and `database` are likely lazy to avoid circular imports (both import from `smart_parsing`). `time` and `logging` are stdlib and should be at module level. Per Lesson #19: "Never add code that uses modules without verifying the imports exist, and ensure imports are complete."
 - **Impact**: Low — functionally correct but non-idiomatic. `import time` and `import logging` on every poll call is wasteful (cached by Python, but still a dict lookup).
@@ -921,7 +921,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A73: [Advisory] `get_smart_test_status` inconsistent return structure across device types — Difficulty: Medium — Category: Architecture
+### A73: [COMPLETED] [Advisory] `get_smart_test_status` inconsistent return structure across device types — Difficulty: Medium — Category: Architecture
 - **Lines**: 845-860 (SATA), 881-891 (NVMe), 902-912 (SAS), 914 (no tests)
 - **Issue**: The SATA/ATA branch returns `self_test_log_table` in the response dict. The NVMe, SAS, and no-tests branches do not. API consumers checking `result.get("self_test_log_table")` will get `None` for non-SATA devices, which may cause UI rendering issues if the frontend expects the key to always exist.
 - **Impact**: Low — frontend likely handles missing keys gracefully. But inconsistent return structures violate the principle of uniform API contracts.
@@ -953,7 +953,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A77: [Advisory] `drive_models.json` loaded on every `get_smart_data` call — Difficulty: Medium — Category: Performance
+### A77: [COMPLETED] [Advisory] `drive_models.json` loaded on every `get_smart_data` call — Difficulty: Medium — Category: Performance
 - **Lines**: 352-365
 - **Issue**: `get_smart_data` reads and parses `drive_models.json` from disk on every call. During discovery of multiple drives, this means N disk reads + JSON parses for a file that changes rarely (only when admin updates drive model profiles).
 - **Impact**: Low — `get_smart_data` is called 1-2 times per drive during discovery. For an 8-bay station, that's 8-16 reads of a small JSON file. Tolerable but wasteful.
@@ -994,7 +994,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A81: [Advisory] `renderWizardStep` missing null checks on DOM elements — Difficulty: Low — Category: Error Handling
+### A81: [COMPLETED] [Advisory] `renderWizardStep` missing null checks on DOM elements — Difficulty: Low — Category: Error Handling
 - **Lines**: 144-154
 - **Issue**: Five DOM elements (`step1`, `step2`, `prevBtn`, `nextBtn`, `saveBtn`) are retrieved via `getElementById` and immediately used with `.classList.add()` without null checks. If any element is missing from the HTML, this throws `TypeError: Cannot read properties of null (reading 'classList')`, crashing the wizard. Per Lesson #35 (DOM Element Null Check Completeness).
 - **Impact**: Low — elements are present in the current HTML. But fragile if HTML structure changes or modal is dynamically loaded.
@@ -1018,7 +1018,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A84: [Advisory] `renderConfiguration` async call without await in template change handler — Difficulty: Low — Category: Error Handling
+### A84: [COMPLETED] [Advisory] `renderConfiguration` async call without await in template change handler — Difficulty: Low — Category: Error Handling
 - **Lines**: 357-360
 - **Issue**: `renderConfiguration()` is an async function (it awaits `safeFetch` for hardware info at line 177 and unmapped drives at line 304). It is called without `await` in the template select `change` event handler at line 359. Any errors thrown inside `renderConfiguration` become unhandled promise rejections rather than being caught by the caller.
 - **Impact**: Low — errors in `renderConfiguration` are caught internally by try-catch blocks around the `safeFetch` calls. But the pattern is fragile — if a future modification adds an uncaught throw, it becomes a silent rejection.
@@ -1026,7 +1026,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A85: [Advisory] `parseInt` calls without radix parameter — Difficulty: Trivial — Category: Code Quality
+### A85: [COMPLETED] [Advisory] `parseInt` calls without radix parameter — Difficulty: Trivial — Category: Code Quality
 - **Lines**: 299 (x2), 349, 655, 662, 672, 684, 724, 784, 796, 811, 886, 899, 913
 - **Issue**: ~14 `parseInt()` calls omit the radix parameter. While modern JavaScript defaults to base 10 for decimal strings, this is inconsistent — lines 462 and 501 correctly pass radix `10`. Per Lesson #59 (Numeric Conversion Validation), best practice is to always specify radix.
 - **Impact**: None functionally — all inputs are decimal. But inconsistent style.
@@ -1034,7 +1034,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A86: [Advisory] `deleteEnclosure` — `response.json()` not wrapped in try-catch in error path — Difficulty: Low — Category: Error Handling
+### A86: [COMPLETED] [Advisory] `deleteEnclosure` — `response.json()` not wrapped in try-catch in error path — Difficulty: Low — Category: Error Handling
 - **Lines**: 991-993
 - **Issue**: When the DELETE response is not OK, `const data = await response.json()` is called without try-catch. If the error response body is not valid JSON (e.g., 502 from a reverse proxy returning HTML), this throws an uncaught `SyntaxError` inside the outer try-catch. The user sees `Error: Unexpected token < in JSON...` instead of a meaningful delete failure message. Per Lesson #33 (Robust JSON Parsing in Error Paths).
 - **Impact**: Low — confusing error message in edge cases. The outer try-catch prevents a crash, but the error message is unhelpful.

@@ -7,12 +7,35 @@ import os
 import re
 import math
 import logging
+import time
+import threading
 
-from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command
+from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command, validate_device_path as _validate_device_path_base
 from common import load_policy, get_config_dir, DRIVE_DATA_CACHE_TTL
 from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS
 
 logger = logging.getLogger(__name__)
+
+_DRIVE_MODELS_CACHE = {'data': None, 'mtime': None}
+_DRIVE_MODELS_LOCK = threading.Lock()
+
+def _load_drive_models():
+    """Load drive_models.json with file-mtime-based caching."""
+    try:
+        config_dir = get_config_dir()
+        path = os.path.join(config_dir, "drive_models.json")
+        mtime = os.path.getmtime(path)
+        with _DRIVE_MODELS_LOCK:
+            if _DRIVE_MODELS_CACHE['data'] is not None and _DRIVE_MODELS_CACHE['mtime'] == mtime:
+                return _DRIVE_MODELS_CACHE['data']
+        with open(path, "r") as f:
+            data = json.load(f)
+        with _DRIVE_MODELS_LOCK:
+            _DRIVE_MODELS_CACHE['data'] = data
+            _DRIVE_MODELS_CACHE['mtime'] = mtime
+            return data
+    except (OSError, json.JSONDecodeError):
+        return None
 
 def get_triage_thresholds():
     """Load triage thresholds from policy.json with fallback defaults."""
@@ -124,6 +147,8 @@ def get_smart_identity(device, diagnostics=None):
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
         "model_profile": None, "smart_polling": True
     }
+    if not validate_device_path(device):
+        return empty_template
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd: return empty_template
     raw_output = run_command([smartctl_cmd, "-j", "-i", device], diagnostics, "smartctl")
@@ -165,6 +190,8 @@ def get_smart_data(device, diagnostics=None):
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
         "model_profile": None, "smart_polling": False
     }
+    if not validate_device_path(device):
+        return empty_template
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd: return empty_template
     raw_output = run_command([smartctl_cmd, "-j", "-x", device], diagnostics, "smartctl")
@@ -351,21 +378,15 @@ def get_smart_data(device, diagnostics=None):
     if sas_uncorrectable_verify_errors is not None and sas_uncorrectable_verify_errors > 0:
         status_str = "FAILED"
 
-    # Load drive model profile from drive_models.json
+    # Load drive model profile from drive_models.json (cached via mtime)
     model_profile = None
-    try:
-        config_dir = get_config_dir()
-        drive_models_path = os.path.join(config_dir, "drive_models.json")
-        if os.path.exists(drive_models_path):
-            with open(drive_models_path, "r") as f:
-                drive_models = json.load(f)
-                vendor = str(data.get("vendor", "") or "").upper()
-                product = str(model or "").upper()
-                revision = str(data.get("firmware_version", "") or "").upper()
-                lookup_key = f"{vendor},{product},{revision}"
-                model_profile = drive_models.get("drive_models", {}).get(lookup_key)
-    except Exception:
-        pass
+    drive_models = _load_drive_models()
+    if drive_models:
+        vendor = str(data.get("vendor", "") or "").upper()
+        product = str(model or "").upper()
+        revision = str(data.get("firmware_version", "") or "").upper()
+        lookup_key = f"{vendor},{product},{revision}"
+        model_profile = drive_models.get("drive_models", {}).get(lookup_key)
 
     # Detect interface type from SMART data
     interface_type = detect_interface_type(None, device, None, raw_output)
@@ -384,6 +405,8 @@ def get_smart_data(device, diagnostics=None):
     }
 
 def get_raw_smart_diagnostics(device):
+    if not validate_device_path(device):
+        return "Invalid device path\n"
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd or not device:
         return "SMARTCTL command not resolved or invalid device target.\n"
@@ -425,11 +448,13 @@ def detect_interface_type(by_path_value, device, configured_type=None, smart_out
 
     return "sata" if dev.startswith("/dev/sd") else "unknown"
 
-def calculate_drive_health_score(interface_type, smart_data, raw_json):
+def calculate_drive_health_score(interface_type, smart_data, raw_json, thresholds=None):
     iface = str(interface_type or "unknown").lower()
     is_ssd = is_drive_ssd(interface_type, smart_data)
     wear = smart_data.get("wear_level")
     poh = safe_int(smart_data.get("power_on_hours"), 0)
+    if thresholds is None:
+        thresholds = get_triage_thresholds()
     
     # Initialize penalty breakdown
     penalty_breakdown = {
@@ -447,14 +472,12 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     if is_ssd and wear is not None:
         wear_val = safe_int(wear, 0)
         base_score = max(0, 100 - wear_val)
-        thresholds = get_triage_thresholds()
         ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
         if poh > ssd_high_poh_thresh:
-            poh_penalty = min(20, 20 * ((poh - ssd_high_poh_thresh) / (ssd_high_poh_thresh * 2 - ssd_high_poh_thresh)) ** 2)
+            poh_penalty = min(20, 20 * ((poh - ssd_high_poh_thresh) / ssd_high_poh_thresh) ** 2)
             base_score = max(10, base_score - poh_penalty)
             penalty_breakdown["poh_penalty"] = poh_penalty
     else:
-        thresholds = get_triage_thresholds()
         poh_penalty = min(30, max(0, (poh - 20000) / 40000 * 30)) if poh > 20000 else 0
         written_bytes = smart_data.get("data_written_bytes")
         if written_bytes is None:
@@ -511,7 +534,6 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
     if iface == "sas":
         sas_nme = safe_int(smart_data.get("sas_non_medium_errors"), 0)
         if sas_nme > 0:
-            thresholds = get_triage_thresholds()
             nme_advisory_thresh = thresholds.get("sas_nme_advisory_threshold", 1000000)
             nme_penalty_thresh = thresholds.get("sas_nme_penalty_threshold", 100000000)
             if sas_nme >= nme_penalty_thresh:
@@ -552,6 +574,10 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json):
 def validate_device_path(device):
     r"""Validate device path against strict whitelist (lesson #9, #13, #16).
 
+    Accepts both /dev/sda and bare sda names. Delegates common security
+    checks (path traversal, newlines) to disk_utils.validate_device_path,
+    then applies additional device-type restrictions (only sd* and nvme*).
+
     Args:
         device: Device path string (e.g., "/dev/sda", "sda")
 
@@ -561,14 +587,14 @@ def validate_device_path(device):
     if not device or not isinstance(device, str):
         return False
 
-    # Remove /dev/ prefix if present for validation (handle edge cases like multiple slashes)
-    device_name = device.lstrip("/").replace("dev/", "", 1) if device.startswith("/") else device
-
-    # Reject path traversal and newlines
-    if ".." in device_name or "\n" in device_name or "\r" in device_name:
+    # Normalize bare device names to full /dev/ paths for base validation
+    full_path = device if device.startswith("/dev/") else f"/dev/{device}"
+    if not _validate_device_path_base(full_path):
         return False
 
-    # Validate against strict regex patterns (lesson #16: use \Z for strict end anchor)
+    # Extract device name for restrictive pattern matching
+    device_name = device.lstrip("/").replace("dev/", "", 1) if device.startswith("/") else device
+
     # Lesson #91: Use specific patterns matching actual system naming conventions
     sata_pattern = re.compile(r'^sd[a-z]+[0-9]*\Z')
     nvme_pattern = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
@@ -666,7 +692,7 @@ def get_smart_test_status(device, diagnostics=None):
     """
     # Validate device path (lesson #9, #13)
     if not validate_device_path(device):
-        return {"error": "Invalid device path", "status": "failed"}
+        return {"error": "Invalid device path", "status": "failed", "self_test_log_table": None}
 
     # Build device path
     device_path = f"/dev/{device}" if not device.startswith("/dev/") else device
@@ -674,7 +700,7 @@ def get_smart_test_status(device, diagnostics=None):
     # Get smartctl command
     smartctl_cmd = get_command_path("smartctl")
     if not smartctl_cmd:
-        return {"error": "smartctl command not found", "status": "failed"}
+        return {"error": "smartctl command not found", "status": "failed", "self_test_log_table": None}
 
     try:
         # Use -a to get both the real-time self-test status register AND the log table.
@@ -683,7 +709,7 @@ def get_smart_test_status(device, diagnostics=None):
         # the log alone causes false "completed" detection during an active test.
         result = run_command([smartctl_cmd, "-j", "-a", device_path], diagnostics, "smartctl")
         if not result:
-            return {"error": "Failed to read self-test log", "status": "failed"}
+            return {"error": "Failed to read self-test log", "status": "failed", "self_test_log_table": None}
 
         data = json.loads(result)
 
@@ -730,6 +756,7 @@ def get_smart_test_status(device, diagnostics=None):
             return {
                 "status": "in_progress",
                 "percentage": float(completion_pct),
+                "self_test_log_table": None,
                 "latest_result": {
                     "type": "unknown",
                     "status": nvme_current_op.get("status", {}).get("string", ""),
@@ -769,7 +796,6 @@ def get_smart_test_status(device, diagnostics=None):
                 current_poh = None
                 serial = None
                 from disk_ops import _get_cached_drive_payload
-                import time
                 cache_key = (device_path, device_path.replace("/dev/", ""))
                 cached_payload = _get_cached_drive_payload(cache_key)
                 if cached_payload and (time.time() - cached_payload['timestamp']) < DRIVE_DATA_CACHE_TTL:
@@ -797,8 +823,7 @@ def get_smart_test_status(device, diagnostics=None):
                                 from database import get_historical_poh_for_serial
                                 historical_poh = get_historical_poh_for_serial(serial)
                             except Exception as e:
-                                import logging
-                                logging.getLogger(__name__).warning(f"Failed to get historical POH for {serial}: {e}")
+                                logger.warning(f"Failed to get historical POH for {serial}: {e}")
 
                         # Only correct if we have historical evidence that drive was already over 65,535
                         # when we started tracking it (proves this is our system's data)
@@ -879,6 +904,7 @@ def get_smart_test_status(device, diagnostics=None):
                 return {
                     "status": test_status,
                     "percentage": percentage,
+                    "self_test_log_table": None,
                     "latest_result": {
                         "type": test_type,
                         "status": status,
@@ -900,6 +926,7 @@ def get_smart_test_status(device, diagnostics=None):
             return {
                 "status": test_status,
                 "percentage": percentage,
+                "self_test_log_table": None,
                 "latest_result": {
                     "type": "unknown",
                     "status": scsi_ie.get("string", "unknown"),
@@ -909,17 +936,18 @@ def get_smart_test_status(device, diagnostics=None):
                 }
             }
         else:
-            return {"status": "no_tests", "latest_result": None}
+            return {"status": "no_tests", "self_test_log_table": None, "latest_result": None}
     except json.JSONDecodeError:
-        return {"error": "Failed to parse smartctl output", "status": "failed"}
+        return {"error": "Failed to parse smartctl output", "status": "failed", "self_test_log_table": None}
     except (subprocess.TimeoutExpired, OSError, FileNotFoundError) as e:
-        return {"error": f"System error getting test status: {str(e)}", "status": "failed"}
+        return {"error": f"System error getting test status: {str(e)}", "status": "failed", "self_test_log_table": None}
     except Exception as e:
-        return {"error": f"Exception getting test status: {str(e)}", "status": "failed"}
+        return {"error": f"Exception getting test status: {str(e)}", "status": "failed", "self_test_log_table": None}
 
 
-def get_drive_recommendation(interface_type, smart, health_score=None):
-    thresholds = get_triage_thresholds()
+def get_drive_recommendation(interface_type, smart, health_score=None, thresholds=None):
+    if thresholds is None:
+        thresholds = get_triage_thresholds()
     
     iface = str(interface_type or "unknown").lower()
     is_ssd = is_drive_ssd(interface_type, smart)
@@ -1086,8 +1114,9 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
         }
 
     # Calculate health score and recommendation
-    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
-    recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+    thresholds = get_triage_thresholds()
+    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+    recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
     smart_status = smart.get("status", "UNKNOWN")
 
     # Extract critical attributes
@@ -1143,7 +1172,6 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
         block_reason = "smart_status_failed"
 
     # 2. Health score below DESTROY threshold
-    thresholds = get_triage_thresholds()
     destroy_threshold = thresholds.get("health_score_destroy_threshold", 30)
     if block_destroy and health_score <= destroy_threshold:
         block_reason = "health_score_below_destroy_threshold"

@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 import disk_ops
-from disk_ops import get_os_parent_device, get_os_by_path, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock, _auto_enqueue_zero_checks
+from disk_ops import get_os_parent_device, get_os_by_path, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _auto_enqueue_zero_checks
 from common import DRIVE_DATA_CACHE_TTL
 
 
@@ -197,8 +197,7 @@ class TestDiscoveryInterruption:
         import disk_ops
 
         # Set thread-local generation to current value
-        with disk_ops._discovery_interrupt_lock:
-            _discovery_thread_state.generation = disk_ops._discovery_interrupt_generation
+        _discovery_thread_state.generation = disk_ops._discovery_interrupt_generation
 
         # Initially not interrupted
         assert _check_discovery_interrupted() is False
@@ -211,12 +210,11 @@ class TestDiscoveryInterruption:
 
     def test_check_interrupted_thread_safe(self):
         """Test that _check_discovery_interrupted is thread-safe."""
-        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state, _discovery_interrupt_lock
+        from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state
         import disk_ops
         import threading
 
-        with _discovery_interrupt_lock:
-            gen_before_signal = disk_ops._discovery_interrupt_generation
+        gen_before_signal = disk_ops._discovery_interrupt_generation
 
         # Simulate signal handler
         _handle_discovery_signal(None, None)
@@ -667,8 +665,7 @@ class TestExtendedSmartPool:
         """Reset pool state before each test."""
         import disk_ops
         disk_ops.stop_extended_smart_pool(wait=False)
-        with disk_ops._shutdown_lock:
-            disk_ops._shutdown_requested = False
+        disk_ops._shutdown_event.clear()
         with disk_ops._EXTENDED_SMART_LOCK:
             disk_ops._EXTENDED_SMART_PENDING.clear()
 
@@ -716,8 +713,7 @@ class TestExtendedSmartPool:
         """When shutdown is requested, drives are not added to the pending set."""
         import disk_ops
         from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
-        with disk_ops._shutdown_lock:
-            disk_ops._shutdown_requested = True
+        disk_ops._shutdown_event.set()
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
         with patch('disk_ops._get_extended_smart_executor'):
             _submit_drive_for_extended_smart(item, "pass")

@@ -145,6 +145,11 @@ async function renderWizardStep() {
   const nextBtn = document.getElementById("wizardNextBtn");
   const saveBtn = document.getElementById("wizardSaveBtn");
 
+  if (!step1 || !step2 || !prevBtn || !nextBtn || !saveBtn) {
+    console.error("renderWizardStep: required wizard DOM elements not found");
+    return;
+  }
+
   step1.classList.add("hidden");
   step2.classList.add("hidden");
   prevBtn.classList.add("hidden");
@@ -294,7 +299,7 @@ async function renderConfiguration() {
     const nvmeSlots = masterSlotMap
       .filter(entry => entry.slot_type === 'pcie_nvme')
       .map(entry => entry.hardware_identifier)
-      .sort((a, b) => parseInt(a) - parseInt(b));
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
     if (nvmeSlots.length === 0) {
       // Fallback: try to get NVMe drives from unmapped drives API
@@ -344,7 +349,7 @@ async function renderConfiguration() {
     wizardData.name = e.target.value;
   });
   document.getElementById("wizardDisplayOrder").addEventListener("input", (e) => {
-    wizardData.display_order = parseInt(e.target.value) || 0;
+    wizardData.display_order = parseInt(e.target.value, 10) || 0;
   });
   container.querySelectorAll("input[name='controller']").forEach(radio => {
     radio.addEventListener("change", (e) => {
@@ -354,7 +359,7 @@ async function renderConfiguration() {
   });
   document.getElementById("wizardTemplateSelect").addEventListener("change", (e) => {
     wizardData.template_id = e.target.value;
-    renderConfiguration(); // Re-render to show/hide NVMe options
+    renderConfiguration().catch(e => console.error("Failed to re-render configuration:", e));
   });
 
   // Bind refresh button to update drive counts
@@ -622,7 +627,7 @@ function renderSlotAssignment() {
       const nvmeSlots = masterSlotMap
         .filter(e => e.slot_type === 'pcie_nvme')
         .map(e => e.hardware_identifier)
-        .sort((a, b) => parseInt(a) - parseInt(b));
+        .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
       let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
       
@@ -650,14 +655,14 @@ function renderSlotAssignment() {
   // Bind starting slot input for live recalc
   // Use 'change' instead of 'input' to prevent re-rendering while typing multi-digit numbers
   document.getElementById("wizardStartingSlotLive").addEventListener("change", (e) => {
-    wizardData.starting_slot_number = parseInt(e.target.value) || 0;
+    wizardData.starting_slot_number = parseInt(e.target.value, 10) || 0;
     renderSlotAssignment(); // Re-render with new starting slot
   });
 
   // Bind label input events
   container.querySelectorAll('.slot-label-input').forEach(input => {
     input.addEventListener('input', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
       if (slots[slotIndex]) {
         slots[slotIndex].label = e.target.value;
       }
@@ -667,7 +672,7 @@ function renderSlotAssignment() {
   // Bind role select events
   container.querySelectorAll('.slot-role-select').forEach(select => {
     select.addEventListener('change', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
       if (slots[slotIndex]) {
         slots[slotIndex].role = e.target.value;
         slots[slotIndex].locked = e.target.value === 'os';
@@ -679,7 +684,7 @@ function renderSlotAssignment() {
   container.querySelectorAll('.hw-id-input').forEach(input => {
     if (input.tagName === 'INPUT') {
       input.addEventListener('input', (e) => {
-        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
         const interfaceType = e.target.dataset.interface;
         const slotType = e.target.dataset.slotType;
         const value = e.target.value;
@@ -719,7 +724,7 @@ function renderSlotAssignment() {
     } else if (input.tagName === 'SELECT') {
       // For NVMe dropdown, use 'change' event
       input.addEventListener('change', (e) => {
-        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
         const interfaceType = e.target.dataset.interface;
         const value = e.target.value;
 
@@ -776,7 +781,7 @@ async function handleSaveEnclosure() {
     const slotMappings = {};
     
     container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for label input");
         return;
@@ -789,7 +794,7 @@ async function handleSaveEnclosure() {
     });
     
     container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex);
+      const slotIndex = parseInt(select.dataset.slotIndex, 10);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for role select");
         return;
@@ -803,7 +808,7 @@ async function handleSaveEnclosure() {
     
     // Add HW identifiers to slot mappings
     container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
       const interfaceType = input.dataset.interface;
       const slotType = input.dataset.slotType;
       if (isNaN(slotIndex)) {
@@ -878,7 +883,7 @@ async function handleEditEnclosure() {
     const slotMappings = {};
     
     container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for label input");
         return;
@@ -891,7 +896,7 @@ async function handleEditEnclosure() {
     });
     
     container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex);
+      const slotIndex = parseInt(select.dataset.slotIndex, 10);
       if (isNaN(slotIndex)) {
         console.error("Invalid slot index for role select");
         return;
@@ -905,7 +910,7 @@ async function handleEditEnclosure() {
     
     // Add HW identifiers to slot mappings
     container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
       const interfaceType = input.dataset.interface;
       const slotType = input.dataset.slotType;
       if (isNaN(slotIndex)) {
@@ -984,7 +989,12 @@ async function deleteEnclosure(enclosureId) {
     });
 
     if (!response.ok) {
-      const data = await response.json();
+      let data;
+      try {
+        data = await response.json();
+      } catch {
+        throw new Error("Failed to delete enclosure");
+      }
       throw new Error(data.error || "Failed to delete enclosure");
     }
 

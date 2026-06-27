@@ -52,6 +52,11 @@
 - **Reason**: SMART data is not considered sensitive in this environment. It is diagnostic hardware information (model, serial, capacity, attributes, error logs, self-test logs) similar to `smartctl -x` output.
 - **Context**: These endpoints expose drive diagnostic information only, not user data, credentials, or PII. In this environment, operators/technicians may need access to SMART data without requiring full admin privileges. Rate limiting (30 per minute) is in place to prevent abuse. Future Critic Agents should not flag the absence of authentication on SMART data endpoints as a security flaw.
 
+## [2026-06-27] - Exception Details in API Error Responses (str(e))
+- **Deviation**: Exception messages are returned directly to API clients via `jsonify({"error": str(e)})` or `jsonify({"error": f"... {str(e)}"})` throughout `admin_routes.py`, `drive_routes.py`, and `smart_parsing.py` (issues A34, A40, A70).
+- **Reason**: The application is LAN-only with no internet exposure. Operators are also the system administrators. Exposing exception details in API responses significantly eases troubleshooting — operators can see errors directly in the browser without needing to access server logs.
+- **Context**: A fix was implemented that replaced `str(e)` with generic messages ("Internal server error") and relied on server-side `logger.error()` calls for details. The user explicitly reverted this fix because the generic messages made troubleshooting more difficult for a LAN-only tool where the info disclosure risk is negligible. All exception details are also logged server-side. This decision should be revisited if the application is ever exposed to the internet or untrusted networks.
+
 ## [2026-06-25] - Deferred Cache-Invalidation Race in Background SMART Collection
 - **Deviation**: Background extended SMART collection (`_process_single_drive_extended_smart` in `backend/disk_ops.py`) does not use a generation counter to prevent stale writes after cache invalidation.
 - **Reason**: User explicitly deferred this work to a future pass; accepted as a known limitation at this stage.

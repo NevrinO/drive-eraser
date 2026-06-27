@@ -3,12 +3,13 @@
 # filesystem signature detection, crypto probe
 import subprocess
 import hashlib
+import hmac
 import time
 import random
 import logging
 import threading
 
-from disk_utils import resolve_command_path, validate_device_path
+from disk_utils import resolve_command_path, validate_device_path, get_command_path
 from common import get_device_lock, load_policy
 
 # High #12: Global flag for signal interruption
@@ -153,19 +154,6 @@ def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_de
     
     return {"data": None, "error": error_code, "details": last_stderr}
 
-def resolve_verify_command_path(command_name):
-    """
-    Resolve the path to a verification command using the centralized resolver.
-
-    Args:
-        command_name: Base name of the command (e.g., "dd")
-
-    Returns:
-        Resolved command path or None if not found
-    """
-    from disk_utils import get_command_path
-    return get_command_path(command_name)
-
 def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, cancel_event, deadline):
     """
     Run a single-zone dd read that can be killed by cancel_event or deadline.
@@ -306,7 +294,7 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_device_path", "details": "Device path validation failed"}
 
     logger = logging.getLogger("app")
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
@@ -442,7 +430,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
     """
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
@@ -562,7 +550,7 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
     """
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_capture", "details": "dd command not found"}
 
@@ -585,12 +573,11 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
             retries = 3
             retry_delay = 5
 
-        # Get capacity using blockdev
-        blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
-        result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
-        if result.returncode != 0:
-            return {"ok": False, "error": "capture_capacity_check_failed", "details": f"blockdev failed (exit code {result.returncode}): stderr={result.stderr}, stdout={result.stdout}"}
-        capacity = int(result.stdout.strip())
+        # Get capacity using blockdev with retry logic
+        result = _run_blockdev_getsize64(device, retries, retry_delay)
+        if result["error"]:
+            return {"ok": False, "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+        capacity = result["capacity"]
 
         # Always capture first 32MB (holds VBR/partition table)
         offsets = [0]
@@ -680,9 +667,10 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     """
     if not validate_device_path(device):
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {}}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_comparison", "details": {}}
+    logger = logging.getLogger("app")
 
     # Issue 14: Load policy for retry configuration with hardcoded fallback
     try:
@@ -690,29 +678,28 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
         retries = policy.get("blockdev_post_wipe_retries", 3)
         retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
     except Exception:
-        logger = logging.getLogger("app")
         logger.warning("Failed to load policy, using default retry values")
         retries = 3
         retry_delay = 5
 
-    # Get capacity for end-of-drive calculations with retry logic
-    result = _run_blockdev_getsize64(device, retries, retry_delay)
-    if result["error"]:
-        return {"ok": False, "status": "verification_error", "error": result["error"], "details": f"blockdev failed: {result['details']}"}
-    capacity = result["capacity"]
-
-    before_details = before_state.get("details", {})
-    offsets = before_details.get("offsets", [])
-    before_hashes = before_details.get("hashes", [])
-
-    if len(offsets) == 0:
-        return {"ok": False, "status": "verification_error", "error": "before_state_invalid", "details": {"reason": "no_offsets_captured"}}
-    if len(offsets) != len(before_hashes):
-        return {"ok": False, "status": "verification_error", "error": "before_state_invalid", "details": {"offsets_count": len(offsets), "hashes_count": len(before_hashes)}}
-
-    # High #13: Acquire device lock for all read operations (consistent with other verification functions)
+    # High #13: Acquire device lock for all read operations (consistent with verify_sampled_zero_check)
     device_lock = get_device_lock(device)
     with device_lock:
+        # Get capacity for end-of-drive calculations with retry logic
+        result = _run_blockdev_getsize64(device, retries, retry_delay)
+        if result["error"]:
+            return {"ok": False, "status": "verification_error", "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+        capacity = result["capacity"]
+
+        before_details = before_state.get("details", {})
+        offsets = before_details.get("offsets", [])
+        before_hashes = before_details.get("hashes", [])
+
+        if len(offsets) == 0:
+            return {"ok": False, "status": "verification_error", "error": "before_state_invalid", "details": {"reason": "no_offsets_captured"}}
+        if len(offsets) != len(before_hashes):
+            return {"ok": False, "status": "verification_error", "error": "before_state_invalid", "details": {"offsets_count": len(offsets), "hashes_count": len(before_hashes)}}
+
         after_hashes = []
         total_verified_bytes = 0
         any_changed = False
@@ -738,7 +725,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             after_hash = hashlib.sha256(data).hexdigest()
             after_hashes.append(after_hash)
 
-            if after_hash == before_hashes[idx]:
+            if hmac.compare_digest(after_hash, before_hashes[idx]):
                 unchanged_indices.append(idx)
             else:
                 any_changed = True
@@ -838,7 +825,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
         all_before_same = len(set(before_hashes)) == 1
         all_after_same = len(set(after_hashes)) == 1
 
-        if all_before_same and all_after_same and before_hashes[0] == after_hashes[0]:
+        if all_before_same and all_after_same and hmac.compare_digest(before_hashes[0], after_hashes[0]):
             # All hashes identical - check actual byte values to distinguish zeros from other patterns.
             try:
                 first_offset = offsets[0]

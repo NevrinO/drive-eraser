@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import base64
 import hashlib
+import hmac
 import sqlite3
 import urllib.request
 import re
@@ -31,7 +32,7 @@ from device_discovery import (
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
-from disk_ops import invalidate_drive_cache, stop_extended_smart_pool
+from disk_ops import invalidate_drive_cache, stop_extended_smart_pool, get_os_by_path
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
@@ -73,7 +74,7 @@ _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 
 # Size limits for DoS prevention (Rule #5)
-MAX_ENCODSURES = 100
+MAX_ENCLOSURES = 100
 MAX_SLOTS_PER_ENCLOSURE = 1000
 MAX_TEMPLATES = 50
 
@@ -150,7 +151,7 @@ def require_admin_auth(f):
         lan_passphrase = policy.get("lan_passphrase", "eraser123")
         session_token = request.cookies.get("admin_session")
         
-        if not session_token or session_token != calculate_session_token(lan_passphrase):
+        if not session_token or not hmac.compare_digest(session_token, calculate_session_token(lan_passphrase)):
             return jsonify({"error": "Authentication required"}), 401
         
         return f(*args, **kwargs)
@@ -673,7 +674,7 @@ def manage_logo():
                 return jsonify({"error": f"Invalid image file: {str(e)}"}), 400
                 
         except Exception as e:
-            logger.error(f"Logo upload failed: {str(e)}")
+            logger.error(f"Logo upload failed: {e}")
             return jsonify({"error": str(e)}), 500
     
     elif request.method == "DELETE":
@@ -1115,8 +1116,8 @@ def manage_enclosures():
                     return jsonify({"error": f"Enclosure ID already exists: {payload['id']}"}), 400
                 
                 # Enforce size limit for DoS prevention (Rule #5)
-                if len(enclosures) >= MAX_ENCODSURES:
-                    return jsonify({"error": f"Maximum number of enclosures ({MAX_ENCODSURES}) reached"}), 400
+                if len(enclosures) >= MAX_ENCLOSURES:
+                    return jsonify({"error": f"Maximum number of enclosures ({MAX_ENCLOSURES}) reached"}), 400
                 
                 # Build enclosure object
                 enclosure = {
@@ -2426,15 +2427,10 @@ def run_smart_test_endpoint(device):
         # Check if device is the OS drive
         os_dev_node = None
         try:
-            # Check common OS device paths
-            for os_path in ["/dev/sda", "/dev/nvme0n1"]:
-                if os.path.exists(os_path):
-                    try:
-                        if os.path.realpath(device_path) == os.path.realpath(os_path):
-                            logger.warning(f"SMART test rejected for {device}: device is OS drive")
-                            return jsonify({"error": "Cannot run SMART test on OS drive"}), 403
-                    except Exception:
-                        pass
+            os_dev, _ = get_os_by_path()
+            if os_dev and os.path.realpath(device_path) == os.path.realpath(os_dev):
+                logger.warning(f"SMART test rejected for {device}: device is OS drive")
+                return jsonify({"error": "Cannot run SMART test on OS drive"}), 403
         except Exception as e:
             logger.warning(f"Failed to check OS drive status for {device}: {e}")
         

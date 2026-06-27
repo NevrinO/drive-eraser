@@ -213,13 +213,8 @@ def get_controller_for_device(device_path: str, controllers: Optional[List[Dict]
         
     device_name = os.path.basename(device_path)
     
-    # Determine sysfs path based on device type
-    if device_name.startswith('nvme'):
-        # NVMe devices: /sys/class/block/nvme0n1 -> /sys/devices/pci0000:00/...
-        sys_path = f"/sys/class/block/{device_name}"
-    else:
-        # SATA/SAS/SCSI devices: /sys/class/block/sda -> /sys/devices/pci0000:00/...
-        sys_path = f"/sys/class/block/{device_name}"
+    # sysfs path is the same for all device types (NVMe, SATA, SAS, SCSI)
+    sys_path = f"/sys/class/block/{device_name}"
     
     if not os.path.exists(sys_path):
         return None

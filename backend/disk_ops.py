@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as
 
 from common import get_config_dir, load_policy, DRIVE_DATA_CACHE_TTL
 from disk_utils import resolve_bay_device, check_write_tolerance, read_marker_status
-from smart_parsing import get_smart_data, get_smart_identity, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd
+from smart_parsing import get_smart_data, get_smart_identity, detect_interface_type, calculate_drive_health_score, get_drive_recommendation, is_drive_ssd, get_triage_thresholds
 from disk_capabilities import detect_drive_capabilities
 from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map, resolve_multipath_parent
 from database import record_intake_snapshot
@@ -89,7 +89,8 @@ def _auto_enqueue_zero_checks(results):
         return
     try:
         policy = load_policy(get_config_dir())
-    except Exception:
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to load policy for zero-check enqueue: {e}")
         return
     if not policy.get("prewipe_zero_detection_enabled", True):
         return
@@ -153,31 +154,30 @@ def get_background_smart_max_workers():
 # the cross-operation reset race (Lesson #101). Each discovery captures the
 # generation in a thread-local and compares it to detect signals since then.
 _discovery_interrupt_generation = 0
-_discovery_interrupt_lock = threading.Lock()
 _discovery_thread_state = threading.local()
 
 # Phase 1: Persistent background extended SMART collection worker pool
 _EXTENDED_SMART_EXECUTOR = None
 _EXTENDED_SMART_LOCK = threading.Lock()
 _EXTENDED_SMART_PENDING = set()
-_shutdown_requested = False
-_shutdown_lock = threading.Lock()
+_shutdown_event = threading.Event()
 
 def _handle_discovery_signal(signum, frame):
-    """Signal handler for SIGTERM/SIGINT during discovery operations."""
-    global _discovery_interrupt_generation, _shutdown_requested
-    with _discovery_interrupt_lock:
-        _discovery_interrupt_generation += 1
-    with _shutdown_lock:
-        _shutdown_requested = True
+    """Signal handler for SIGTERM/SIGINT during discovery operations.
+
+    Uses lock-free atomic increment (safe under CPython GIL) to avoid
+    deadlock if signal arrives while _check_discovery_interrupted() is reading.
+    """
+    global _discovery_interrupt_generation
+    _discovery_interrupt_generation += 1
+    _shutdown_event.set()
 
 def _check_discovery_interrupted():
     """Check if discovery was interrupted by signal since this thread's operation started."""
     gen = getattr(_discovery_thread_state, 'generation', None)
     if gen is None:
         return False
-    with _discovery_interrupt_lock:
-        return _discovery_interrupt_generation != gen
+    return _discovery_interrupt_generation != gen
 
 def invalidate_drive_cache(device=None):
     """Invalidate cached per-device drive data and pending background SMART tasks.
@@ -329,8 +329,9 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         penalty_breakdown = None
         recommendation = {"status": "UNKNOWN", "comment": "SMART data collection in progress"}
     else:
-        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
-        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+        thresholds = get_triage_thresholds()
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
 
     drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
 
@@ -652,17 +653,15 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                 logging.getLogger(__name__).warning(f"Drive data collection timed out for {item[3]}")
                 _apply_collection_failure(item[0], item[3], "collection_timeout")
     finally:
-        executor.shutdown(wait=False)
+        executor.shutdown(wait=False, cancel_futures=True)
 
 def _get_extended_smart_executor():
     """Lazy-initialize the persistent background extended SMART thread pool."""
     global _EXTENDED_SMART_EXECUTOR
-    with _shutdown_lock:
-        shutdown_requested = _shutdown_requested
     with _EXTENDED_SMART_LOCK:
         if _EXTENDED_SMART_EXECUTOR is not None:
             return _EXTENDED_SMART_EXECUTOR
-        if shutdown_requested:
+        if _shutdown_event.is_set():
             return None
         workers = get_background_smart_max_workers()
         _EXTENDED_SMART_EXECUTOR = ThreadPoolExecutor(
@@ -691,10 +690,9 @@ def _process_single_drive_extended_smart(item, passphrase):
     logger = logging.getLogger(__name__)
     try:
         # Check if shutdown was requested
-        with _shutdown_lock:
-            if _shutdown_requested:
-                logger.info(f"Skipping extended SMART for {dev_node}, shutdown requested")
-                return
+        if _shutdown_event.is_set():
+            logger.info(f"Skipping extended SMART for {dev_node}, shutdown requested")
+            return
 
         # Avoid redundant work if another task already cached this drive
         cached = _get_cached_drive_payload(cache_key)
@@ -719,8 +717,9 @@ def _process_single_drive_extended_smart(item, passphrase):
             marker_status["is_pristine"] = is_pristine
             marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
 
-        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"))
-        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score)
+        thresholds = get_triage_thresholds()
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+        recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
         drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
 
         # Record intake snapshot now that we have full data
@@ -775,9 +774,8 @@ def _process_single_drive_extended_smart(item, passphrase):
 def _submit_drive_for_extended_smart(item, passphrase):
     """Submit a drive for background extended SMART collection if not already pending."""
     cache_key = item[0]
-    with _shutdown_lock:
-        if _shutdown_requested:
-            return
+    if _shutdown_event.is_set():
+        return
     with _EXTENDED_SMART_LOCK:
         if cache_key in _EXTENDED_SMART_PENDING:
             return
@@ -796,8 +794,7 @@ def _submit_drive_for_extended_smart(item, passphrase):
 def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None, skip_auto_enqueue=False):
     # Medium #34: Capture current generation in thread-local so we can detect
     # signals received during this discovery without clearing signals for other operations.
-    with _discovery_interrupt_lock:
-        _discovery_thread_state.generation = _discovery_interrupt_generation
+    _discovery_thread_state.generation = _discovery_interrupt_generation
 
     # Medium #35: Discovery operations are read-only (no device writes/modifications).
     # Device-level locking is intentionally skipped to avoid blocking verification operations.
@@ -811,7 +808,7 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
 
     # Medium #34: Check for interruption after loading bay map
     if _check_discovery_interrupted():
-        return {"error": "Discovery interrupted by signal"}
+        return []
 
     # Detect if using new enclosure-based schema or legacy by-path schema
     is_enclosure_schema = isinstance(bay_map_doc, dict) and "enclosures" in bay_map_doc
@@ -841,8 +838,8 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
     results, passphrase = [], None
     try:
         passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to load policy for wipe passphrase, marker HMAC verification disabled: {e}")
 
     os_dev_node, os_by_path = _get_os_by_path_cached()
 
@@ -857,7 +854,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
     for enclosure in enclosure_list:
         # Medium #34: Check for interruption in each enclosure iteration
         if _check_discovery_interrupted():
-            return {"error": "Discovery interrupted by signal"}
+            return []
 
         enclosure_id = enclosure.get("id")
         enclosure_name = enclosure.get("name")
@@ -869,7 +866,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
         for slot_num, slot_config in slots.items():
             # Medium #34: Check for interruption in each slot iteration
             if _check_discovery_interrupted():
-                return {"error": "Discovery interrupted by signal"}
+                return []
 
             physical_slot = slot_config.get("physical_slot_number", int(slot_num))
             physical_position = slot_config.get("physical_position")
@@ -965,7 +962,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
     if pending:
         # Medium #34: Check for interruption before launching expensive collection
         if _check_discovery_interrupted():
-            return {"error": "Discovery interrupted by signal"}
+            return []
         # Phase 1: Use identity-only SMART collection for fast initial discovery
         try:
             _collect_pending_parallel(pending, passphrase, use_identity_only=True)
@@ -1015,8 +1012,10 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
             if os.path.islink(full_path): path_to_dev[entry] = os.path.realpath(full_path)
 
     results, passphrase = [], None
-    try: passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
-    except Exception: pass
+    try:
+        passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to load policy for wipe passphrase, marker HMAC verification disabled: {e}")
 
     os_dev_node, os_by_path = _get_os_by_path_cached()
 
@@ -1027,7 +1026,7 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
     for bay_id, config in bay_map.items():
         # Medium #34: Check for interruption in each bay iteration
         if _check_discovery_interrupted():
-            return {"error": "Discovery interrupted by signal"}
+            return []
         target_path = config.get('by_path')
         target_path_nvme = config.get('by_path_nvme')
 
@@ -1118,7 +1117,7 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
     if pending:
         # Medium #34: Check for interruption before launching expensive collection
         if _check_discovery_interrupted():
-            return {"error": "Discovery interrupted by signal"}
+            return []
         # Phase 1: Use identity-only SMART collection for fast initial discovery
         try:
             _collect_pending_parallel(pending, passphrase, use_identity_only=True)
