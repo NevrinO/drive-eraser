@@ -33,8 +33,6 @@
   --color-warning-dark: #78350f;
   --color-warning-light: #fcd34d;
   --color-warning-border: #92400e;
-  --z-below: -1;
-  --z-base: 0;
   --z-dropdown: 100;
   --z-footer: 200;
   --z-overlay: 500;
@@ -624,10 +622,15 @@ input:focus, select:focus {
   color: var(--color-white);
 }
 
-@keyframes pulse-danger-btn {
-  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.5); }
-  70% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+.btn--warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.btn--warning:hover:not(:disabled) {
+  background: var(--color-warning);
+  color: var(--color-black);
 }
 
 @keyframes pulse-green-btn {
@@ -702,7 +705,7 @@ input:focus, select:focus {
 .status-badge--failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
 .status-badge--running { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
 .status-badge--queued { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-text-muted); }
-.status-badge--ready { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
+.status-badge--ready { background: rgba(6, 182, 212, 0.15); color: var(--color-teal); border: 1px solid var(--color-teal); }
 .status-badge--view-only { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
 .status-badge--warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
 .status-badge--empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
@@ -807,7 +810,7 @@ input:focus, select:focus {
   inset: 0;
   background: rgba(2, 6, 23, 0.85);
   backdrop-filter: blur(4px);
-  z-index: 100;
+  z-index: var(--z-overlay);
 }
 
 .modal-dialog {
@@ -1018,7 +1021,13 @@ input:focus, select:focus {
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
-/* Use .status-badge--* modifiers for colors instead of .status-chip.status-* */
+/* Status chip color variants — used by smartDeepDive.js and modals.js */
+.status-chip.status-complete { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid var(--color-success); }
+.status-chip.status-failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
+.status-chip.status-ready { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
+.status-chip.status-view-only { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
+.status-chip.status-empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+.status-chip.status-warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
 
 /* --- LOGGING, DIAGNOSTICS & GATEWAY ADMIN EXTENSIONS --- */
 
@@ -1034,12 +1043,6 @@ input:focus, select:focus {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);
   padding: 16px;
-}
-
-.grid-span-2-rows {
-  grid-row: span 2;
-  display: flex;
-  flex-direction: column;
 }
 
 .card-title {
@@ -1383,28 +1386,6 @@ input:focus, select:focus {
   display: none !important;
 }
 
-.hidden--slide-down {
-  transform: translateY(120px);
-  opacity: 0;
-}
-
-.overflow-y-auto {
-  overflow-y: auto;
-}
-
-/* Border & Background Utilities */
-.border-default {
-  border: 1px solid var(--color-border);
-}
-
-.bg-surface-1 {
-  background: var(--color-surface-1);
-}
-
-.rounded-md {
-  border-radius: var(--radius-md);
-}
-
 /* Spacing Utilities */
 .mb-0 {
   margin-bottom: 0;
@@ -1426,6 +1407,10 @@ input:focus, select:focus {
   margin-top: 12px;
 }
 
+.mt-4 {
+  margin-top: 16px;
+}
+
 /* Layout Utilities */
 .w-full {
   width: 100%;
@@ -1443,6 +1428,10 @@ input:focus, select:focus {
 
 .gap-2 {
   gap: 8px;
+}
+
+.gap-3 {
+  gap: 16px;
 }
 
 /* Semantic Component Classes */
@@ -1616,8 +1605,7 @@ input:focus, select:focus {
 @media (prefers-reduced-motion: reduce) {
   .batch-action-footer,
   .btn,
-  .hidden--slide-down,
-  .progress-bar,
+  .progress-bar-fill,
   .modal-backdrop,
   .modal-dialog,
   .auth-overlay {

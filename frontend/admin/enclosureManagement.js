@@ -4,8 +4,6 @@
 let adminEnclosures = {};
 let availableTemplates = [];
 let masterSlotMap = [];
-let cachedUnmappedDrives = null;
-let cachedUnmappedDrivesTime = 0;
 
 // Load all enclosures from backend
 async function loadEnclosures() {

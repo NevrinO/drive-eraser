@@ -13,68 +13,114 @@ from pathlib import Path
 
 
 # ── Pattern detection rules ──────────────────────────────────────────────
-# Each rule: (pattern_id, display_name, fix_shape, list of keyword regexes)
-# Keywords are matched (case-insensitive) against issue + suggestion text.
+# Each rule: (pattern_id, display_name, fix_shape, keyword_regexes, exclude_regexes)
+# Keywords are matched (case-insensitive) against issue + suggestion + title text.
+# Exclude regexes prevent false positives — if any exclude matches, the rule is skipped.
+# Rules are ordered by specificity: most specific patterns first, generic ones last.
+# The first matching rule (that doesn't hit an exclude) wins.
 PATTERN_RULES = [
-    ("toctou", "TOCTOU: os.path.exists() pre-checks",
-     "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
-     [r"os\.path\.exists", r"TOCTOU", r"time-of-check"]),
+    # ── Highly specific patterns (check first to prevent false groupings) ──
+    ("signal_flag_reset", "Signal flags never reset after handler",
+     "Reset interruption flags at start of each operation, or use threading.Event",
+     [r"flag.*never reset", r"never reset.*signal", r"_interrupted.*never", r"_shutdown_requested.*never",
+      r"permanently disables", r"flag is never reset"],
+     []),
 
-    ("info_disclosure", "Information disclosure: str(e) in API responses",
-     "Replace str(e) in jsonify error responses with generic messages; log details server-side",
-     [r"str\(e\)", r"information disclosure", r"error messages returned to clients"]),
+    ("cache_failure_state", "Cache failure state cached (None/empty cached for full TTL)",
+     "Move cache update inside success path only; never cache failure states",
+     [r"caches failure", r"caches.*empty", r"caches.*None", r"cache.*failure state",
+      r"cache.*None.*failure", r"cache.*empty.*failure"],
+     []),
 
-    ("dead_code", "Dead code: unused functions/classes/CSS",
-     "Remove dead code or wire it into a caller if the feature was intended",
-     [r"dead code", r"zero callers", r"never called", r"zero usage", r"dead css"]),
-
-    ("dry_violation", "DRY: duplicated logic across functions/files",
-     "Extract shared helper function and update all call sites to use it",
-     [r"duplicat", r"DRY", r"same logic", r"nearly identical"]),
-
-    ("concurrency_lock", "Concurrency: missing/improper locks",
-     "Add locks around shared mutable state or restructure lock scope",
-     [r"missing lock", r"without lock", r"lock scope", r"non-reentrant", r"deadlock", r"thread.safe"]),
-
-    ("memory_leak", "Unbounded dict/list growth (memory leak)",
-     "Use WeakValueDictionary or add cleanup on release",
-     [r"unbounded", r"memory leak", r"grows indefinitely", r"never removed"]),
-
-    ("import_hygiene", "Import hygiene: lazy/redundant imports",
-     "Move imports to module level, remove duplicates",
-     [r"lazy import", r"redundant import", r"import hygiene", r"__import__"]),
-
-    ("error_swallowing", "Error swallowing: bare except / silent failures",
-     "Add logging to except blocks, catch specific exceptions",
-     [r"swallow", r"except.*pass", r"silent", r"no logging"]),
-
-    ("resource_leak", "Resource leaks in error paths",
-     "Use context managers or close resources in except/finally blocks",
-     [r"resource leak", r"file handle", r"fd leak", r"temp director", r"not closed"]),
-
-    ("perf_caching", "Performance: repeated disk I/O without caching",
-     "Add TTL cache or file-mtime-based cache",
-     [r"every.*request", r"every.*call", r"no caching", r"re-read", r"disk i/o"]),
-
-    ("input_validation", "Input validation gaps",
-     "Validate input types, formats, and enforce size limits",
-     [r"input validation", r"not validated", r"no.*validation", r"size limit"]),
-
-    ("css_broken", "CSS: broken/missing class definitions",
-     "Add missing CSS rules or update JS to use correct class names",
-     [r"undefined.*css", r"missing.*css", r"css.*not.*defined", r"broken.*css"]),
-
-    ("file_org", "File organization: domain mixing / god modules",
-     "Extract domains into separate route files; do shared-utils extraction first",
-     [r"god module", r"domain mixing", r"file organization", r"should move", r"split"]),
+    ("inconsistent_return", "Inconsistent return types across code paths",
+     "Return consistent types (e.g., always list) or raise custom exception",
+     [r"inconsistent type", r"returns.*dict.*list", r"return.*\{\"error.*\}.*instead",
+      r"returns.*\[\].*dict", r"inconsistent return"],
+     []),
 
     ("atomic_write", "Non-atomic file writes",
      "Use tempfile + flush + fsync + os.replace() pattern",
-     [r"non-atomic", r"atomic write", r"tempfile.*rename"]),
+     [r"non-atomic", r"atomic write", r"tempfile.*rename"],
+     []),
+
+    ("toctou", "TOCTOU: os.path.exists() pre-checks",
+     "Replace os.path.exists() + open/listdir with direct try/except (OSError, FileNotFoundError)",
+     [r"os\.path\.exists", r"TOCTOU", r"time-of-check"],
+     []),
 
     ("timing_attack", "Timing attack: == instead of hmac.compare_digest",
      "Replace == with hmac.compare_digest for hash/token comparisons",
-     [r"timing attack", r"hmac\.compare_digest", r"string comparison vulnerable"]),
+     [r"timing attack", r"hmac\.compare_digest", r"string comparison vulnerable"],
+     []),
+
+    ("resource_leak", "Resource leaks in error paths",
+     "Use context managers or close resources in except/finally blocks",
+     [r"resource leak", r"file handle", r"fd leak", r"temp director", r"not closed"],
+     []),
+
+    ("css_broken", "CSS: broken/missing class definitions",
+     "Add missing CSS rules or update JS to use correct class names",
+     [r"undefined.*css", r"missing.*css", r"css.*not.*defined", r"broken.*css",
+      r"class.*not.*defined", r"no css rules exist", r"css.*not.*exist",
+      r"missing.*\.btn--", r"missing.*\.gap-", r"missing.*\.mt-", r"z-index.*below"],
+     []),
+
+    ("info_disclosure", "Information disclosure: str(e) in API responses",
+     "Replace str(e) in jsonify error responses with generic messages; log details server-side",
+     [r"str\(e\)", r"information disclosure", r"error messages returned to clients"],
+     []),
+
+    ("concurrency_lock", "Concurrency: missing/improper locks",
+     "Add locks around shared mutable state or restructure lock scope",
+     [r"missing lock", r"without lock", r"lock scope", r"non-reentrant", r"deadlock", r"thread.safe"],
+     [r"flag.*never reset", r"permanently disables"]),
+
+    ("memory_leak", "Unbounded dict/list growth (memory leak)",
+     "Use WeakValueDictionary or add cleanup on release",
+     [r"unbounded", r"memory leak", r"grows indefinitely", r"never removed"],
+     []),
+
+    # ── Moderate specificity ──
+    ("import_hygiene", "Import hygiene: lazy/redundant imports",
+     "Move imports to module level, remove duplicates",
+     [r"lazy import", r"redundant import", r"import hygiene", r"__import__"],
+     []),
+
+    ("error_swallowing", "Error swallowing: bare except / silent failures",
+     "Add logging to except blocks, catch specific exceptions",
+     [r"swallow", r"except.*pass", r"silent", r"no logging"],
+     [r"schema", r"additionalProperties"]),
+
+    ("input_validation", "Input validation gaps",
+     "Validate input types, formats, and enforce size limits",
+     [r"input validation", r"not validated", r"no.*validation", r"size limit"],
+     [r"stray line", r"EOF marker"]),
+
+    # ── Generic patterns (check last — prone to false positives) ──
+    ("perf_caching", "Performance: repeated disk I/O without caching",
+     "Add TTL cache or file-mtime-based cache",
+     [r"every.*request", r"every.*call", r"no caching", r"re-read", r"disk i/o",
+      r"loaded on every", r"reloaded on every"],
+     [r"flag.*never reset", r"permanently disables", r"interrupted.*flag",
+      r"_job_interrupted", r"_discovery_interrupted"]),
+
+    ("dead_code", "Dead code: unused functions/classes/CSS",
+     "Remove dead code or wire it into a caller if the feature was intended",
+     [r"dead code", r"zero callers", r"never called", r"zero usage", r"dead css",
+      r"dead variable", r"dead branch", r"dead selector", r"never referenced"],
+     [r"handler.*inconsistency", r"wrong handler", r"save button handler",
+      r"never reset", r"flag.*never"]),
+
+    ("dry_violation", "DRY: duplicated logic across functions/files",
+     "Extract shared helper function and update all call sites to use it",
+     [r"duplicat", r"DRY", r"same logic", r"nearly identical"],
+     []),
+
+    ("file_org", "File organization: domain mixing / god modules",
+     "Extract domains into separate route files; do shared-utils extraction first",
+     [r"god module", r"domain mixing", r"file organization", r"should move", r"split",
+      r"exceeds.*800.*line", r"file size.*exceeds"],
+     []),
 ]
 
 # Difficulty weights
@@ -193,10 +239,20 @@ def parse_concerns(filepath: str) -> list[dict]:
 
 
 def detect_patterns(issue: dict) -> list[str]:
-    """Return list of matching pattern IDs for an issue."""
+    """Return list of matching pattern IDs for an issue.
+
+    Checks exclude regexes first — if any exclude matches, the pattern is skipped.
+    Rules are evaluated in priority order (most specific first).
+    """
     combined = (issue.get("issue_text", "") + " " + issue.get("suggestion_text", "") + " " + issue.get("title", "")).lower()
     matched = []
-    for pattern_id, _name, _shape, keywords in PATTERN_RULES:
+    for rule in PATTERN_RULES:
+        pattern_id, _name, _shape, keywords, excludes = rule
+
+        # Check excludes first — if any exclude matches, skip this pattern
+        if any(re.search(excl, combined, re.IGNORECASE) for excl in excludes):
+            continue
+
         for kw in keywords:
             if re.search(kw, combined, re.IGNORECASE):
                 matched.append(pattern_id)
@@ -242,7 +298,13 @@ def detect_dependencies(issues: list[dict]) -> list[dict]:
 
 
 def group_issues(issues: list[dict]) -> list[dict]:
-    """Group issues by detected pattern, split by weight cap."""
+    """Group issues by detected pattern, split by weight cap.
+
+    Improvements over naive grouping:
+    - Same-pattern groups split by weight cap get related_groups field linking them
+    - Ungrouped issues try category-based grouping before falling back to file
+    - pattern_id is included in output for cross-referencing
+    """
     pending = [i for i in issues if not i["completed"]]
 
     # Assign patterns
@@ -252,7 +314,7 @@ def group_issues(issues: list[dict]) -> list[dict]:
     for issue in pending:
         patterns = detect_patterns(issue)
         if patterns:
-            # Assign to first matching pattern (priority order)
+            # Assign to first matching pattern (priority order — most specific first)
             pattern_buckets[patterns[0]].append(issue)
         else:
             ungrouped.append(issue)
@@ -260,10 +322,12 @@ def group_issues(issues: list[dict]) -> list[dict]:
     # Build group objects, splitting by weight
     groups = []
     group_counter = 0
+    # Track which groups share a pattern_id for related_groups linking
+    pattern_group_map: dict[str, list[str]] = defaultdict(list)
 
     for pattern_id, pattern_issues in pattern_buckets.items():
         pattern_info = next(r for r in PATTERN_RULES if r[0] == pattern_id)
-        _, display_name, fix_shape, _ = pattern_info
+        _, display_name, fix_shape, _, _ = pattern_info
 
         # Sort by difficulty (easiest first)
         pattern_issues.sort(key=lambda i: WEIGHTS.get(i["difficulty"], 999))
@@ -271,12 +335,17 @@ def group_issues(issues: list[dict]) -> list[dict]:
         # Split into sub-batches if weight exceeds cap
         current_batch = []
         current_weight = 0
+        batch_num = 0
 
         for issue in pattern_issues:
             w = WEIGHTS.get(issue["difficulty"], 999)
             if current_weight + w > MAX_WEIGHT and current_batch:
                 group_counter += 1
-                groups.append(_make_group(f"G{group_counter}", display_name, fix_shape, current_batch))
+                batch_num += 1
+                gid = f"G{group_counter}"
+                suffix = f" (batch {batch_num})" if batch_num > 1 else ""
+                groups.append(_make_group(gid, display_name + suffix, fix_shape, current_batch, pattern_id=pattern_id))
+                pattern_group_map[pattern_id].append(gid)
                 current_batch = []
                 current_weight = 0
             current_batch.append(issue)
@@ -284,38 +353,80 @@ def group_issues(issues: list[dict]) -> list[dict]:
 
         if current_batch:
             group_counter += 1
-            groups.append(_make_group(f"G{group_counter}", display_name, fix_shape, current_batch))
+            batch_num += 1
+            gid = f"G{group_counter}"
+            suffix = f" (batch {batch_num})" if batch_num > 1 else ""
+            groups.append(_make_group(gid, display_name + suffix, fix_shape, current_batch, pattern_id=pattern_id))
+            pattern_group_map[pattern_id].append(gid)
 
-    # Ungrouped issues get individual groups or small ad-hoc groups by file
+    # Add related_groups field to groups that share a pattern_id
+    for group in groups:
+        pid = group.get("pattern_id", "")
+        if pid and len(pattern_group_map[pid]) > 1:
+            group["related_groups"] = [g for g in pattern_group_map[pid] if g != group["id"]]
+
+    # Ungrouped issues: try category-based grouping first, then file as fallback
     if ungrouped:
-        # Group by file as fallback
-        file_buckets: dict[str, list[dict]] = defaultdict(list)
+        # Try grouping by category
+        category_buckets: dict[str, list[dict]] = defaultdict(list)
         for issue in ungrouped:
-            file_buckets[issue["file"]].append(issue)
+            cat = issue.get("category", "Unknown")
+            category_buckets[cat].append(issue)
 
-        for file_name, file_issues in file_buckets.items():
-            file_issues.sort(key=lambda i: WEIGHTS.get(i["difficulty"], 999))
-            current_batch = []
-            current_weight = 0
+        # Only use category grouping if it produces groups of 2+;
+        # single-issue categories fall through to file grouping
+        category_grouped = set()
+        for cat, cat_issues in category_buckets.items():
+            if len(cat_issues) >= 2:
+                cat_issues.sort(key=lambda i: WEIGHTS.get(i["difficulty"], 999))
+                current_batch = []
+                current_weight = 0
 
-            for issue in file_issues:
-                w = WEIGHTS.get(issue["difficulty"], 999)
-                if current_weight + w > MAX_WEIGHT and current_batch:
+                for issue in cat_issues:
+                    w = WEIGHTS.get(issue["difficulty"], 999)
+                    if current_weight + w > MAX_WEIGHT and current_batch:
+                        group_counter += 1
+                        groups.append(_make_group(f"G{group_counter}", f"Misc: {cat}", "No common pattern detected — review individually", current_batch))
+                        current_batch = []
+                        current_weight = 0
+                    current_batch.append(issue)
+                    current_weight += w
+                    category_grouped.add(issue["id"])
+
+                if current_batch:
+                    group_counter += 1
+                    groups.append(_make_group(f"G{group_counter}", f"Misc: {cat}", "No common pattern detected — review individually", current_batch))
+
+        # Remaining ungrouped: fall back to file grouping
+        remaining = [i for i in ungrouped if i["id"] not in category_grouped]
+        if remaining:
+            file_buckets: dict[str, list[dict]] = defaultdict(list)
+            for issue in remaining:
+                file_buckets[issue["file"]].append(issue)
+
+            for file_name, file_issues in file_buckets.items():
+                file_issues.sort(key=lambda i: WEIGHTS.get(i["difficulty"], 999))
+                current_batch = []
+                current_weight = 0
+
+                for issue in file_issues:
+                    w = WEIGHTS.get(issue["difficulty"], 999)
+                    if current_weight + w > MAX_WEIGHT and current_batch:
+                        group_counter += 1
+                        groups.append(_make_group(f"G{group_counter}", f"Ungrouped: {file_name}", "No common pattern detected — review individually", current_batch))
+                        current_batch = []
+                        current_weight = 0
+                    current_batch.append(issue)
+                    current_weight += w
+
+                if current_batch:
                     group_counter += 1
                     groups.append(_make_group(f"G{group_counter}", f"Ungrouped: {file_name}", "No common pattern detected — review individually", current_batch))
-                    current_batch = []
-                    current_weight = 0
-                current_batch.append(issue)
-                current_weight += w
-
-            if current_batch:
-                group_counter += 1
-                groups.append(_make_group(f"G{group_counter}", f"Ungrouped: {file_name}", "No common pattern detected — review individually", current_batch))
 
     return groups
 
 
-def _make_group(gid: str, name: str, fix_shape: str, issues: list[dict]) -> dict:
+def _make_group(gid: str, name: str, fix_shape: str, issues: list[dict], pattern_id: str = "") -> dict:
     """Build a group dict from a list of issues."""
     weight = sum(WEIGHTS.get(i["difficulty"], 999) for i in issues)
     files = sorted(set(i["file"] for i in issues))
@@ -344,9 +455,10 @@ def _make_group(gid: str, name: str, fix_shape: str, issues: list[dict]) -> dict
     else:
         action = "batch_fix"
 
-    return {
+    result = {
         "id": gid,
         "pattern": name,
+        "pattern_id": pattern_id,
         "fix_shape": fix_shape,
         "issues": [{"id": i["id"], "title": i["title"], "file": i["file"],
                      "line": i["line"], "severity": i["severity"],
@@ -359,6 +471,7 @@ def _make_group(gid: str, name: str, fix_shape: str, issues: list[dict]) -> dict
         "session_size": session_size,
         "action": action,
     }
+    return result
 
 
 def main():

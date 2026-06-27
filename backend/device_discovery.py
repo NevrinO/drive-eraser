@@ -48,6 +48,9 @@ _SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp
 _SAS_EXPANDER_CACHE_TTL = 3600  # seconds (1 hour - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
 _SAS_EXPANDER_CACHE_LOCK = threading.Lock()
 
+# Conservative fallback for SAS expander phy count when sysfs doesn't expose it
+_DEFAULT_SAS_PHY_COUNT = 10
+
 # Cache for SCSI host slot projections to avoid redundant full scans
 _SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
 _SCSI_PROJECTIONS_CACHE_TTL = 3600  # seconds (1 hour - SCSI projections change rarely; manual refresh on enclosure add/edit)
@@ -103,7 +106,8 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
                 return _PCI_CACHE['data']
     
     controllers = []
-    
+    result = None
+
     try:
         # Use lspci to scan PCI devices
         result = subprocess.run(
@@ -116,11 +120,6 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
         
         if result.returncode != 0:
             logging.warning(f"lspci scan failed: {result.stderr}")
-            # Update cache even on failure to avoid repeated failed scans
-            if use_cache:
-                with _PCI_CACHE_LOCK:
-                    _PCI_CACHE['data'] = controllers
-                    _PCI_CACHE['timestamp'] = time.time()
             return controllers
             
         # Parse lspci output for storage controllers
@@ -174,13 +173,13 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
         logging.warning("lspci command not found")
     except Exception as e:
         logging.warning(f"PCI scan error: {e}")
-    finally:
-        # Update cache with results (even empty list on error)
-        if use_cache:
-            with _PCI_CACHE_LOCK:
-                _PCI_CACHE['data'] = controllers
-                _PCI_CACHE['timestamp'] = time.time()
-        
+
+    # Only cache on successful parsing (not on failure/error paths)
+    if use_cache and result and result.returncode == 0:
+        with _PCI_CACHE_LOCK:
+            _PCI_CACHE['data'] = controllers
+            _PCI_CACHE['timestamp'] = time.time()
+
     return controllers
 
 
@@ -881,7 +880,7 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
             phy_count = get_max_slot_from_enclosure()
         
         if phy_count == 0:
-            phy_count = 10  # Common SAS expander configuration
+            phy_count = _DEFAULT_SAS_PHY_COUNT
         
         return {
             'expander_id': expander_id,
@@ -920,10 +919,6 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
         npath = os.path.dirname(npath)
 
     if not expander_id:
-        # Update cache with None result to avoid repeated failed scans
-        if use_cache:
-            with _SAS_EXPANDER_CACHE_LOCK:
-                _SAS_EXPANDER_CACHE[pci_address] = {'data': None, 'timestamp': time.time()}
         return None
 
     # If no phy count found in sas_device directories, fall back to enclosure slot count
@@ -932,7 +927,7 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
 
     # If still no count, use a reasonable default for SAS expanders
     if total_phy_count == 0:
-        total_phy_count = 10  # Common SAS expander configuration
+        total_phy_count = _DEFAULT_SAS_PHY_COUNT
 
     result = {
         'expander_id': expander_id,
@@ -1447,7 +1442,6 @@ def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
         if is_sas_expander:
             logging.info(f"Detected SAS expander for host {host_num}: expander_id={sas_expander_info['expander_id']}, phy_count={sas_expander_info['phy_count']}")
             # For SAS expanders, use phy-based projection
-            max_slot = sas_expander_info['phy_count'] - 1
             expander_id = sas_expander_info['expander_id']
 
             for phy_num in range(sas_expander_info['phy_count']):

@@ -477,8 +477,16 @@ def save_policy(policy_data, config_dir=None):
         config_dir = get_config_dir()
     os.makedirs(config_dir, exist_ok=True)
     policy_path = os.path.join(config_dir, "policy.json")
-    with open(policy_path, "w", encoding="utf-8") as f:
+
+    # Atomic file save: write to temp file first, then rename (rule #20)
+    temp_path = policy_path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(policy_data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+
+    # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
+    os.replace(temp_path, policy_path)
 
 def save_bay_map(bay_map_data, config_dir=None):
     if config_dir is None:

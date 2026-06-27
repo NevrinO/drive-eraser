@@ -6,10 +6,13 @@ import json
 import os
 import re
 import math
+import logging
 
 from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command
 from common import load_policy, get_config_dir, DRIVE_DATA_CACHE_TTL
 from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS
+
+logger = logging.getLogger(__name__)
 
 def get_triage_thresholds():
     """Load triage thresholds from policy.json with fallback defaults."""
@@ -261,7 +264,7 @@ def get_smart_data(device, diagnostics=None):
     if sata_wear is not None: wear = sata_wear
     elif nvme_wear is not None: wear = nvme_wear
     elif sas_wear is not None: wear = sas_wear
-    elif devstat_wear is not None: wear = max(0, 100 - devstat_wear)
+    elif devstat_wear is not None: wear = devstat_wear
     else: wear = None
 
     poh = get_sata_attr(9) or data.get("power_on_time", {}).get("hours")
@@ -825,7 +828,7 @@ def get_smart_test_status(device, diagnostics=None):
             # Calculate percentage complete
             # remaining is 0-90 for in-progress tests, 0 for completed
             percentage = 0
-            if remaining > 0:
+            if remaining is not None and remaining > 0:
                 percentage = max(0, min(100, (90 - remaining) / 90 * 100))
 
             # Map status strings; prefer the reliable status.passed boolean when present
@@ -946,7 +949,7 @@ def get_drive_recommendation(interface_type, smart, health_score=None):
     wear = smart.get("wear_level")
     if wear is not None:
         wear_val = safe_int(wear, 0)
-        remaining_life = max(0, 100 - wear_val) if ("nvme" in iface or "sas" in iface) else wear_val
+        remaining_life = max(0, 100 - wear_val)
 
     health_destroy_thresh = thresholds["health_score_destroy_threshold"]
     health_scratch_thresh = thresholds["health_score_scratch_threshold"]

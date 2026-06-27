@@ -376,7 +376,7 @@ def _apply_drive_payload(bay_info, payload, is_os_drive):
 def _apply_collection_failure(bay_info, dev_node, reason):
     """Mark a present drive whose data collection failed/timed out. Not cached, so the next discovery retries."""
     bay_info.update({"present": True, "device": dev_node, "status": "UNKNOWN"})
-    bay_info["diagnostics"]["commands"]["collection"] = {"ok": False, "reason": reason}
+    bay_info.setdefault("diagnostics", {}).setdefault("commands", {})["collection"] = {"ok": False, "reason": reason}
 
 def _audit_dual_port_deduplication(results):
     """Audit for dual-port SAS drives: if two device nodes share a serial, mark one as secondary path.

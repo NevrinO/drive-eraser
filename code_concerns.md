@@ -58,7 +58,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/common.py
 
-### C1: [Critical] `save_policy()` Non-Atomic Write — Difficulty: Trivial — Category: Correctness
+### C1: [COMPLETED] [Critical] `save_policy()` Non-Atomic Write — Difficulty: Trivial — Category: Correctness
 - **Line**: 475-481
 - **Issue**: `save_policy()` writes directly to `policy.json` without tempfile + rename. If the process crashes mid-write (signal, power loss, disk full), the file is left truncated or empty. `save_bay_map()` (line 483-497) correctly uses atomic write — `save_policy()` does not match.
 - **Impact**: Corrupted `policy.json` causes `load_policy()` to raise `ValueError`, which is called in the `security_gate` before_request hook. **All remote API access locked out** until manual file restoration. Called from admin routes during passphrase/threshold updates — exactly when corruption is most dangerous.
@@ -258,7 +258,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A22: [Advisory] `_apply_collection_failure` Assumes `diagnostics.commands` Key Exists — Difficulty: Medium — Category: Correctness
+### A22: [COMPLETED] [Advisory] `_apply_collection_failure` Assumes `diagnostics.commands` Key Exists — Difficulty: Medium — Category: Correctness
 - **Line**: 378
 - **Issue**: Accesses `bay_info["diagnostics"]["commands"]["collection"]` without guard. Safe in practice (both discovery functions initialize this structure), but fragile if called from other contexts.
 - **Impact**: Low — only called from `_collect_pending_parallel` and `_collect_pending_serial` which operate on initialized bay_info dicts.
@@ -409,7 +409,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A29: [Advisory] `_runtime_slot_state` stores `None` instead of deleting keys — Difficulty: Medium — Category: Correctness
+### A29: [COMPLETED] [Advisory] `_runtime_slot_state` stores `None` instead of deleting keys — Difficulty: Medium — Category: Correctness
 - **Lines**: 286
 - **Issue**: On drive removal, `_runtime_slot_state[(enc_id, slot_num)] = None` sets value to `None` rather than deleting the key. `get_runtime_slot_state()` returns entries with `None` values.
 - **Impact**: Low — no current external callers, but future callers must filter `None` values.
@@ -545,7 +545,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## frontend/styles.css
 
-### C16: [Critical] Status chip class name mismatch — JS uses classes with no CSS definitions — Difficulty: Low — Category: Correctness
+### C16: [COMPLETED] [Critical] Status chip class name mismatch — JS uses classes with no CSS definitions — Difficulty: Low — Category: Correctness
 - **Lines**: 1011-1021 (CSS), smartDeepDive.js:284-286,330 / modals.js:20,25,29,32,35,38,49,78,82,85,88,91,95,99,102,105,108,113,133,136,139,178
 - **Issue**: JS files use class names `status-complete`, `status-failed`, `status-ready`, `status-view-only`, `status-empty`, `status-warning` applied to `.status-chip` elements. The CSS only defines `.status-badge--*` (BEM modifier) and `.status-badge.complete/failed/running/queued` (backward compat dot-style). No CSS rules exist for `.status-complete`, `.status-failed`, `.status-ready`, `.status-view-only`, `.status-empty`, or `.status-warning` as standalone classes. The CSS comment at line 1011 says "Use .status-badge--* modifiers for colors instead of .status-chip.status-*" — but those `.status-chip.status-*` rules were never defined, and the JS was never updated.
 - **Impact**: High — all status chips in drive detail modals and SMART deep dive render without any color (no background, no text color, no border). Operators cannot visually distinguish pass/fail/running states. The base `.status-chip` class only provides shape/font/padding, not colors.
@@ -553,7 +553,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C17
 
-### C17: [Critical] Missing `.gap-3` and `.mt-4` utility classes — used in 11+ locations — Difficulty: Trivial — Category: Correctness
+### C17: [COMPLETED] [Critical] Missing `.gap-3` and `.mt-4` utility classes — used in 11+ locations — Difficulty: Trivial — Category: Correctness
 - **Lines**: CSS defines `.gap-2` (line 1444), `.mt-2` (1421), `.mt-3` (1425) but NOT `.gap-3` or `.mt-4`. Used in index.html:307,387,412,472,491,510,578,748,912,968,1114
 - **Issue**: `index.html` uses `.gap-3` and `.mt-4` utility classes extensively in modal dialogs (logo confirm, passphrase confirm, strict audit confirm, wizard navigation, bay mapping, triage config, system config, batch erase). These classes are never defined in `styles.css`. The utility section (lines 1379-1498) defines `.gap-2` (8px) and `.mt-2` (8px), `.mt-3` (12px) but stops there.
 - **Impact**: Medium — buttons in modal confirmation rows have no gap between them (touching), and no top margin separating action rows from content above. Affects all major modal dialogs.
@@ -561,7 +561,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C18: [Critical] Missing `.btn--warning` class — used in health gate override button — Difficulty: Trivial — Category: Correctness
+### C18: [COMPLETED] [Critical] Missing `.btn--warning` class — used in health gate override button — Difficulty: Trivial — Category: Correctness
 - **Lines**: CSS defines `.btn--primary` (585), `.btn--secondary` (596), `.btn--toggle` (602), `.btn--danger` (616) but NOT `.btn--warning`. Used in index.html:410
 - **Issue**: The health gate override button (`healthGateOverrideBtn`) uses `class="btn btn--warning"` but `.btn--warning` is never defined. The button renders as a plain `.btn` with no warning color. For a safety-critical "Override and Proceed" button that bypasses health checks, the lack of visual distinction is a UX concern.
 - **Impact**: Medium — override button doesn't stand out as a warning action. Operators may not recognize the gravity of bypassing health checks.
@@ -569,7 +569,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C19: [Critical] Modal backdrop z-index below floating footer — Difficulty: Trivial — Category: Correctness
+### C19: [COMPLETED] [Critical] Modal backdrop z-index below floating footer — Difficulty: Trivial — Category: Correctness
 - **Line**: 810
 - **Issue**: `.modal-backdrop` has `z-index: 100` (hardcoded), while `--z-overlay` is defined as 500. The `.batch-action-footer` has `z-index: var(--z-footer)` = 200. Since both are `position: fixed` in the root stacking context, the footer (200) renders above the backdrop (100). The `--z-overlay` variable (500) was clearly intended for this purpose but is never used.
 - **Impact**: Medium — when a modal opens while the batch action footer is visible, the footer pokes through the modal overlay, creating a visual artifact.
@@ -577,7 +577,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A41: [Advisory] `@keyframes pulse-danger-btn` never referenced — Difficulty: Trivial — Category: Dead Code
+### A41: [COMPLETED] [Advisory] `@keyframes pulse-danger-btn` never referenced — Difficulty: Trivial — Category: Dead Code
 - **Lines**: 627-631
 - **Issue**: `@keyframes pulse-danger-btn` is defined but never referenced by any selector. The toggle button uses `pulse-green-btn` (line 606) and `pulse-danger-border` (line 613), but `pulse-danger-btn` is never applied.
 - **Impact**: None — dead code.
@@ -585,7 +585,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A42: [Advisory] `.progress-bar` in reduced-motion media query doesn't exist — Difficulty: Trivial — Category: Dead Code
+### A42: [COMPLETED] [Advisory] `.progress-bar` in reduced-motion media query doesn't exist — Difficulty: Trivial — Category: Dead Code
 - **Line**: 1620
 - **Issue**: `@media (prefers-reduced-motion: reduce)` references `.progress-bar` but no `.progress-bar` class exists in the CSS. Only `.progress-bar-container` (line 1060) and `.progress-bar-fill` (line 1070) are defined.
 - **Impact**: None — dead selector in media query.
@@ -593,7 +593,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A43: [Advisory] Dead utility classes — zero callers — Difficulty: Trivial — Category: Dead Code
+### A43: [COMPLETED] [Advisory] Dead utility classes — zero callers — Difficulty: Trivial — Category: Dead Code
 - **Lines**: 1039-1043 (`.grid-span-2-rows`), 1386-1389 (`.hidden--slide-down`), 1391-1393 (`.overflow-y-auto`), 1396-1398 (`.border-default`), 1400-1402 (`.bg-surface-1`), 1404-1406 (`.rounded-md`)
 - **Issue**: Six utility classes are defined but have zero callers in any HTML or JS file. Verified via grep across `frontend/` for each class name.
 - **Impact**: None — dead code, adds ~30 lines of maintenance burden.
@@ -601,7 +601,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A44: [Advisory] Dead CSS variables — never referenced — Difficulty: Trivial — Category: Dead Code
+### A44: [COMPLETED] [Advisory] Dead CSS variables — never referenced — Difficulty: Trivial — Category: Dead Code
 - **Lines**: 36 (`--z-below`), 37 (`--z-base`)
 - **Issue**: `--z-below: -1` and `--z-base: 0` are defined but never referenced by any `var()` call in CSS, HTML, or JS.
 - **Impact**: None — dead variables.
@@ -641,7 +641,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A46, A47
 
-### A49: [Advisory] `.status-badge--ready` identical to `.status-badge--running` — Difficulty: Trivial — Category: DRY
+### A49: [COMPLETED] [Advisory] `.status-badge--ready` identical to `.status-badge--running` — Difficulty: Trivial — Category: DRY
 - **Lines**: 703, 705
 - **Issue**: Both classes have identical values: `background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary);`
 - **Impact**: Low — redundant. If one changes, the other may be forgotten.
@@ -677,7 +677,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/device_discovery.py
 
-### C20: [Critical] `scan_pci_controllers` caches failure state (empty list) for 1 hour — Difficulty: Low — Category: Caching
+### C20: [COMPLETED] [Critical] `scan_pci_controllers` caches failure state (empty list) for 1 hour — Difficulty: Low — Category: Caching
 - **Lines**: 119-124, 178-183
 - **Issue**: On `lspci` failure (returncode != 0), the function caches the empty `controllers` list at lines 120-124. The `finally` block at lines 178-183 also caches the empty list on any exception. Per Lesson #32 "Cache Failure State Handling": "Never cache failure states (None, error values) in TTL-based caches." The TTL is 3600 seconds (1 hour).
 - **Impact**: High — a transient `lspci` failure (busy system, temporary I/O error) causes all PCI controller lookups to return empty for 1 full hour. This cascades to `discover_controllers_and_devices`, `get_controller_for_device`, and all downstream discovery functions returning no controllers/devices.
@@ -685,7 +685,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: C21
 
-### C21: [Critical] `detect_sas_expander` caches `None` failure state for 1 hour — Difficulty: Low — Category: Caching
+### C21: [COMPLETED] [Critical] `detect_sas_expander` caches `None` failure state for 1 hour — Difficulty: Low — Category: Caching
 - **Lines**: 922-927
 - **Issue**: When no SAS expander is found, the function caches `{'data': None, 'timestamp': time.time()}` at lines 924-926. Per Lesson #32, caching failure states means subsequent calls return `None` for the full 3600-second TTL even if the expander becomes available (e.g., after hot-plug).
 - **Impact**: Medium — if a SAS expander is not detected on first scan (e.g., device still initializing), all subsequent calls for that PCI address return `None` for 1 hour. Drive discovery via `get_scsi_host_slot_projections` will use incorrect non-expander projection for that duration.
@@ -780,7 +780,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A62: [Advisory] `detect_sas_expander` magic number fallback `phy_count = 10` — Difficulty: Low — Category: Correctness
+### A62: [COMPLETED] [Advisory] `detect_sas_expander` magic number fallback `phy_count = 10` — Difficulty: Low — Category: Correctness
 - **Lines**: 884, 935
 - **Issue**: When phy count cannot be determined, the function falls back to `phy_count = 10` with the comment "Common SAS expander configuration." This magic number is used in two places and affects slot projection count in `get_scsi_host_slot_projections`.
 - **Impact**: Low — if the actual expander has a different phy count (e.g., 8, 16, 24, 36), the projection will enumerate incorrect slot numbers. Empty slots beyond phy 10 won't be projected, and slots 11+ on a 16-phy expander will be missing.
@@ -788,7 +788,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A63: [Advisory] `get_scsi_host_slot_projections` dead `max_slot` variable in expander path — Difficulty: Trivial — Category: Dead Code
+### A63: [COMPLETED] [Advisory] `get_scsi_host_slot_projections` dead `max_slot` variable in expander path — Difficulty: Trivial — Category: Dead Code
 - **Line**: 1450
 - **Issue**: `max_slot = sas_expander_info['phy_count'] - 1` is set in the SAS expander branch but never used. The loop at line 1453 uses `range(sas_expander_info['phy_count'])` directly, not `range(max_slot + 1)`.
 - **Impact**: None — dead variable.
@@ -814,7 +814,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/smart_parsing.py
 
-### C23: [Critical] `logger` undefined — NameError at runtime — Difficulty: Trivial — Category: Correctness
+### C23: [COMPLETED] [Critical] `logger` undefined — NameError at runtime — Difficulty: Trivial — Category: Correctness
 - **Line**: 1117
 - **Issue**: `logger.warning(f"Failed to read device state from {state_path}: {e}")` is called inside `pre_wipe_health_gate`, but `logger` is never defined or imported in `smart_parsing.py`. There is no `import logging` or `logger = logging.getLogger(...)` at module level. When the `except` block at line 1116 is hit (e.g., sysfs file read fails), this line raises `NameError: name 'logger' is not defined`, crashing the function.
 - **Impact**: High — `pre_wipe_health_gate` is called from `job_management.py` before every wipe. If reading `/sys/block/{device}/device/state` fails for any reason, the health gate crashes with an unhandled `NameError` instead of gracefully continuing. The wipe may be blocked or proceed incorrectly.
@@ -822,7 +822,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C24: [Critical] `remaining` None causes TypeError in `get_smart_test_status` — Difficulty: Low — Category: Correctness
+### C24: [COMPLETED] [Critical] `remaining` None causes TypeError in `get_smart_test_status` — Difficulty: Low — Category: Correctness
 - **Line**: 828
 - **Issue**: Line 760 explicitly sets `remaining = None` when `remaining_raw` is `"null"` or `None`. Then line 828 does `if remaining > 0:` which raises `TypeError: '>' not supported between instances of 'NoneType' and 'int'` when `remaining` is `None`. The code handles the None case at line 760 but then immediately uses it in a numeric comparison without a None guard.
 - **Impact**: Medium — crashes SMART test status polling when smartctl returns `"null"` for `remaining_percent`. This can happen for completed tests on some drive firmware. The crash is caught by the outer `except Exception` at line 919, but returns a generic error instead of the correct test status.
@@ -830,7 +830,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### C25: [Critical] SATA SSD `remaining_life` inverted in `get_drive_recommendation` — Difficulty: Low — Category: Correctness
+### C25: [COMPLETED] [Critical] SATA SSD `remaining_life` inverted in `get_drive_recommendation` — Difficulty: Low — Category: Correctness
 - **Line**: 949
 - **Issue**: `remaining_life = max(0, 100 - wear_val) if ("nvme" in iface or "sas" in iface) else wear_val`. For NVMe/SAS, `remaining_life = 100 - wear_val` (correct: converts percentage-used to remaining). For SATA SSDs, `remaining_life = wear_val` (WRONG: `wear_val` is percentage-used, not remaining life). The `wear_level` field is always "percentage used" regardless of interface — confirmed by the SATA wear heuristic at line 256 which normalizes to percentage-used. This means:
   - A SATA SSD with 5% wear (95% remaining) gets `remaining_life = 5`, triggering `DESTROY` at line 994 (`5 < 10`).
@@ -978,7 +978,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## frontend/admin/enclosureManagement.js
 
-### A79: [Advisory] Dead code — `cachedUnmappedDrives` and `cachedUnmappedDrivesTime` never used — Difficulty: Trivial — Category: Dead Code
+### A79: [COMPLETED] [Advisory] Dead code — `cachedUnmappedDrives` and `cachedUnmappedDrivesTime` never used — Difficulty: Trivial — Category: Dead Code
 - **Lines**: 7-8
 - **Issue**: `cachedUnmappedDrives` and `cachedUnmappedDrivesTime` are declared at module level but never read or written anywhere in the file. The unmapped drives fetch at line 304 is a direct `safeFetch` call without caching. These variables appear to be leftovers from a planned caching feature that was never implemented.
 - **Impact**: None — dead code adds minor confusion.
