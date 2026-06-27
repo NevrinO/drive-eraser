@@ -38,7 +38,7 @@ The agent applies these principles systematically:
 ### 1. Root Cause Analysis
 - Traces data flow to find where problems originate
 - Prefers minimal upstream fixes over downstream workarounds
-- Follows Lesson #22 (Root Cause Investigation Over Surface Fixes)
+- Follows Lesson #25 (Root Cause Investigation Over Surface Fixes)
 
 ### 2. Security & Architecture Guardrails
 - Checks against `.devin/rules/lessons-learned.md` for known patterns

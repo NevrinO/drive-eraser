@@ -370,6 +370,12 @@
             </div>
           </div>
 
+          <div id="zeroCheckWarning" class="hidden" style="margin-top: 16px; padding: 12px; background: rgba(20, 173, 184, 0.14); border: 1px solid var(--color-teal); border-radius: 4px;">
+            <div style="font-weight: 700; color: var(--color-teal); margin-bottom: 4px;">Zeroed Drives Detected</div>
+            <div style="font-size: 0.8rem; color: var(--color-text);">The following staged bays appear to already be zero-filled based on the sampled check. This is informational only; you may still proceed with sanitization if required.</div>
+            <div id="zeroCheckWarningList" style="margin-top: 8px; font-size: 0.8rem; color: var(--color-text-muted);"></div>
+          </div>
+
           <div class="confirmation-section">
             <label>
               Typed Confirmation
@@ -873,6 +879,21 @@
               Max Health Score Drop
               <input type="number" id="prewipe_health_gate_max_health_score_drop" name="prewipe_health_gate_max_health_score_drop" min="0" max="100" step="1">
               <small class="text-muted-xs">Health score drop threshold for intake history comparison (0-100)</small>
+            </label>
+
+            <div class="modal-section-header">Pre-Wipe Zero Detection</div>
+            <label>
+              Enable Zero Detection
+              <select id="prewipe_zero_detection_enabled" name="prewipe_zero_detection_enabled">
+                <option value="true">Enabled (auto-check internal drives after discovery)</option>
+                <option value="false">Disabled</option>
+              </select>
+              <small class="text-muted-xs">Background, non-blocking visual check for pre-wiped zero-filled drives</small>
+            </label>
+            <label>
+              Zero Detection Concurrency Limit
+              <input type="number" id="zero_detection_concurrency_limit" name="zero_detection_concurrency_limit" min="1" max="32" step="1">
+              <small class="text-muted-xs">Maximum parallel zero-check reads (1-32)</small>
             </label>
           </div>
           <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>

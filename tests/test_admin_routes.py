@@ -198,7 +198,7 @@ class TestAdminRoutes:
         """Test POST policy endpoint updates fields."""
         payload = {
             "station_id": "new-station",
-            "prewipe_spot_check": True
+            "prewipe_zero_detection_enabled": True
         }
         response = admin_session.post('/api/admin/policy', json=payload)
         assert response.status_code == 200

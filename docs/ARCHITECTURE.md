@@ -163,6 +163,17 @@
 - Crypto erase should be validated through controller / sanitize status where possible
 - Block / overwrite methods can use sampling and/or zero checks where appropriate
 
+## Pre-Wipe Zero Detection
+- Background, non-blocking, visual-only check that runs after discovery for internal (SATA/SAS/NVMe) drives
+- Sample strategy: flat 2 GB read split across 5 zones (start, 25%, 50%, 75%, end) using a 16 MB streaming buffer
+- Drives at or below the small-drive threshold (2 GB) are read in a single sequential pass
+- A 60-second hard timeout makes the result "inconclusive" rather than blocking the UI
+- The result is purely informational: it does not block or gate wipe operations
+- Marker status supersedes zero-check UI state; a verified marker always wins over the zeroed state
+- Cancellation hooks ensure a zero-check is aborted before destructive wipe commands start
+- Drive removal clears the bay's zero-check state; the next insertion triggers a fresh check
+- Concurrency is controlled by policy (`zero_detection_concurrency_limit`) and managed via a FIFO queue + semaphore
+
 ## Marker Strategy
 - Marker is written only after erase + verification succeed
 - Marker write/read is best-effort and warning-scoped:

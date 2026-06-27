@@ -17,6 +17,7 @@ from smart_parsing import get_smart_data, get_smart_identity, detect_interface_t
 from disk_capabilities import detect_drive_capabilities
 from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map, resolve_multipath_parent
 from database import record_intake_snapshot
+from zero_check_manager import get_manager as get_zero_check_manager
 
 # Performance: per-device cache for expensive drive data (SMART, capabilities, marker).
 # Presence detection (by-path resolution) is intentionally NOT cached so drive
@@ -37,6 +38,88 @@ def set_websocket_manager(ws_manager):
     global _websocket_manager
     _websocket_manager = ws_manager
     logging.getLogger(__name__).info("WebSocket manager set for disk_ops")
+
+
+def _is_eligible_for_zero_check(drive, manager=None, allow_completed=False):
+    """Return (eligible, reason) for starting a zero-check on a drive dict.
+
+    Mirrors the filters used by the auto-enqueue path so the manual endpoint
+    cannot start a zero-check on an OS/reserved, locked, currently-wiping,
+    USB, or already-marked drive. When allow_completed is True, a previously
+    completed check does not block re-checks (used by the manual endpoint).
+    """
+    if not drive or not drive.get("present"):
+        return False, "no drive present"
+    if drive.get("locked"):
+        return False, "bay is locked"
+    role = drive.get("role", "wipe")
+    if role in ("os", "reserved"):
+        return False, "bay is OS/reserved"
+    if drive.get("status") == "RUNNING":
+        return False, "wipe is running"
+    iface = (drive.get("interface_type") or "").lower()
+    if iface not in ("sata", "sas", "nvme"):
+        return False, "unsupported interface"
+    marker = drive.get("marker") or {}
+    if marker.get("status") not in ("none", "corrupted", None):
+        return False, "post-erase marker present"
+    if manager is not None:
+        bay = drive.get("bay")
+        if bay:
+            status = manager.get_status(bay)
+            blocked = ("queued", "running")
+            if not allow_completed:
+                blocked = blocked + ("completed",)
+            if status.get("status") in blocked:
+                return False, "zero check already in progress or completed"
+    if not drive.get("device"):
+        return False, "device not resolved"
+    return True, None
+
+
+def _auto_enqueue_zero_checks(results):
+    """After discovery, queue background zero-checks for eligible internal drives.
+
+    Skips drives that are absent, locked, OS/reserved, running a wipe, USB, have a
+    valid marker, or already have a zero-check state. Clears state for bays that are
+    no longer present.
+    """
+    if not results or not isinstance(results, list):
+        return
+    try:
+        policy = load_policy(get_config_dir())
+    except Exception:
+        return
+    if not policy.get("prewipe_zero_detection_enabled", True):
+        return
+
+    manager = get_zero_check_manager()
+    present_bays = set()
+    for bay_info in results:
+        bay = bay_info.get("bay")
+        if not bay:
+            continue
+        present_bays.add(bay)
+        if not bay_info.get("present"):
+            manager.clear_state(bay)
+            continue
+
+        # If the drive identity in this bay has changed, clear stale completed state
+        # so the new drive is not suppressed by a check from the previous drive.
+        current_serial = bay_info.get("serial")
+        stored_serial = manager.get_status(bay).get("serial")
+        if current_serial and stored_serial and current_serial != stored_serial:
+            manager.clear_state(bay)
+
+        eligible, _ = _is_eligible_for_zero_check(bay_info, manager)
+        if not eligible:
+            continue
+        manager.start_check(bay, bay_info.get("device"), serial=current_serial)
+
+    # Clear stale state for any bays that disappeared from the results entirely
+    for bay in list(manager.get_all_status().keys()):
+        if bay not in present_bays:
+            manager.clear_state(bay)
 
 # Performance: parallel collection settings
 _DISCOVERY_MAX_WORKERS = min(8, os.cpu_count() or 4)
@@ -711,7 +794,7 @@ def _submit_drive_for_extended_smart(item, passphrase):
         with _EXTENDED_SMART_LOCK:
             _EXTENDED_SMART_PENDING.discard(cache_key)
 
-def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None):
+def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', running_devices=None, skip_auto_enqueue=False):
     # Medium #35: Discovery operations are read-only (no device writes/modifications).
     # Device-level locking is intentionally skipped to avoid blocking verification operations.
     # Discovery only reads device information (SMART data, capabilities, etc.) and does not
@@ -730,12 +813,12 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     is_enclosure_schema = isinstance(bay_map_doc, dict) and "enclosures" in bay_map_doc
 
     if is_enclosure_schema:
-        return _discover_drives_enclosure(bay_map_doc, running_devices)
+        return _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
     else:
-        return _discover_drives_legacy(bay_map_doc, running_devices)
+        return _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
 
 
-def _discover_drives_enclosure(bay_map_doc, running_devices):
+def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=False):
     """Discover drives using new enclosure-based physical slot mapping."""
     enclosures = bay_map_doc.get("enclosures", {})
 
@@ -903,10 +986,14 @@ def _discover_drives_enclosure(bay_map_doc, running_devices):
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)
 
+    # Phase 7: queue background zero-checks for eligible internal drives
+    if not skip_auto_enqueue:
+        _auto_enqueue_zero_checks(results)
+
     return results
 
 
-def _discover_drives_legacy(bay_map_doc, running_devices):
+def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=False):
     """Discover drives using legacy by-path mapping (backward compatibility)."""
     if isinstance(bay_map_doc, dict) and isinstance(bay_map_doc.get("bays"), dict):
         bay_map = bay_map_doc.get("bays", {})
@@ -1052,5 +1139,9 @@ def _discover_drives_legacy(bay_map_doc, running_devices):
 
     # Phase 6: dual-port deduplication audit
     _audit_dual_port_deduplication(results)
+
+    # Phase 7: queue background zero-checks for eligible internal drives
+    if not skip_auto_enqueue:
+        _auto_enqueue_zero_checks(results)
 
     return results

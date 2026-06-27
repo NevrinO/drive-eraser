@@ -189,7 +189,22 @@ class TestLoadPolicy:
                 assert result["strict_audit_mode"] is True
                 # Default values should be present
                 assert "lan_passphrase" in result
-                assert "prewipe_spot_check" in result
+                assert "prewipe_zero_detection_enabled" in result
+                assert "zero_detection_concurrency_limit" in result
+
+    def test_load_policy_migrates_deprecated_prewipe_spot_check(self):
+        """Test that deprecated prewipe_spot_check is migrated to prewipe_zero_detection_enabled."""
+        from common import load_policy
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = os.path.join(tmpdir, "policy.json")
+            policy_data = {"prewipe_spot_check": False}
+            with open(policy_path, "w") as f:
+                json.dump(policy_data, f)
+
+            with patch('common.get_config_dir', return_value=tmpdir):
+                result = load_policy()
+                assert result["prewipe_zero_detection_enabled"] is False
+                assert "prewipe_spot_check" not in result
 
 
 class TestValidatePolicy:

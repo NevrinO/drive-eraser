@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
 import disk_ops
-from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock
+from disk_ops import get_os_parent_device, get_os_by_path, get_all_controllers, discover_drives, invalidate_drive_cache, _DRIVE_DATA_CACHE, _discovery_interrupt_lock, _auto_enqueue_zero_checks
 from common import DRIVE_DATA_CACHE_TTL
 
 
@@ -788,6 +788,57 @@ class TestExtendedSmartPool:
         with _EXTENDED_SMART_LOCK:
             assert item1[0] not in _EXTENDED_SMART_PENDING
             assert item2[0] in _EXTENDED_SMART_PENDING
+
+
+class TestAutoEnqueueZeroChecks:
+    """Tests for the _auto_enqueue_zero_checks helper."""
+
+    def test_auto_enqueue_passes_serial_to_manager(self):
+        """Auto-enqueue should pass the discovered drive serial to the manager."""
+        fake_manager = MagicMock()
+        fake_manager.get_status.return_value = {"status": "not_started"}
+        fake_manager.get_all_status.return_value = {}
+
+        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
+                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+                    _auto_enqueue_zero_checks([
+                        {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "S1"}
+                    ])
+
+        fake_manager.start_check.assert_called_once_with("bay1", "/dev/sda", serial="S1")
+
+    def test_auto_enqueue_clears_state_when_drive_serial_changes(self):
+        """If the drive in a bay has a new serial, stale completed state must be cleared."""
+        fake_manager = MagicMock()
+        fake_manager.get_status.return_value = {"status": "completed", "serial": "OLD_SERIAL"}
+        fake_manager.get_all_status.return_value = {}
+
+        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
+                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+                    _auto_enqueue_zero_checks([
+                        {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "NEW_SERIAL"}
+                    ])
+
+        fake_manager.clear_state.assert_called_once_with("bay1")
+        fake_manager.start_check.assert_called_once_with("bay1", "/dev/sda", serial="NEW_SERIAL")
+
+    def test_auto_enqueue_does_not_clear_state_when_serial_matches(self):
+        """If the serial is unchanged, completed state should not be cleared."""
+        fake_manager = MagicMock()
+        fake_manager.get_status.return_value = {"status": "completed", "serial": "SAME_SERIAL"}
+        fake_manager.get_all_status.return_value = {}
+
+        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
+                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+                    _auto_enqueue_zero_checks([
+                        {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "SAME_SERIAL"}
+                    ])
+
+        fake_manager.clear_state.assert_not_called()
+        fake_manager.start_check.assert_called_once_with("bay1", "/dev/sda", serial="SAME_SERIAL")
 
 
 if __name__ == "__main__":

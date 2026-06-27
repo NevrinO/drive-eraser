@@ -36,7 +36,13 @@ def get_device_lock(device_path):
         return DEVICE_LOCKS[device_path]
 
 DEFAULT_POLICY = {
-    "prewipe_spot_check": True,
+    "prewipe_zero_detection_enabled": True,
+    "zero_detection_concurrency_limit": 8,
+    "zero_check_total_bytes_gb": 2,
+    "zero_check_zone_count": 5,
+    "zero_check_block_size_mb": 16,
+    "zero_check_timeout_seconds": 60,
+    "zero_check_small_drive_threshold_gb": 2,
     "post_erase_marker": True,
     "allow_method_override": True,
     "crypto_fail_retry_block": True,
@@ -65,7 +71,13 @@ DEFAULT_POLICY = {
 POLICY_SCHEMA = {
     "type": "object",
     "properties": {
-        "prewipe_spot_check": {"type": "boolean"},
+        "prewipe_zero_detection_enabled": {"type": "boolean"},
+        "zero_detection_concurrency_limit": {"type": "integer", "minimum": 1, "maximum": 32},
+        "zero_check_total_bytes_gb": {"type": "integer", "minimum": 1, "maximum": 16},
+        "zero_check_zone_count": {"type": "integer", "minimum": 1, "maximum": 32},
+        "zero_check_block_size_mb": {"type": "integer", "minimum": 1, "maximum": 128},
+        "zero_check_timeout_seconds": {"type": "integer", "minimum": 5, "maximum": 600},
+        "zero_check_small_drive_threshold_gb": {"type": "integer", "minimum": 1, "maximum": 16},
         "post_erase_marker": {"type": "boolean"},
         "allow_method_override": {"type": "boolean"},
         "method_priority": {
@@ -414,6 +426,12 @@ def load_policy(config_dir=None):
             # Migration: deprecated crypto_verification_mode -> secondary_verification_mode
             if "secondary_verification_mode" not in merged and "crypto_verification_mode" in merged:
                 merged["secondary_verification_mode"] = merged["crypto_verification_mode"]
+
+            # Migration: deprecated prewipe_spot_check -> prewipe_zero_detection_enabled
+            if "prewipe_spot_check" in merged:
+                if "prewipe_zero_detection_enabled" not in data:
+                    merged["prewipe_zero_detection_enabled"] = merged["prewipe_spot_check"]
+                merged.pop("prewipe_spot_check", None)
 
             return merged
     except Exception as e:

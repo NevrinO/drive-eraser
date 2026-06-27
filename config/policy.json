@@ -1,5 +1,5 @@
 {
-  "prewipe_spot_check": true,
+  "prewipe_zero_detection_enabled": true,
   "post_erase_marker": true,
   "allow_method_override": true,
   "method_priority": {

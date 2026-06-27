@@ -58,6 +58,7 @@ from certificates import build_certificate
 from notifier import send_slack_notification
 from disk_ops import get_os_by_path, invalidate_drive_cache
 from disk_utils import validate_device_path
+from zero_check_manager import get_manager as get_zero_check_manager
 from smart_parsing import get_raw_smart_diagnostics, get_smart_data
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
 
@@ -356,6 +357,14 @@ def run_erase_job(job_id):
 
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}', Interface: '{interface_type}'")
+
+    # Cancel any background zero-check for this bay before starting destructive operations
+    try:
+        bay = job["request"].get("bay")
+        if bay:
+            get_zero_check_manager().on_wipe_starting(bay)
+    except Exception as e:
+        logger.warning(f"Failed to cancel zero-check for bay {job['request'].get('bay')} before wipe: {e}")
 
     # Pre-wipe health gate check to prevent starting wipes on failing drives
     config_dir = get_config_dir()

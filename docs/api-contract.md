@@ -202,7 +202,7 @@ Exposes and safely updates system rules and writes changes back to `/config/poli
 Writable operational fields include:
 - `station_id` — station identifier used in notifications and certificates
 - `slack_webhook_url` — Slack webhook URL for notifications
-- `prewipe_spot_check` — reserved policy toggle (currently not implemented in the wipe workflow)
+- `prewipe_zero_detection_enabled` — enable/disable automatic pre-wipe zero detection
 - `post_erase_marker` — enable/disable post-erase marker writing
 - `allow_method_override` — allow technicians to override the recommended erase method
 - `secondary_verification_mode` — `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)

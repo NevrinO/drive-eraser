@@ -518,7 +518,7 @@ COMPLETE
 The lifecycle behavior can be configured via `config/policy.json`:
 
 - `strict_audit_mode`: Requires non-empty wipe_passphrase and enforces verification
-- `prewipe_spot_check`: **Not currently implemented** - Configuration option exists in policy.json but the pre-wipe spot check feature is not yet executed in the wipe workflow
+- `prewipe_zero_detection_enabled`: Enable/disable automatic pre-wipe zero detection (runs as a background visual-only check before a wipe)
 - `post_erase_marker`: Enables post-erase marker writing
 - `allow_method_override`: Allow technicians to override the recommended erase method
 - `secondary_verification_mode`: `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)

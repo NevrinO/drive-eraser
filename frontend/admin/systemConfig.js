@@ -66,6 +66,17 @@ async function loadSystemConfig() {
       wipePassphraseInput.value = ""; // Never populate the passphrase field for security
     }
 
+    // Zero detection settings
+    const zeroDetectionEnabledInput = document.getElementById("prewipe_zero_detection_enabled");
+    if (zeroDetectionEnabledInput) {
+      zeroDetectionEnabledInput.value = policy.prewipe_zero_detection_enabled ? "true" : "false";
+    }
+
+    const zeroDetectionConcurrencyInput = document.getElementById("zero_detection_concurrency_limit");
+    if (zeroDetectionConcurrencyInput) {
+      zeroDetectionConcurrencyInput.value = policy.zero_detection_concurrency_limit || 8;
+    }
+
     // Health gate settings
     const healthGateEnabledInput = document.getElementById("prewipe_health_gate_enabled");
     if (healthGateEnabledInput) {
@@ -248,6 +259,24 @@ function validateForm() {
       wipePassphraseInput.style.borderColor = "var(--color-danger)";
     } else {
       wipePassphraseInput.style.borderColor = "";
+    }
+  }
+
+  // Zero detection settings
+  const zeroDetectionEnabledInput = document.getElementById("prewipe_zero_detection_enabled");
+  if (zeroDetectionEnabledInput) {
+    formData.prewipe_zero_detection_enabled = zeroDetectionEnabledInput.value === "true";
+  }
+
+  const zeroDetectionConcurrencyInput = document.getElementById("zero_detection_concurrency_limit");
+  if (zeroDetectionConcurrencyInput) {
+    const value = parseInt(zeroDetectionConcurrencyInput.value, 10);
+    if (isNaN(value) || value < 1 || value > 32) {
+      isValid = false;
+      zeroDetectionConcurrencyInput.style.borderColor = "var(--color-danger)";
+    } else {
+      zeroDetectionConcurrencyInput.style.borderColor = "";
+      formData.zero_detection_concurrency_limit = value;
     }
   }
 

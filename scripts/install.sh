@@ -401,7 +401,7 @@ import json, os
 path = '$CONFIG_DIR/policy.json'
 cors_origin = os.environ.get('CORS_ORIGIN', 'http://127.0.0.1:5000')
 data = {
-  'prewipe_spot_check': True,
+  'prewipe_zero_detection_enabled': True,
   'post_erase_marker': True,
   'allow_method_override': True,
   'method_priority': {
