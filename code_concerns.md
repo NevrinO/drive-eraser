@@ -86,11 +86,12 @@ Running document for findings across the codebase that need a deeper look before
 ### C7: [COMPLETED] [Critical] `discover_drives` Returns Inconsistent Types — Difficulty: Low — Category: Correctness
 ### C8: [COMPLETED] [Critical] Signal Handler Uses `threading.Lock` — Potential Deadlock — Difficulty: Medium — Category: Concurrency
 ### C9: [COMPLETED] [Critical] Massive Code Duplication Between `_collect_drive_data` and `_process_single_drive_extended_smart` — Difficulty: Medium — Category: Architecture
-### A18: [Advisory] `_discover_drives_enclosure` and `_discover_drives_legacy` ~80% Duplicated — Difficulty: Medium — Category: Architecture
+### A18: [COMPLETED] [Advisory] `_discover_drives_enclosure` and `_discover_drives_legacy` ~80% Duplicated — Difficulty: Medium — Category: Architecture
 - **Line**: 821-993 vs 996-1147
 - **Issue**: ~130 lines of duplicated code: path_to_dev building, passphrase loading, OS path detection, PCI scan, bay_info initialization (~30 fields), pending collection, extended SMART submission, dual-port dedup, auto-enqueue.
 - **Impact**: Schema changes to `bay_info` must be applied in both functions. Maintenance burden.
 - **Suggestion**: Extract shared logic into helpers: `_init_bay_info()`, `_build_path_to_dev()`, `_submit_extended_smart_for_results()`, `_finalize_discovery()`.
+- **Resolution**: Extracted `_build_path_to_dev()`, `_load_wipe_passphrase()`, and `_finalize_discovery()` (with `bay_info["_discovery_cache_key"]` for cache key safety). Permanently deferred: `_init_bay_info()`, `_check_os_drive()`, `_handle_running_device()` — semantic differences between enclosure and legacy paths make parameterization noisier than the duplication.
 - **Depends-on**: none
 - **Related**: none
 
@@ -260,7 +261,7 @@ Running document for findings across the codebase that need a deeper look before
 ### C20: [COMPLETED] [Critical] `scan_pci_controllers` caches failure state (empty list) for 1 hour — Difficulty: Low — Category: Caching
 ### C21: [COMPLETED] [Critical] `detect_sas_expander` caches `None` failure state for 1 hour — Difficulty: Low — Category: Caching
 ### C22: [COMPLETED] [Critical] Three functions with zero external callers (dead code) — Difficulty: Medium — Category: Dead Code
-### A53: [Advisory] `validate_device_path` triplicated across 3 files — Difficulty: High — Category: DRY
+### A53: [COMPLETED] [Advisory] `validate_device_path` triplicated across 3 files — Difficulty: High — Category: DRY
 - **Lines**: 56-72 (this file), `backend/disk_utils.py:43`, `backend/smart_parsing.py:554`
 - **Issue**: `validate_device_path` is defined with identical logic in three separate modules. All three use the same regex `_DEVICE_PATH_RE = re.compile(r'^/dev(/[a-zA-Z0-9_\-:.]+)+\Z')`, the same `..`/`\n`/`\r` rejection, and the same `isinstance` check. Per Lesson #65 (DRY Principle).
 - **Impact**: Medium — if the validation logic needs to change (e.g., tighter device name patterns per Lesson #12), all three copies must be updated. Missing one creates inconsistent validation across the codebase.
@@ -377,11 +378,12 @@ Running document for findings across the codebase that need a deeper look before
 ### A80: [COMPLETED] [Advisory] Duplicated slot mapping collection logic between `handleSaveEnclosure` and `handleEditEnclosure` — Difficulty: Medium — Category: DRY
 ### A81: [COMPLETED] [Advisory] `renderWizardStep` missing null checks on DOM elements — Difficulty: Low — Category: Error Handling
 ### A82: [COMPLETED] [Advisory] `renderSlotAssignment` loses user modifications on re-render — Difficulty: Medium — Category: Correctness
-### A83: [Advisory] `SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend — Difficulty: High — Category: Architecture
+### A83: [COMPLETED] [Advisory] `SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend — Difficulty: High — Category: Architecture
 - **Lines**: 394-441
 - **Issue**: `SUPPORTED_TRAVERSALS` (4 traversal presets) and `buildTraversalPositions` (~40 lines of traversal logic) are hardcoded copies of backend logic. Per Lesson #51 (Single Source of Truth), the frontend should derive this from the API rather than maintaining its own copy. If the backend adds a new traversal preset or changes the algorithm, this frontend copy will silently produce different results.
 - **Impact**: Medium — drift between frontend preview and backend slot assignment. The frontend preview would show incorrect slot ordering if the backend algorithm changes.
 - **Suggestion**: Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data directly.
+- **Resolution**: Added parity test (`tests/test_traversal_parity.py`) to catch drift. Permanently deferred: API endpoint approach — would add network latency to the interactive wizard preview for minimal dedup benefit (~40 lines of stable traversal logic).
 - **Depends-on**: none
 - **Related**: none
 

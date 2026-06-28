@@ -10,9 +10,7 @@ import json
 from typing import Dict, List, Optional, Tuple
 import logging
 
-# Device path validation - strict regex whitelist following rule #9 and #15
-# \Z (not $) anchors strictly at end-of-string to prevent "/dev/sda\n" bypass
-_DEVICE_PATH_RE = re.compile(r'^/dev(/[a-zA-Z0-9_\-:.]+)+\Z')
+from disk_utils import validate_device_path
 
 # PCI address validation - strict format: domain:bus:device.function (e.g., 0000:00:1f.2)
 # Function number is optional for some PCIe slot implementations (e.g., 0000:18:00)
@@ -51,25 +49,6 @@ _DEFAULT_SAS_PHY_COUNT = 10
 _SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
 _SCSI_PROJECTIONS_CACHE_TTL = 3600  # seconds (1 hour - SCSI projections change rarely; manual refresh on enclosure add/edit)
 _SCSI_PROJECTIONS_CACHE_LOCK = threading.Lock()
-
-def validate_device_path(device: str) -> bool:
-    r"""Validate device path against strict whitelist to prevent path traversal and injection.
-    
-    Following lessons-learned rule #9: Never accept raw device paths without validation.
-    Following lessons-learned rule #15: Use \Z for strict end-of-string anchor.
-    
-    Args:
-        device: Device path string to validate
-        
-    Returns:
-        True if path is valid, False otherwise
-    """
-    if not device or not isinstance(device, str):
-        return False
-    if ".." in device or "\n" in device or "\r" in device:
-        return False
-    return bool(_DEVICE_PATH_RE.match(device))
-
 
 def validate_pci_address(pci_address: str) -> bool:
     """Validate PCI address format.

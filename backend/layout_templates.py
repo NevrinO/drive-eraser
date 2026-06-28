@@ -211,9 +211,15 @@ def build_traversal_positions(rows, cols, traversal, bay_count, skip_positions=N
     
     # Validate that we have enough positions after skipping
     if bay_count > 0 and len(positions) == 0:
-        raise ValueError(f"skip_positions eliminates all available positions (rows={rows}, cols={cols})")
+        if skip_set:
+            raise ValueError(f"skip_positions eliminates all available positions (rows={rows}, cols={cols})")
+        else:
+            raise ValueError(f"bay_count exceeds grid capacity: requested {bay_count} bays but grid only has {rows * cols} positions (rows={rows}, cols={cols})")
     if len(positions) < bay_count:
-        raise ValueError(f"skip_positions eliminates too many positions: requested {bay_count} bays but only {len(positions)} available after skipping")
+        if skip_set:
+            raise ValueError(f"skip_positions eliminates too many positions: requested {bay_count} bays but only {len(positions)} available after skipping")
+        else:
+            raise ValueError(f"bay_count exceeds grid capacity: requested {bay_count} bays but grid only has {rows * cols} positions (rows={rows}, cols={cols})")
     
     return positions
 

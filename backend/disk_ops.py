@@ -854,14 +854,8 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
         return _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
 
 
-def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=False):
-    """Discover drives using new enclosure-based physical slot mapping."""
-    enclosures = bay_map_doc.get("enclosures", {})
-
-    # Generate master slot map (cached, 60-second TTL)
-    master_map = generate_master_slot_map(force_refresh=False)
-
-    # Build by-path lookup for legacy compatibility
+def _build_path_to_dev():
+    """Build a mapping from by-path entries to resolved device nodes."""
     path_to_dev = {}
     by_path_dir = '/dev/disk/by-path/'
     try:
@@ -871,12 +865,64 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                 path_to_dev[entry] = os.path.realpath(full_path)
     except (OSError, IOError):
         pass
+    return path_to_dev
 
-    results, passphrase = [], None
+
+def _load_wipe_passphrase():
+    """Load wipe passphrase from policy for marker HMAC verification."""
     try:
-        passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
+        return load_policy(get_config_dir()).get("wipe_passphrase")
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to load policy for wipe passphrase, marker HMAC verification disabled: {e}")
+        return None
+
+
+def _finalize_discovery(results, pending, passphrase, skip_auto_enqueue):
+    """Post-loop discovery finalization: pending collection, extended SMART, dedup, auto-enqueue."""
+    if pending:
+        if _check_discovery_interrupted():
+            return []
+        try:
+            _collect_pending_parallel(pending, passphrase, use_identity_only=True)
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
+            _collect_pending_serial(pending, passphrase, use_identity_only=True)
+
+    for bay_info in results:
+        if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
+            dev_node = bay_info.get("device")
+            resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
+            configured_by_path = bay_info.get("configured_by_path") or bay_info.get("configured_by_path_nvme")
+            cache_key = bay_info.get("_discovery_cache_key")
+            resolved_path = resolved_by_path or dev_node
+            configured_path = configured_by_path or dev_node
+            configured_type = bay_info.get("interface_type")
+            enclosure_id = bay_info.get("enclosure_id")
+            slot_number = bay_info.get("display_number")
+            _submit_drive_for_extended_smart((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number), passphrase)
+
+    _audit_dual_port_deduplication(results)
+
+    if not skip_auto_enqueue:
+        _auto_enqueue_zero_checks(results)
+
+    for bay_info in results:
+        bay_info.pop("_discovery_cache_key", None)
+
+    return results
+
+
+def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=False):
+    """Discover drives using new enclosure-based physical slot mapping."""
+    enclosures = bay_map_doc.get("enclosures", {})
+
+    # Generate master slot map (cached, 60-second TTL)
+    master_map = generate_master_slot_map(force_refresh=False)
+
+    # Build by-path lookup for legacy compatibility
+    path_to_dev = _build_path_to_dev()
+
+    results, passphrase = [], _load_wipe_passphrase()
 
     os_dev_node, os_by_path = _get_os_by_path_cached()
 
@@ -988,6 +1034,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                 # Schema-specific: legacy mode uses (resolved_by_path, dev_node) instead.
                 # Schemas are mutually exclusive; TTL cache handles expiration on schema migration.
                 cache_key = (dev_node, dev_node)
+                bay_info["_discovery_cache_key"] = cache_key
                 cached_payload = _get_cached_drive_payload(cache_key)
                 if cached_payload is not None:
                     _apply_drive_payload(bay_info, cached_payload, is_os_drive)
@@ -998,39 +1045,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
 
             results.append(bay_info)
 
-    if pending:
-        # Medium #34: Check for interruption before launching expensive collection
-        if _check_discovery_interrupted():
-            return []
-        # Phase 1: Use identity-only SMART collection for fast initial discovery
-        try:
-            _collect_pending_parallel(pending, passphrase, use_identity_only=True)
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
-            _collect_pending_serial(pending, passphrase, use_identity_only=True)
-
-    # Phase 1: Submit drives needing extended SMART to the persistent worker pool
-    for bay_info in results:
-        if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
-            dev_node = bay_info.get("device")
-            resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
-            # Use same cache key as initial discovery to ensure cache hit
-            cache_key = (dev_node, dev_node)
-            resolved_path = resolved_by_path or dev_node
-            configured_path = bay_info.get("configured_by_path") or dev_node
-            configured_type = bay_info.get("interface_type")
-            enclosure_id = bay_info.get("enclosure_id")
-            slot_number = bay_info.get("display_number")
-            _submit_drive_for_extended_smart((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number), passphrase)
-
-    # Phase 6: dual-port deduplication audit
-    _audit_dual_port_deduplication(results)
-
-    # Phase 7: queue background zero-checks for eligible internal drives
-    if not skip_auto_enqueue:
-        _auto_enqueue_zero_checks(results)
-
-    return results
+    return _finalize_discovery(results, pending, passphrase, skip_auto_enqueue)
 
 
 def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=False):
@@ -1043,20 +1058,9 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
             if isinstance(v, dict) and any(x in v for x in ["role", "by_path", "by_path_nvme", "type", "label", "locked"])
         }
 
-    path_to_dev = {}
-    by_path_dir = '/dev/disk/by-path/'
-    try:
-        for entry in os.listdir(by_path_dir):
-            full_path = os.path.join(by_path_dir, entry)
-            if os.path.islink(full_path): path_to_dev[entry] = os.path.realpath(full_path)
-    except (OSError, IOError):
-        pass
+    path_to_dev = _build_path_to_dev()
 
-    results, passphrase = [], None
-    try:
-        passphrase = load_policy(get_config_dir()).get("wipe_passphrase")
-    except Exception as e:
-        logging.getLogger(__name__).warning(f"Failed to load policy for wipe passphrase, marker HMAC verification disabled: {e}")
+    results, passphrase = [], _load_wipe_passphrase()
 
     os_dev_node, os_by_path = _get_os_by_path_cached()
 
@@ -1146,6 +1150,7 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
             # Schema-specific: enclosure mode uses (dev_node, dev_node) instead.
             # Schemas are mutually exclusive; TTL cache handles expiration on schema migration.
             cache_key = (resolved_active_path or configured_active_path, dev_node)
+            bay_info["_discovery_cache_key"] = cache_key
             cached_payload = _get_cached_drive_payload(cache_key)
             if cached_payload is not None:
                 _apply_drive_payload(bay_info, cached_payload, is_os_drive)
@@ -1156,37 +1161,4 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
             bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "by_path_not_found" if (target_path or target_path_nvme) else "missing_by_path"}
         results.append(bay_info)
 
-    if pending:
-        # Medium #34: Check for interruption before launching expensive collection
-        if _check_discovery_interrupted():
-            return []
-        # Phase 1: Use identity-only SMART collection for fast initial discovery
-        try:
-            _collect_pending_parallel(pending, passphrase, use_identity_only=True)
-        except Exception as e:
-            logging.getLogger(__name__).warning(f"Parallel drive collection failed, falling back to serial: {e}")
-            _collect_pending_serial(pending, passphrase, use_identity_only=True)
-
-    # Phase 1: Submit drives needing extended SMART to the persistent worker pool
-    for bay_info in results:
-        if bay_info.get("present") and bay_info.get("smart", {}).get("smart_polling"):
-            dev_node = bay_info.get("device")
-            resolved_by_path = bay_info.get("resolved_by_path") or bay_info.get("resolved_by_path_nvme")
-            configured_by_path = bay_info.get("configured_by_path") or bay_info.get("configured_by_path_nvme")
-            # Use same cache key as initial discovery to ensure cache hit
-            cache_key = (resolved_by_path or configured_by_path, dev_node)
-            resolved_path = resolved_by_path or dev_node
-            configured_path = configured_by_path or dev_node
-            configured_type = bay_info.get("interface_type")
-            enclosure_id = bay_info.get("enclosure_id")
-            slot_number = bay_info.get("display_number")
-            _submit_drive_for_extended_smart((cache_key, dev_node, resolved_path, configured_path, configured_type, enclosure_id, slot_number), passphrase)
-
-    # Phase 6: dual-port deduplication audit
-    _audit_dual_port_deduplication(results)
-
-    # Phase 7: queue background zero-checks for eligible internal drives
-    if not skip_auto_enqueue:
-        _auto_enqueue_zero_checks(results)
-
-    return results
+    return _finalize_discovery(results, pending, passphrase, skip_auto_enqueue)
