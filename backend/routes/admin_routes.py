@@ -1086,6 +1086,10 @@ def manage_enclosures():
             for field in required_fields:
                 if field not in payload:
                     return jsonify({"error": f"Missing required field: {field}"}), 400
+
+            # Validate enclosure name length (A91)
+            if len(payload.get("name", "")) > 100:
+                return jsonify({"error": "Enclosure name must be 100 characters or less"}), 400
             
             # Validate enclosure ID format
             if not is_valid_id(payload["id"]):
@@ -1099,7 +1103,7 @@ def manage_enclosures():
             # Validate expander_sas_address if provided
             expander_sas_address = payload.get("expander_sas_address")
             if expander_sas_address is not None:
-                if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
+                if not expander_sas_address.startswith("0x") or len(expander_sas_address) != 18 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
                     return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
             
             # Validate PCI controller exists in master map (outside lock to avoid holding lock during expensive operation)

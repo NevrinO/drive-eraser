@@ -613,6 +613,23 @@ class TestAdminRoutes:
                     assert data["enclosure"]["slots"]["0"]["physical_slot_number"] == 0
                     mock_save.assert_called_once()
 
+    def test_create_enclosure_name_too_long_returns_400(self, admin_session):
+        """Test that enclosure name exceeding 100 chars returns 400 (A91)."""
+        payload = {
+            "id": "test_enc",
+            "name": "A" * 101,
+            "template_id": "test_4bay",
+            "pci_controller": "0000:00:1f.2",
+            "expander_sas_address": None,
+            "display_order": 0,
+            "auto_map_slots": True,
+            "nvme_start_slot": None
+        }
+        response = admin_session.post('/api/admin/enclosures', json=payload)
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert "100 characters" in data["error"]
+
     def test_is_valid_device_name_multi_letter_sata(self, app):
         """Regression: multi-letter SATA device names must be accepted by is_valid_device_name."""
         from routes.admin_routes import is_valid_device_name

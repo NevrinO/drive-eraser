@@ -441,6 +441,23 @@ def _get_cached_drive_payload(cache_key):
             return entry['data']
     return None
 
+def get_cached_smart_data(device_path):
+    """Get cached drive payload for a device, encapsulating cache key construction.
+
+    Cache keys are schema-specific (see _discover_drives_enclosure/_discover_drives_legacy):
+    - Enclosure schema: (dev_node, dev_node)
+    - Legacy schema: (resolved_by_path, dev_node) — by-path not available here, so
+      legacy lookups will miss and fall through to a fresh get_smart_data() call.
+
+    Args:
+        device_path: Device path (e.g., "/dev/sda")
+
+    Returns:
+        Cached payload dict or None if not cached/expired.
+    """
+    cache_key = (device_path, device_path)
+    return _get_cached_drive_payload(cache_key)
+
 def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map, expander_sas_address=None):
     """Resolve active device path from enclosure slot configuration using master map.
 
@@ -514,6 +531,28 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         return None
     if len(hw_identifier) > 100:
         return None
+
+    # Validate pci_controller against PCI address format (A68)
+    if not isinstance(pci_controller, str) or not re.match(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]\Z', pci_controller):
+        return None
+
+    # Validate physical_slot is a non-negative integer (A68)
+    if physical_slot is not None:
+        if isinstance(physical_slot, bool):
+            return None
+        if isinstance(physical_slot, int):
+            if physical_slot < 0:
+                return None
+        elif isinstance(physical_slot, str):
+            if not physical_slot.isdigit():
+                return None
+        else:
+            return None
+
+    # Validate expander_sas_address against WWN format if provided (A68)
+    if expander_sas_address is not None:
+        if not isinstance(expander_sas_address, str) or not re.match(r'^0x[0-9a-fA-F]{16}\Z', expander_sas_address):
+            return None
 
     by_path_dir = '/dev/disk/by-path/'
 
@@ -945,7 +984,9 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                     results.append(bay_info)
                     continue
 
-                # Cache key uses device path to uniquely identify physical drive
+                # Cache key: (dev_node, dev_node) — enclosure schema format.
+                # Schema-specific: legacy mode uses (resolved_by_path, dev_node) instead.
+                # Schemas are mutually exclusive; TTL cache handles expiration on schema migration.
                 cache_key = (dev_node, dev_node)
                 cached_payload = _get_cached_drive_payload(cache_key)
                 if cached_payload is not None:
@@ -1101,8 +1142,9 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
 
             # Phase 1: expensive data (SMART/capabilities/marker) is cached per device.
             # Presence above was resolved fresh, so insert/remove stays near real time.
-            # Cache key uses only by-path and dev_node to uniquely identify physical drive hardware.
-            # Configured type is excluded since it can change independently of the drive.
+            # Cache key: (resolved_by_path, dev_node) — legacy schema format.
+            # Schema-specific: enclosure mode uses (dev_node, dev_node) instead.
+            # Schemas are mutually exclusive; TTL cache handles expiration on schema migration.
             cache_key = (resolved_active_path or configured_active_path, dev_node)
             cached_payload = _get_cached_drive_payload(cache_key)
             if cached_payload is not None:

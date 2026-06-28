@@ -772,17 +772,15 @@ def get_smart_test_status(device, diagnostics=None):
                 # Check drive cache first to avoid expensive smartctl call during polling
                 current_poh = None
                 serial = None
-                from disk_ops import _get_cached_drive_payload
-                cache_key = (device_path, device_path.replace("/dev/", ""))
-                cached_payload = _get_cached_drive_payload(cache_key)
-                if cached_payload and (time.time() - cached_payload['timestamp']) < DRIVE_DATA_CACHE_TTL:
-                    # Use cached data if available and fresh
-                    smart_info = cached_payload['data'].get('smart')
+                from disk_ops import get_cached_smart_data
+                cached_payload = get_cached_smart_data(device_path)
+                if cached_payload:
+                    smart_info = cached_payload.get('smart')
                     if smart_info:
                         current_poh = smart_info.get('power_on_hours')
                         serial = smart_info.get('serial')
-                else:
-                    # Cache miss or expired, fetch fresh data
+
+                if current_poh is None:
                     current_smart = get_smart_data(device_path, diagnostics)
                     current_poh = current_smart.get("power_on_hours")
                     serial = current_smart.get("serial")

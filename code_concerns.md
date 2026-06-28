@@ -37,7 +37,7 @@ Running document for findings across the codebase that need a deeper look before
 ### A8: [COMPLETED] [Advisory] `purge_old_certificates()` Never Called — Difficulty: Medium — Category: Dead Code
 ### A9: [COMPLETED] [Advisory] `__import__("logging")` Anti-Pattern in `load_bay_map` — Difficulty: Medium — Category: Performance
 ### A10: [COMPLETED] `get_data_dir()` / `get_config_dir()` TOCTOU Pattern — Difficulty: Medium — Category: Concurrency
-### A11: [Advisory] `POLICY_SCHEMA` Allows `additionalProperties: True` — Difficulty: Low — Category: Architecture
+### A11: [COMPLETED] [Advisory] `POLICY_SCHEMA` Allows `additionalProperties: True` — Difficulty: Low — Category: Architecture
 - **Line**: 149
 - **Issue**: Schema explicitly allows unknown keys. Typos in `policy.json` are silently ignored (warning logged) rather than rejected at validation time. Migration logic (lines 426-434) handles known deprecated keys, so unknown keys are likely user error.
 - **Impact**: Misspelled config keys silently have no effect, which can be confusing for operators.
@@ -61,7 +61,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A14: [Advisory] No Size Limit on `offsets` List — Difficulty: Medium — Category: Security
+### A14: [COMPLETED] [Advisory] No Size Limit on `offsets` List — Difficulty: Medium — Category: Security
 - **Lines**: 488-498, 608-619
 - **Issue**: `num_chunks` derived from `capacity * sample_ratio / chunk_size_bytes`. A 20TB drive with `sample_ratio=0.10` and 32MB chunks produces ~6,400 offsets, each triggering a separate `dd` subprocess. Per Lesson #9.
 - **Impact**: Excessive subprocess spawning on large drives. Slow verification, high resource usage.
@@ -105,7 +105,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Related**: none
 
 ### A22: [COMPLETED] [Advisory] `_apply_collection_failure` Assumes `diagnostics.commands` Key Exists — Difficulty: Medium — Category: Correctness
-### A23: [Advisory] Cache Key Construction Differs Between Enclosure and Legacy Modes — Difficulty: Medium — Category: Architecture
+### A23: [COMPLETED] [Advisory] Cache Key Construction Differs Between Enclosure and Legacy Modes — Difficulty: Medium — Category: Architecture
 - **Line**: 950 vs 1103
 - **Issue**: Enclosure mode uses `cache_key = (dev_node, dev_node)`, legacy uses `cache_key = (resolved_active_path or configured_active_path, dev_node)`. Schema transition would cause cache misses.
 - **Impact**: Low — schemas are mutually exclusive. TTL cache expires stale entries within `DRIVE_DATA_CACHE_TTL` seconds.
@@ -118,7 +118,7 @@ Running document for findings across the codebase that need a deeper look before
 ### A65: [COMPLETED] [Advisory] `get_all_controllers()` Is Dead Code in Production — Difficulty: Trivial — Category: Dead Code
 ### A66: [COMPLETED] [Advisory] `passphrase=None` Silently Disables Marker HMAC Verification — Difficulty: Low — Category: Error Handling
 ### A67: [COMPLETED] [Advisory] `_collect_pending_parallel` Orphaned Threads on Timeout — Difficulty: Medium — Category: Resource Management
-### A68: [Advisory] `pci_controller`, `physical_slot`, `expander_sas_address` Not Validated in `_resolve_device_from_hardware_identifier` — Difficulty: Medium — Category: Security
+### A68: [COMPLETED] [Advisory] `pci_controller`, `physical_slot`, `expander_sas_address` Not Validated in `_resolve_device_from_hardware_identifier` — Difficulty: Medium — Category: Security
 - **Lines**: 473-613
 - **Issue**: `pci_controller` is used in f-string path matching patterns (e.g., `f"pci-{pci_controller}-sas-exp"` at line 521). `physical_slot` is used in patterns like `f"-phy{physical_slot}-"` at line 523. `expander_sas_address` is used in `f"pci-{pci_controller}-sas-exp{expander_sas_address}-phy{physical_slot}-"` at line 513. None are validated. While they come from `bay_map.json` config (not direct user input), per Lesson #12 defense-in-depth, config values used in path matching should be validated. A malformed `pci_controller` value (e.g., containing `-sas-exp-phy0-`) could cause the prefix match to hit unintended by-path entries. `hw_identifier` is correctly validated (lines 491-497), but the other parameters are not.
 - **Impact**: Low — config is admin-controlled via bay mapping UI, not direct user input. But defense-in-depth per Lesson #12. A corrupted or maliciously modified `bay_map.json` could cause incorrect device resolution.
@@ -193,7 +193,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ### C13: [COMPLETED] [Critical] `ERASE_JOBS_LOCK` held during subprocess calls in `kill_all_jobs` — Difficulty: Medium — Category: Concurrency
 ### C14: [COMPLETED] [Critical] Hardcoded OS device paths in SMART test endpoint — Difficulty: Medium — Category: Code Quality
-### A34: [DOCUMENTED] [Advisory] `str(e)` in API responses throughout (information disclosure) — Difficulty: Medium — Category: Security
+### A34: [COMPLETED] [DOCUMENTED] [Advisory] `str(e)` in API responses throughout (information disclosure) — Difficulty: Medium — Category: Security
 - **Lines**: 178, 212, 263, 428, 446, 509, 577, 1008, 1049, 1353, 1558, 1582, 1644, 1694, 1720, 1780, 1812, 1871, 1914, 1941, 1967, 2027, 2051, 2345, 2494, 2587
 - **Issue**: Exception messages returned directly to clients via `jsonify({"error": str(e)})`. Can expose internal file paths, database schema, stack trace fragments.
 - **Impact**: Low — LAN-only tool, but violates defense-in-depth.
@@ -210,7 +210,7 @@ Running document for findings across the codebase that need a deeper look before
 ## backend/routes/drive_routes.py
 
 ### C15: [COMPLETED] [Critical] `ERASE_JOBS_LOCK` held during database queries in `get_drives` — Difficulty: Medium — Category: Concurrency
-### A39: [Advisory] `bay` URL parameter not validated in zero-check endpoints — Difficulty: Medium — Category: Code Quality
+### A39: [COMPLETED] [Advisory] `bay` URL parameter not validated in zero-check endpoints — Difficulty: Medium — Category: Code Quality
 - **Lines**: 177, 208
 - **Issue**: `bay` parameter from URL path passed directly to `manager.start_check(bay, ...)` and `manager.cancel_check(bay)` without validation.
 - **Impact**: Low — used as dict key (no injection risk), but arbitrary strings could be passed.
@@ -218,7 +218,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A40: [DOCUMENTED] [Advisory] `str(e)` in error responses — Difficulty: Medium — Category: Security
+### A40: [COMPLETED] [DOCUMENTED] [Advisory] `str(e)` in error responses — Difficulty: Medium — Category: Security
 - **Lines**: 131, 205, 218
 - **Issue**: Same pattern as admin_routes.py — exception messages returned to clients.
 - **Impact**: Low — LAN-only tool.
@@ -280,7 +280,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A59: [Advisory] `resolve_multipath_parent` missing input validation — Difficulty: Low — Category: Security
+### A59: [COMPLETED] [Advisory] `resolve_multipath_parent` missing input validation — Difficulty: Low — Category: Security
 - **Lines**: 1307-1343
 - **Issue**: `dev_name` is used directly in path construction: `f"/sys/block/{dev_name}/holders"`. If `dev_name` contains `..` or `/`, this could traverse to unintended directories. All current callers pass `os.path.basename()` results, so the risk is low in practice. Per Lesson #12: "Validate device paths against a strict regex whitelist before using in command construction."
 - **Impact**: Low — defense-in-depth concern. If a future caller passes unvalidated input, path traversal is possible.
@@ -320,7 +320,7 @@ Running document for findings across the codebase that need a deeper look before
 ### A94: [COMPLETED] [Advisory] SAS and HDD POH penalty branches are identical — dead branch — Difficulty: Trivial — Category: Code Quality
 ### A95: [COMPLETED] [Advisory] `ssd_high_poh_thresh * 2 - ssd_high_poh_thresh` misleading dead math — Difficulty: Trivial — Category: Code Quality
 ### A96: [COMPLETED] [Advisory] `os.path.exists` TOCTOU patterns — Difficulty: Low — Category: Concurrency
-### A97: [DOCUMENTED] [Advisory] `str(e)` in error responses — information disclosure — Difficulty: Low — Category: Security
+### A97: [COMPLETED] [DOCUMENTED] [Advisory] `str(e)` in error responses — information disclosure — Difficulty: Low — Category: Security
 - **Lines**: 654, 656 (`run_smart_test`), 918, 920 (`get_smart_test_status`)
 - **Issue**: Exception messages returned directly to clients via `{"error": f"... {str(e)}"}`. Can expose internal file paths, system details, or stack trace fragments.
 - **Impact**: Low — LAN-only tool, but violates defense-in-depth.
@@ -339,7 +339,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ### A73: [COMPLETED] [Advisory] `get_smart_test_status` inconsistent return structure across device types — Difficulty: Medium — Category: Architecture
 ### A74: [COMPLETED] [Advisory] `get_drive_recommendation` line 997 — unreadable ternary expression — Difficulty: Low — Category: Code Quality
-### A75: [Advisory] `get_smart_test_status` cache key construction assumes disk_ops internal format — Difficulty: Medium — Category: Architecture
+### A75: [COMPLETED] [Advisory] `get_smart_test_status` cache key construction assumes disk_ops internal format — Difficulty: Medium — Category: Architecture
 - **Line**: 775
 - **Issue**: `cache_key = (device_path, device_path.replace("/dev/", ""))` constructs a cache key matching the format used by `disk_ops._get_cached_drive_payload`. This creates fragile cross-module coupling — if `disk_ops` changes its cache key format, this code silently breaks (cache miss, falls through to fresh `get_smart_data` call).
 - **Impact**: Low — the fallback (fresh `get_smart_data`) is correct, so a cache key mismatch only causes a performance regression, not a correctness bug. But the coupling is invisible and fragile.
@@ -409,7 +409,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: A70, A78 (same issue in other files)
 
-### A91: [Advisory] No maximum length validation on enclosure name — Difficulty: Low — Category: Security
+### A91: [COMPLETED] [Advisory] No maximum length validation on enclosure name — Difficulty: Low — Category: Security
 - **Lines**: 772-777
 - **Issue**: The enclosure name is trimmed and sanitized to generate an ID (line 773), and the ID is validated for minimum length (2 chars) and format. But there is no maximum length check on the name itself. The backend `is_valid_id` limits the ID to 100 chars, but the `name` field is stored directly without length validation. A very long name (e.g., 10,000 chars) would be accepted by the frontend and sent to the backend. Per Lesson #38 (Client-Side Validation Consistency) and Lesson #8 (String Content Validation).
 - **Impact**: Low — the backend stores the name in `bay_map.json` which is not size-constrained per-field. A very long name could bloat the config file and break UI rendering in the enclosure list.

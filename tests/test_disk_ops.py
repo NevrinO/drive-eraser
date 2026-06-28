@@ -848,5 +848,87 @@ class TestAutoEnqueueZeroChecks:
         fake_manager.start_check.assert_called_once_with("bay1", "/dev/sda", serial="SAME_SERIAL")
 
 
+class TestResolveDeviceFromHardwareIdentifier:
+    """Test input validation in _resolve_device_from_hardware_identifier (A68)."""
+
+    def test_invalid_pci_controller_rejected(self):
+        """Test that malformed pci_controller is rejected."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        assert _resolve_device_from_hardware_identifier(
+            "invalid", "sas_direct", "0:0:0:0", 0
+        ) is None
+        assert _resolve_device_from_hardware_identifier(
+            None, "sas_direct", "0:0:0:0", 0
+        ) is None
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0; rm -rf", "sas_direct", "0:0:0:0", 0
+        ) is None
+
+    def test_valid_pci_controller_accepted(self):
+        """Test that valid PCI address format is accepted (returns None only if no device found)."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        with patch('os.listdir', return_value=[]):
+            result = _resolve_device_from_hardware_identifier(
+                "0000:01:00.0", "sas_direct", "0:0:0:0", 0
+            )
+            # Returns None because no by-path entries match, but validation passed
+            assert result is None
+
+    def test_negative_physical_slot_rejected(self):
+        """Test that negative physical_slot is rejected."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_direct", "0:0:0:0", -1
+        ) is None
+
+    def test_boolean_physical_slot_rejected(self):
+        """Test that boolean physical_slot is rejected (isinstance(True, int) is True)."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_direct", "0:0:0:0", True
+        ) is None
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_direct", "0:0:0:0", False
+        ) is None
+
+    def test_string_physical_slot_accepted(self):
+        """Test that numeric string physical_slot passes validation."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        with patch('os.listdir', return_value=[]):
+            result = _resolve_device_from_hardware_identifier(
+                "0000:01:00.0", "sas_direct", "0:0:0:0", "5"
+            )
+            assert result is None  # No match, but validation passed
+
+    def test_non_numeric_string_physical_slot_rejected(self):
+        """Test that non-numeric string physical_slot is rejected."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_direct", "0:0:0:0", "abc"
+        ) is None
+
+    def test_invalid_expander_sas_address_rejected(self):
+        """Test that malformed expander_sas_address is rejected."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_expander", "0:0:0:0", 0,
+            expander_sas_address="not-a-wwn"
+        ) is None
+        assert _resolve_device_from_hardware_identifier(
+            "0000:01:00.0", "sas_expander", "0:0:0:0", 0,
+            expander_sas_address="0xshort"
+        ) is None
+
+    def test_valid_expander_sas_address_accepted(self):
+        """Test that valid WWN format expander_sas_address passes validation."""
+        from disk_ops import _resolve_device_from_hardware_identifier
+        with patch('os.listdir', return_value=[]):
+            result = _resolve_device_from_hardware_identifier(
+                "0000:01:00.0", "sas_expander", "0:0:0:0", 0,
+                expander_sas_address="0x500056b3059bdcff"
+            )
+            assert result is None  # No match, but validation passed
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

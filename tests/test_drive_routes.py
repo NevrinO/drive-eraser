@@ -337,5 +337,31 @@ class TestDriveRoutes:
                         assert call_kwargs.kwargs.get("skip_auto_enqueue") is True
 
 
+    def test_validate_bay_rejects_invalid_identifiers(self):
+        """Test that _validate_bay rejects invalid bay identifiers (A39)."""
+        from routes.drive_routes import _validate_bay
+        assert _validate_bay("bay1") is True
+        assert _validate_bay("BAY-2") is True
+        assert _validate_bay("a") is True
+        assert _validate_bay("") is False
+        assert _validate_bay(None) is False
+        assert _validate_bay(123) is False
+        assert _validate_bay("../etc") is False
+        assert _validate_bay("bay;rm") is False
+        assert _validate_bay("a" * 51) is False  # Exceeds 50 char limit
+
+    def test_start_zero_check_invalid_bay_returns_400(self, client):
+        """Test that invalid bay identifier returns 400 on zero-check start (A39)."""
+        with patch('routes.admin_routes.is_local_request', return_value=True):
+            response = client.post('/api/drives/bay%3Brm/zero-check')
+            assert response.status_code == 400
+
+    def test_cancel_zero_check_invalid_bay_returns_400(self, client):
+        """Test that invalid bay identifier returns 400 on zero-check cancel (A39)."""
+        with patch('routes.admin_routes.is_local_request', return_value=True):
+            response = client.delete('/api/drives/bay%3Brm/zero-check')
+            assert response.status_code == 400
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

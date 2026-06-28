@@ -1101,8 +1101,13 @@ def resolve_multipath_parent(dev_name: str) -> str:
     if not dev_name or not isinstance(dev_name, str):
         return f"/dev/{dev_name}" if dev_name else "/dev/unknown"
 
+    if not re.match(r'^[a-zA-Z0-9_-]+\Z', dev_name):
+        return "/dev/unknown"
+
     # Check if device is already a device mapper node
-    if dev_name.startswith('dm-') or dev_name.startswith('mapper/'):
+    # Note: 'mapper/' prefix is rejected by the regex above (contains '/'),
+    # so only 'dm-' prefixed names reach this branch.
+    if dev_name.startswith('dm-'):
         return f"/dev/{dev_name}" if not dev_name.startswith('/') else dev_name
 
     holders_dir = f"/sys/block/{dev_name}/holders"

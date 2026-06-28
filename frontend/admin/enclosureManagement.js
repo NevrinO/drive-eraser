@@ -773,6 +773,10 @@ document.getElementById("wizardNextBtn")?.addEventListener("click", () => {
       alert("Enclosure name must be at least 2 characters.");
       return;
     }
+    if (trimmedName.length > 100) {
+      alert("Enclosure name must be 100 characters or less.");
+      return;
+    }
     if (!wizardData.pci_controller) {
       alert("Please select a controller.");
       return;

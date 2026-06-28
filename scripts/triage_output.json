@@ -1,7 +1,7 @@
 {
   "total_issues": 125,
-  "completed": 94,
-  "pending": 31,
+  "completed": 105,
+  "pending": 20,
   "groups": [
     {
       "id": "G1",
@@ -59,97 +59,6 @@
     },
     {
       "id": "G2",
-      "pattern": "Input validation gaps",
-      "pattern_id": "input_validation",
-      "fix_shape": "Validate input types, formats, and enforce size limits",
-      "issues": [
-        {
-          "id": "A11",
-          "title": "`POLICY_SCHEMA` Allows `additionalProperties: True`",
-          "file": "backend/common.py",
-          "line": "149",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Architecture",
-          "suggestion": "Consider `additionalProperties: False` for stricter validation, with explicit handling of all deprecated keys in migration logic."
-        },
-        {
-          "id": "A59",
-          "title": "`resolve_multipath_parent` missing input validation",
-          "file": "backend/device_discovery.py",
-          "line": "1307-1343",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Security",
-          "suggestion": "Add a device name validation check (e.g., `re.match(r'^[a-zA-Z0-9]+$', dev_name)`) at the start of the function. Return the original `/dev/{dev_name}` path if validation fails."
-        },
-        {
-          "id": "A91",
-          "title": "No maximum length validation on enclosure name",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "772-777",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Security",
-          "suggestion": "Add a maximum length check (e.g., 100 chars) on the enclosure name in the frontend before generating the ID. Add corresponding backend validation for the `name` field length."
-        },
-        {
-          "id": "A14",
-          "title": "No Size Limit on `offsets` List",
-          "file": "backend/crypto_verification.py",
-          "line": "488-498, 608-619",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Cap `num_chunks` at a reasonable maximum (e.g., 1000)."
-        },
-        {
-          "id": "A68",
-          "title": "`pci_controller`, `physical_slot`, `expander_sas_address` Not Validated in `_resolve_device_from_hardware_identifier`",
-          "file": "backend/disk_ops.py",
-          "line": "473-613",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Validate `pci_controller` against PCI address regex (e.g., `r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\\.[0-9a-fA-F]\\Z'`). Validate `physical_slot` is a non-negative integer. Validate `expander_sa"
-        },
-        {
-          "id": "A39",
-          "title": "`bay` URL parameter not validated in zero-check endpoints",
-          "file": "backend/routes/drive_routes.py",
-          "line": "177, 208",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Code Quality",
-          "suggestion": "Validate `bay` against expected format (alphanumeric, reasonable length)."
-        }
-      ],
-      "issue_ids": [
-        "A11",
-        "A59",
-        "A91",
-        "A14",
-        "A68",
-        "A39"
-      ],
-      "files": [
-        "backend/common.py",
-        "backend/crypto_verification.py",
-        "backend/device_discovery.py",
-        "backend/disk_ops.py",
-        "backend/routes/drive_routes.py",
-        "frontend/admin/enclosureManagement.js"
-      ],
-      "weight": 18,
-      "difficulty_breakdown": {
-        "low": 3,
-        "medium": 3
-      },
-      "session_size": "large",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G3",
       "pattern": "DRY: duplicated logic across functions/files",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -202,11 +111,11 @@
       "session_size": "large",
       "action": "plan",
       "related_groups": [
-        "G4"
+        "G3"
       ]
     },
     {
-      "id": "G4",
+      "id": "G3",
       "pattern": "DRY: duplicated logic across functions/files (batch 2)",
       "pattern_id": "dry_violation",
       "fix_shape": "Extract shared helper function and update all call sites to use it",
@@ -235,41 +144,11 @@
       "session_size": "small",
       "action": "plan",
       "related_groups": [
-        "G3"
+        "G2"
       ]
     },
     {
-      "id": "G5",
-      "pattern": "Concurrency: missing/improper locks",
-      "pattern_id": "concurrency_lock",
-      "fix_shape": "Add locks around shared mutable state or restructure lock scope",
-      "issues": [
-        {
-          "id": "A32",
-          "title": "`_emit_update` double lock acquisition",
-          "file": "backend/zero_check_manager.py",
-          "line": "80, 104, 196",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Concurrency",
-          "suggestion": "Pass the status dict directly to `_emit_update` instead of re-reading it."
-        }
-      ],
-      "issue_ids": [
-        "A32"
-      ],
-      "files": [
-        "backend/zero_check_manager.py"
-      ],
-      "weight": 4,
-      "difficulty_breakdown": {
-        "medium": 1
-      },
-      "session_size": "small",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G6",
+      "id": "G4",
       "pattern": "Information disclosure: str(e) in API responses",
       "pattern_id": "info_disclosure",
       "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
@@ -324,7 +203,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G7",
+      "id": "G5",
       "pattern": "File organization: domain mixing / god modules",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -365,11 +244,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G8"
+        "G6"
       ]
     },
     {
-      "id": "G8",
+      "id": "G6",
       "pattern": "File organization: domain mixing / god modules (batch 2)",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -410,11 +289,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G7"
+        "G5"
       ]
     },
     {
-      "id": "G9",
+      "id": "G7",
       "pattern": "Misc: Architecture",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -480,7 +359,7 @@
       "action": "batch_fix"
     },
     {
-      "id": "G10",
+      "id": "G8",
       "pattern": "Misc: Performance",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
@@ -496,26 +375,6 @@
           "suggestion": "Pre-compute all-zeros hash once, skip re-reading chunks whose before-hash differs from it."
         },
         {
-          "id": "A69",
-          "title": "`_get_os_by_path_cached` Race Causes Redundant Work",
-          "file": "backend/disk_ops.py",
-          "line": "279-288",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "Hold `_OS_BY_PATH_LOCK` during the `get_os_by_path()` call (double-checked locking pattern), or accept the race as benign given the one-time nature."
-        },
-        {
-          "id": "A58",
-          "title": "`get_enclosure_hardware_info` lists same directory twice",
-          "file": "backend/device_discovery.py",
-          "line": "596 and 686",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "List once, store the result, and reuse for both the PCI controller extraction and slot counting loops."
-        },
-        {
           "id": "A76",
           "title": "`get_smart_data` re-parses raw JSON in `calculate_drive_health_score`",
           "file": "backend/smart_parsing.py",
@@ -524,49 +383,21 @@
           "difficulty": "low",
           "category": "Performance",
           "suggestion": "Pass the parsed `data` dict to `calculate_drive_health_score` instead of the raw string, or extract the needed fields (media_errors, exit_status) in `get_smart_data` and include them in the smart_data"
-        },
-        {
-          "id": "A88",
-          "title": "NVMe slot dropdown built inside forEach loop",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "624-634",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "Move the `nvmeSlots` computation and `nvmeOptions` string building outside the `forEach` loop, before the loop starts."
-        },
-        {
-          "id": "A13",
-          "title": "`b'\\x00' * len(data)` Zero-Check Allocates Full-Size Temporary",
-          "file": "backend/crypto_verification.py",
-          "line": "523, 767, 839",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Performance",
-          "suggestion": "Use `not any(memoryview(data))` for memory efficiency."
         }
       ],
       "issue_ids": [
         "A16",
-        "A69",
-        "A58",
-        "A76",
-        "A88",
-        "A13"
+        "A76"
       ],
       "files": [
         "backend/crypto_verification.py",
-        "backend/device_discovery.py",
-        "backend/disk_ops.py",
-        "backend/smart_parsing.py",
-        "frontend/admin/enclosureManagement.js"
+        "backend/smart_parsing.py"
       ],
-      "weight": 14,
+      "weight": 4,
       "difficulty_breakdown": {
-        "low": 5,
-        "medium": 1
+        "low": 2
       },
-      "session_size": "medium",
+      "session_size": "small",
       "action": "batch_fix"
     }
   ],

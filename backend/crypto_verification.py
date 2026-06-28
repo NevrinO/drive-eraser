@@ -16,6 +16,8 @@ from common import get_device_lock, load_policy
 _verification_interrupted = False
 _verification_interrupt_lock = threading.Lock()
 
+_MAX_SAMPLE_OFFSETS = 1000
+
 def _generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read_bytes):
     """Generate spaced random offsets spanning the entire LBA for sampled verification."""
     offsets = []
@@ -24,6 +26,7 @@ def _generate_sampled_offsets(capacity, sample_ratio, chunk_size_bytes, max_read
         target_read_bytes = max_read_bytes
 
     num_chunks = max(1, target_read_bytes // chunk_size_bytes)
+    num_chunks = min(num_chunks, _MAX_SAMPLE_OFFSETS)
     if capacity < chunk_size_bytes:
         chunk_size_bytes = capacity
         num_chunks = 1

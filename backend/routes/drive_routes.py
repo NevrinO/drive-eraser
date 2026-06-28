@@ -1,6 +1,7 @@
 # Drive-related routes
 import os
 import json
+import re
 import sqlite3
 from contextlib import closing
 from flask import Blueprint, jsonify
@@ -17,6 +18,15 @@ from device_discovery import (
     invalidate_master_slot_cache
 )
 from flask import request
+
+_BAY_PATTERN = re.compile(r'^[a-zA-Z0-9_-]{1,50}\Z')
+
+
+def _validate_bay(bay):
+    """Validate bay parameter from URL path (A39)."""
+    if not bay or not isinstance(bay, str) or not _BAY_PATTERN.match(bay):
+        return False
+    return True
 
 drive_bp = Blueprint('drive_routes', __name__)
 
@@ -194,6 +204,8 @@ def _resolve_drive_for_bay(bay):
 @limiter.limit("30 per minute")
 def start_zero_check(bay):
     """Manually trigger a background zero-check for a bay."""
+    if not _validate_bay(bay):
+        return jsonify({"error": "Invalid bay identifier"}), 400
     try:
         drive = _resolve_drive_for_bay(bay)
         if not drive:
@@ -225,6 +237,8 @@ def start_zero_check(bay):
 @limiter.limit("30 per minute")
 def cancel_zero_check(bay):
     """Cancel a running or queued zero-check for a bay."""
+    if not _validate_bay(bay):
+        return jsonify({"error": "Invalid bay identifier"}), 400
     try:
         manager = get_zero_check_manager()
         result = manager.cancel_check(bay)

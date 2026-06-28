@@ -75,7 +75,8 @@ class TestResolveMultipathParent:
         """Test that device mapper nodes return as-is."""
         from device_discovery import resolve_multipath_parent
         assert resolve_multipath_parent('dm-0') == '/dev/dm-0'
-        assert resolve_multipath_parent('mapper/mpatha') == '/dev/mapper/mpatha'
+        # 'mapper/' prefix contains '/' and is rejected by regex validation
+        assert resolve_multipath_parent('mapper/mpatha') == '/dev/unknown'
 
     def test_none_input_handling(self):
         """Test handling of None input."""
@@ -96,6 +97,14 @@ class TestResolveMultipathParent:
             with patch('device_discovery.os.listdir', side_effect=OSError):
                 result = resolve_multipath_parent('sda')
                 assert result == '/dev/sda'
+
+    def test_path_traversal_rejected(self):
+        """Test that dev_name with path traversal chars returns /dev/unknown (A59)."""
+        from device_discovery import resolve_multipath_parent
+        assert resolve_multipath_parent("../etc/passwd") == "/dev/unknown"
+        assert resolve_multipath_parent("sda/../../etc") == "/dev/unknown"
+        assert resolve_multipath_parent("sda\x00") == "/dev/unknown"
+        assert resolve_multipath_parent("sda*;rm") == "/dev/unknown"
 
 
 class TestGenerateMasterSlotMap:

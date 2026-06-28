@@ -149,7 +149,7 @@ POLICY_SCHEMA = {
             "additionalProperties": False,
         },
     },
-    "additionalProperties": True,  # Allow unknown keys but log warnings
+    "additionalProperties": False,
 }
 
 # JSON schema for template configuration (physical layout definitions)
@@ -387,6 +387,13 @@ def load_policy(config_dir=None):
             if not isinstance(data, dict):
                 raise ValueError("policy.json must contain a JSON object")
 
+            # Strip deprecated keys not in schema before validation (A11)
+            _DEPRECATED_POLICY_KEYS = {"prewipe_spot_check"}
+            deprecated_values = {}
+            for dep_key in _DEPRECATED_POLICY_KEYS:
+                if dep_key in data:
+                    deprecated_values[dep_key] = data.pop(dep_key)
+
             # High #9: Validate against schema
             try:
                 validate(instance=data, schema=POLICY_SCHEMA)
@@ -394,15 +401,6 @@ def load_policy(config_dir=None):
                 raise ValueError(
                     f"Configuration validation failed: {e.message} "
                     f"(path: {'.'.join(str(p) for p in e.path)})"
-                )
-
-            # High #9: Log warnings for unknown configuration keys
-            known_keys = set(POLICY_SCHEMA["properties"].keys())
-            unknown_keys = set(data.keys()) - known_keys
-            if unknown_keys:
-                logger.warning(
-                    f"Unknown configuration keys in policy.json: {', '.join(sorted(unknown_keys))}. "
-                    f"These keys will be ignored."
                 )
 
             # Merge with defaults
@@ -414,10 +412,9 @@ def load_policy(config_dir=None):
                 merged["secondary_verification_mode"] = merged["crypto_verification_mode"]
 
             # Migration: deprecated prewipe_spot_check -> prewipe_zero_detection_enabled
-            if "prewipe_spot_check" in merged:
+            if "prewipe_spot_check" in deprecated_values:
                 if "prewipe_zero_detection_enabled" not in data:
-                    merged["prewipe_zero_detection_enabled"] = merged["prewipe_spot_check"]
-                merged.pop("prewipe_spot_check", None)
+                    merged["prewipe_zero_detection_enabled"] = deprecated_values["prewipe_spot_check"]
 
             return merged
     except FileNotFoundError:
