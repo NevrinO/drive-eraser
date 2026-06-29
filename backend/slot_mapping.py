@@ -422,12 +422,16 @@ def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
     scsi_device_base = "/sys/class/scsi_device"
     MAX_TOTAL_PROJECTIONS = 1000  # Rule #5: enforce size limits for DoS prevention
 
+    if not os.path.exists(scsi_host_base):
+        return projections
     try:
         host_dirs = os.listdir(scsi_host_base)
     except (OSError, IOError):
         logging.warning(f"Failed to list SCSI host directory: {scsi_host_base}")
         return projections
 
+    if not os.path.exists(scsi_device_base):
+        return projections
     try:
         scsi_device_dirs = os.listdir(scsi_device_base)
     except (OSError, IOError):
