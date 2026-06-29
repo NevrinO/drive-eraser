@@ -42,7 +42,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A70: [Advisory] File Size 1148 Lines Exceeds 800-Line Threshold — Difficulty: High — Category: Organization
+### A70: [COMPLETED] File Size 1148 Lines Exceeds 800-Line Threshold — Difficulty: High — Category: Organization
 - **Lines**: 1-1148
 - **Issue**: File is 1148 lines, exceeding the 800-line threshold. Contains OS drive detection, discovery engine (enclosure + legacy schemas), parallel drive data collection, background extended SMART pool management, zero-check eligibility, per-device caching, device resolution from hardware identifiers, and dual-port deduplication — all in one file.
 - **Impact**: Medium — difficult to navigate and maintain. AI agents with ~200k context windows must read the full file plus all context (callers, lessons-learned, security deviations) within a single generation.

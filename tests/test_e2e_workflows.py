@@ -194,7 +194,7 @@ class TestE2EEraseWorkflow:
     @patch('os.listdir')
     @patch('os.path.islink')
     @patch('os.path.realpath')
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     def test_discovery_workflow_os_detection(self, mock_get_os_parent, mock_realpath, mock_islink, mock_listdir, mock_exists):
         """Test that OS drive detection works in discovery workflow."""
         from disk_ops import get_os_by_path

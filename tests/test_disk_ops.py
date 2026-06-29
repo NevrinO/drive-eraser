@@ -132,7 +132,7 @@ class TestGetOSParentDevice:
 class TestGetOSByPath:
     """Test OS drive by-path resolution."""
 
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     @patch('os.path.exists')
     @patch('os.listdir')
     @patch('os.path.islink')
@@ -150,7 +150,7 @@ class TestGetOSByPath:
         assert dev_node == "/dev/sda"
         assert by_path == "pci-0000:00:1f.2-ata-1"
 
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     def test_get_os_by_path_no_parent(self, mock_get_parent):
         """Test when parent device cannot be determined."""
         mock_get_parent.return_value = None
@@ -158,7 +158,7 @@ class TestGetOSByPath:
         assert dev_node is None
         assert by_path is None
 
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     @patch('os.path.exists')
     def test_get_os_by_path_no_by_path_dir(self, mock_exists, mock_get_parent):
         """Test when /dev/disk/by-path does not exist."""
@@ -168,7 +168,7 @@ class TestGetOSByPath:
         assert dev_node == "/dev/sda"
         assert by_path is None
 
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     @patch('os.path.exists')
     @patch('os.listdir')
     @patch('os.path.islink')
@@ -194,10 +194,10 @@ class TestDiscoveryInterruption:
     def test_signal_handler_sets_interrupted_flag(self):
         """Test that signal handler increments generation counter."""
         from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state
-        import disk_ops
+        import discovery_state
 
         # Set thread-local generation to current value
-        _discovery_thread_state.generation = disk_ops._discovery_interrupt_generation
+        _discovery_thread_state.generation = discovery_state._discovery_interrupt_generation
 
         # Initially not interrupted
         assert _check_discovery_interrupted() is False
@@ -211,10 +211,10 @@ class TestDiscoveryInterruption:
     def test_check_interrupted_thread_safe(self):
         """Test that _check_discovery_interrupted is thread-safe."""
         from disk_ops import _handle_discovery_signal, _check_discovery_interrupted, _discovery_thread_state
-        import disk_ops
+        import discovery_state
         import threading
 
-        gen_before_signal = disk_ops._discovery_interrupt_generation
+        gen_before_signal = discovery_state._discovery_interrupt_generation
 
         # Simulate signal handler
         _handle_discovery_signal(None, None)
@@ -367,9 +367,9 @@ class TestPresenceDetectionUncached:
         """Clear cache after each test."""
         invalidate_drive_cache()
 
-    @patch('disk_ops.resolve_bay_device')
-    @patch('disk_ops.scan_pci_controllers')
-    @patch('disk_ops.load_policy')
+    @patch('discovery.resolve_bay_device')
+    @patch('discovery.scan_pci_controllers')
+    @patch('discovery.load_policy')
     @patch('builtins.open', create=True)
     @patch('os.path.exists')
     @patch('os.listdir')
@@ -398,8 +398,8 @@ class TestPresenceDetectionUncached:
 
         # First call: drive present
         mock_resolve.return_value = ("pci-0000:00:1f.2-ata-1", "/dev/sda")
-        with patch('disk_ops._get_os_by_path_cached', return_value=(None, None)):
-            with patch('disk_ops._collect_drive_data') as mock_collect:
+        with patch('discovery._get_os_by_path_cached', return_value=(None, None)):
+            with patch('discovery._collect_drive_data') as mock_collect:
                 mock_collect.return_value = {
                     "present": True,
                     "device": "/dev/sda",
@@ -414,7 +414,7 @@ class TestPresenceDetectionUncached:
 
         # Second call: drive removed (resolve_bay_device returns None)
         mock_resolve.return_value = (None, None)
-        with patch('disk_ops._get_os_by_path_cached', return_value=(None, None)):
+        with patch('discovery._get_os_by_path_cached', return_value=(None, None)):
             results2 = discover_drives(bay_map_path='/tmp/test_bay_map.json')
 
         assert isinstance(results2, list)
@@ -422,9 +422,9 @@ class TestPresenceDetectionUncached:
         assert results2[0]["present"] is False
         assert results2[0]["status"] == "EMPTY"
 
-    @patch('disk_ops.resolve_bay_device')
-    @patch('disk_ops.scan_pci_controllers')
-    @patch('disk_ops.load_policy')
+    @patch('discovery.resolve_bay_device')
+    @patch('discovery.scan_pci_controllers')
+    @patch('discovery.load_policy')
     @patch('builtins.open', create=True)
     @patch('os.path.exists')
     @patch('os.listdir')
@@ -452,7 +452,7 @@ class TestPresenceDetectionUncached:
 
         # First call: drive absent
         mock_resolve.return_value = (None, None)
-        with patch('disk_ops._get_os_by_path_cached', return_value=(None, None)):
+        with patch('discovery._get_os_by_path_cached', return_value=(None, None)):
             results1 = discover_drives(bay_map_path='/tmp/test_bay_map.json')
 
         assert isinstance(results1, list)
@@ -461,8 +461,8 @@ class TestPresenceDetectionUncached:
 
         # Second call: drive inserted
         mock_resolve.return_value = ("pci-0000:00:1f.2-ata-1", "/dev/sda")
-        with patch('disk_ops._get_os_by_path_cached', return_value=(None, None)):
-            with patch('disk_ops._collect_drive_data') as mock_collect:
+        with patch('discovery._get_os_by_path_cached', return_value=(None, None)):
+            with patch('discovery._collect_drive_data') as mock_collect:
                 mock_collect.return_value = {
                     "present": True,
                     "device": "/dev/sda",
@@ -677,14 +677,14 @@ class TestExtendedSmartPool:
     def test_get_background_smart_max_workers_default(self):
         """Default background worker count is 4."""
         from disk_ops import get_background_smart_max_workers
-        with patch('disk_ops.load_policy') as mock_load_policy:
+        with patch('extended_smart.load_policy') as mock_load_policy:
             mock_load_policy.return_value = {}
             assert get_background_smart_max_workers() == 4
 
     def test_get_background_smart_max_workers_clamped(self):
         """Worker count is clamped to [1, 8]."""
         from disk_ops import get_background_smart_max_workers
-        with patch('disk_ops.load_policy') as mock_load_policy:
+        with patch('extended_smart.load_policy') as mock_load_policy:
             mock_load_policy.return_value = {"background_smart_max_workers": 50}
             assert get_background_smart_max_workers() == 8
             mock_load_policy.return_value = {"background_smart_max_workers": 0}
@@ -694,7 +694,7 @@ class TestExtendedSmartPool:
         """Submitting a drive adds its cache key to the pending set."""
         from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
-        with patch('disk_ops._get_extended_smart_executor'):
+        with patch('extended_smart._get_extended_smart_executor'):
             _submit_drive_for_extended_smart(item, "pass")
             with _EXTENDED_SMART_LOCK:
                 assert item[0] in _EXTENDED_SMART_PENDING
@@ -703,7 +703,7 @@ class TestExtendedSmartPool:
         """Duplicate submissions for the same cache key are ignored."""
         from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
-        with patch('disk_ops._get_extended_smart_executor'):
+        with patch('extended_smart._get_extended_smart_executor'):
             _submit_drive_for_extended_smart(item, "pass")
             _submit_drive_for_extended_smart(item, "pass")
             with _EXTENDED_SMART_LOCK:
@@ -715,7 +715,7 @@ class TestExtendedSmartPool:
         from disk_ops import _submit_drive_for_extended_smart, _EXTENDED_SMART_PENDING, _EXTENDED_SMART_LOCK
         disk_ops._shutdown_event.set()
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
-        with patch('disk_ops._get_extended_smart_executor'):
+        with patch('extended_smart._get_extended_smart_executor'):
             _submit_drive_for_extended_smart(item, "pass")
             with _EXTENDED_SMART_LOCK:
                 assert item[0] not in _EXTENDED_SMART_PENDING
@@ -724,8 +724,8 @@ class TestExtendedSmartPool:
         """Tasks skip processing when the cache already has a finished payload."""
         import disk_ops
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
-        with patch('disk_ops._get_cached_drive_payload') as mock_get_cache, \
-             patch('disk_ops._store_drive_payload') as mock_store:
+        with patch('extended_smart._get_cached_drive_payload') as mock_get_cache, \
+             patch('extended_smart._store_drive_payload') as mock_store:
             mock_get_cache.return_value = {"smart": {"smart_polling": False}}
             disk_ops._process_single_drive_extended_smart(item, "pass")
             mock_store.assert_not_called()
@@ -734,29 +734,28 @@ class TestExtendedSmartPool:
         """A successful task stores the payload and broadcasts a WebSocket event."""
         import disk_ops
         item = (("path", "/dev/sda"), "/dev/sda", "/dev/sda", "/dev/sda", "sas_sata", "enc1", 1)
-        with patch('disk_ops.os.path.exists', return_value=True), \
-             patch('disk_ops._get_cached_drive_payload', return_value=None), \
-             patch('disk_ops.get_smart_data', return_value={"status": "OK", "serial": "S1", "model": "M1", "capacity_str": "1TB", "data_written_raw": 0, "raw": {}}), \
-             patch('disk_ops.detect_interface_type', return_value="sas_sata"), \
-             patch('disk_ops.detect_drive_capabilities', return_value={"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}), \
-             patch('disk_ops.read_marker_status', return_value={"status": "none"}), \
-             patch('disk_ops.calculate_drive_health_score', return_value=(95, {})), \
-             patch('disk_ops.get_drive_recommendation', return_value={"status": "OK", "comment": "-"}), \
-             patch('disk_ops.is_drive_ssd', return_value=False), \
-             patch('disk_ops.record_intake_snapshot'), \
-             patch('disk_ops._store_drive_payload') as mock_store, \
-             patch('disk_ops._websocket_manager') as mock_ws:
+        with patch('extended_smart._get_cached_drive_payload', return_value=None), \
+             patch('extended_smart.get_smart_data', return_value={"status": "OK", "serial": "S1", "model": "M1", "capacity_str": "1TB", "data_written_raw": 0, "raw": {}}), \
+             patch('extended_smart.detect_interface_type', return_value="sas_sata"), \
+             patch('extended_smart.detect_drive_capabilities', return_value={"supports_crypto_erase": False, "supports_block_erase": False, "supports_secure_erase": False, "supports_enhanced_secure_erase": False, "supports_overwrite": True}), \
+             patch('extended_smart.read_marker_status', return_value={"status": "none"}), \
+             patch('extended_smart.calculate_drive_health_score', return_value=(95, {})), \
+             patch('extended_smart.get_drive_recommendation', return_value={"status": "OK", "comment": "-"}), \
+             patch('extended_smart.is_drive_ssd', return_value=False), \
+             patch('extended_smart.record_intake_snapshot'), \
+             patch('extended_smart._store_drive_payload') as mock_store, \
+             patch('extended_smart._websocket_manager') as mock_ws:
             disk_ops._process_single_drive_extended_smart(item, "pass")
             mock_store.assert_called_once()
             mock_ws.emit.assert_called_once()
 
     def test_stop_extended_smart_pool(self):
         """Stopping the pool clears the executor reference."""
-        import disk_ops
-        executor = disk_ops._get_extended_smart_executor()
+        import extended_smart
+        executor = extended_smart._get_extended_smart_executor()
         assert executor is not None
-        disk_ops.stop_extended_smart_pool(wait=False)
-        assert disk_ops._EXTENDED_SMART_EXECUTOR is None
+        extended_smart.stop_extended_smart_pool(wait=False)
+        assert extended_smart._EXTENDED_SMART_EXECUTOR is None
 
     def test_stop_extended_smart_pool_clears_pending(self):
         """Stopping the pool clears the pending set so cancelled tasks do not leak."""
@@ -806,9 +805,9 @@ class TestAutoEnqueueZeroChecks:
         fake_manager.get_status.return_value = {"status": "not_started"}
         fake_manager.get_all_status.return_value = {}
 
-        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
-            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
-                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+        with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('discovery.get_zero_check_manager', return_value=fake_manager):
+                with patch('discovery._is_eligible_for_zero_check', return_value=(True, None)):
                     _auto_enqueue_zero_checks([
                         {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "S1"}
                     ])
@@ -821,9 +820,9 @@ class TestAutoEnqueueZeroChecks:
         fake_manager.get_status.return_value = {"status": "completed", "serial": "OLD_SERIAL"}
         fake_manager.get_all_status.return_value = {}
 
-        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
-            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
-                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+        with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('discovery.get_zero_check_manager', return_value=fake_manager):
+                with patch('discovery._is_eligible_for_zero_check', return_value=(True, None)):
                     _auto_enqueue_zero_checks([
                         {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "NEW_SERIAL"}
                     ])
@@ -837,9 +836,9 @@ class TestAutoEnqueueZeroChecks:
         fake_manager.get_status.return_value = {"status": "completed", "serial": "SAME_SERIAL"}
         fake_manager.get_all_status.return_value = {}
 
-        with patch('disk_ops.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
-            with patch('disk_ops.get_zero_check_manager', return_value=fake_manager):
-                with patch('disk_ops._is_eligible_for_zero_check', return_value=(True, None)):
+        with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
+            with patch('discovery.get_zero_check_manager', return_value=fake_manager):
+                with patch('discovery._is_eligible_for_zero_check', return_value=(True, None)):
                     _auto_enqueue_zero_checks([
                         {"bay": "bay1", "present": True, "device": "/dev/sda", "serial": "SAME_SERIAL"}
                     ])
