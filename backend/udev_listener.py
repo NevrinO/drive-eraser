@@ -4,6 +4,7 @@
 import os
 import re
 import json
+import copy
 import threading
 import logging
 import time
@@ -21,7 +22,7 @@ from device_discovery import (
 )
 from disk_ops import invalidate_drive_cache
 from routes.bay_mapping_routes import invalidate_unmapped_drive_cache
-from common import get_config_dir, load_policy
+from common import get_config_dir, load_policy, _bay_map_cache_lock, _bay_map_cache
 from zero_check_manager import get_manager as get_zero_check_manager
 
 # Runtime slot state: (enclosure_id, slot_number) -> device_info
@@ -175,6 +176,31 @@ def _resolve_device_from_enclosure_slot(enclosure_config: Dict, coords: Dict) ->
     return None
 
 
+def _load_bay_map_cached(bay_map_path):
+    """Load bay_map.json with file-mtime caching to avoid re-reading on every udev event (A31)."""
+    abs_path = os.path.abspath(bay_map_path)
+    try:
+        stat_result = os.stat(abs_path)
+        current_mtime = stat_result.st_mtime
+    except (FileNotFoundError, OSError):
+        with _bay_map_cache_lock:
+            _bay_map_cache.pop(abs_path, None)
+        raise
+
+    with _bay_map_cache_lock:
+        cached = _bay_map_cache.get(abs_path)
+        if cached is not None and cached[0] == current_mtime:
+            return copy.deepcopy(cached[1])
+
+    with open(bay_map_path, 'r') as f:
+        data = json.load(f)
+
+    with _bay_map_cache_lock:
+        _bay_map_cache[abs_path] = (current_mtime, data)
+
+    return data
+
+
 def udev_event_listener_thread():
     """Background thread that listens for udev block device events."""
     if not pyudev:
@@ -207,10 +233,9 @@ def udev_event_listener_thread():
             if not dev_node or not sys_path:
                 continue
             
-            # Load current bay_map configuration
+            # Load current bay_map configuration (cached by file mtime, A31)
             try:
-                with open(bay_map_path, 'r') as f:
-                    bay_map_doc = json.load(f)
+                bay_map_doc = _load_bay_map_cached(bay_map_path)
             except Exception as e:
                 logger.debug(f"Could not load bay_map.json for udev event: {e}")
                 continue

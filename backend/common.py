@@ -2,6 +2,7 @@
 import os
 import json
 import time
+import copy
 import logging
 from threading import Lock, RLock
 from weakref import WeakValueDictionary
@@ -24,6 +25,16 @@ DEVICE_LOCKS = WeakValueDictionary()  # device_path -> Lock (auto-cleaned when n
 DEVICE_LOCKS_LOCK = Lock()  # Lock for accessing DEVICE_LOCKS dict
 
 logger = logging.getLogger("app")
+
+# File-mtime cache for load_policy() to avoid re-reading unchanged policy.json (A1, A21)
+# Keyed by absolute path to prevent collisions between different config dirs with same mtime
+_policy_cache_lock = Lock()
+_policy_cache = {}  # {abs_path: (mtime, result)}
+
+# File-mtime cache for bay_map.json (A31) — defined here so save_bay_map() can invalidate it
+# without circular imports. Used by udev_listener._load_bay_map_cached().
+_bay_map_cache_lock = Lock()
+_bay_map_cache = {}  # {abs_path: (mtime, result)}
 
 def get_device_lock(device_path):
     """
@@ -377,10 +388,32 @@ def load_policy(config_dir=None):
     """
     Load and validate policy configuration from policy.json.
     High #9: Validates configuration against JSON schema and logs warnings for unknown keys.
+    Uses file-mtime cache to avoid re-reading unchanged policy.json on every call (A1, A21).
     """
     if config_dir is None:
         config_dir = get_config_dir()
     policy_path = os.path.join(config_dir, "policy.json")
+
+    # Check file mtime for cache hit (A1, A21)
+    abs_path = os.path.abspath(policy_path)
+    try:
+        stat_result = os.stat(abs_path)
+        current_mtime = stat_result.st_mtime
+    except FileNotFoundError:
+        # File doesn't exist — return defaults, invalidate cache for this path
+        with _policy_cache_lock:
+            _policy_cache.pop(abs_path, None)
+        return DEFAULT_POLICY.copy()
+    except OSError:
+        # Can't stat file — fall through to full load to let the error path handle it
+        current_mtime = None
+
+    if current_mtime is not None:
+        with _policy_cache_lock:
+            cached = _policy_cache.get(abs_path)
+            if cached is not None and cached[0] == current_mtime:
+                return copy.deepcopy(cached[1])
+
     try:
         with open(policy_path, "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -416,9 +449,12 @@ def load_policy(config_dir=None):
                 if "prewipe_zero_detection_enabled" not in data:
                     merged["prewipe_zero_detection_enabled"] = deprecated_values["prewipe_spot_check"]
 
+            # Update cache (A1, A21)
+            if current_mtime is not None:
+                with _policy_cache_lock:
+                    _policy_cache[abs_path] = (current_mtime, merged)
+
             return merged
-    except FileNotFoundError:
-        return DEFAULT_POLICY.copy()
     except Exception as e:
         logger.error(f"Failed to load policy configuration: {e}")
         raise ValueError(f"Configuration load failed: {e}")
@@ -473,6 +509,10 @@ def save_policy(policy_data, config_dir=None):
     # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
     os.replace(temp_path, policy_path)
 
+    # Invalidate cache so next load_policy() re-reads from disk (prevents stale cache)
+    with _policy_cache_lock:
+        _policy_cache.pop(os.path.abspath(policy_path), None)
+
 def save_bay_map(bay_map_data, config_dir=None):
     if config_dir is None:
         config_dir = get_config_dir()
@@ -488,6 +528,10 @@ def save_bay_map(bay_map_data, config_dir=None):
     
     # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
     os.replace(temp_path, bay_map_path)
+
+    # Invalidate udev_listener's bay_map cache so next read gets fresh data
+    with _bay_map_cache_lock:
+        _bay_map_cache.pop(os.path.abspath(bay_map_path), None)
 
 def load_bay_map(config_dir=None):
     """

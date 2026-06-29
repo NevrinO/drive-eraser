@@ -6,7 +6,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/app.py
 
-### A1: [Advisory] `load_policy()` Called on Every API Request — Difficulty: Medium — Category: Performance
+### A1: [COMPLETED] [Advisory] `load_policy()` Called on Every API Request — Difficulty: Medium — Category: Performance
 - **Line**: 32 (inside `security_gate` before_request hook)
 - **Issue**: `load_policy()` reads `policy.json` from disk, parses JSON, validates against JSON schema, and merges with defaults on every non-localhost API request. No caching layer.
 - **Impact**: Unnecessary disk I/O on the hot path. Tolerable for a LAN tool with limited users, but scales poorly.
@@ -34,7 +34,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/disk_ops.py
 
-### A21: [Advisory] `get_discovery_max_workers` / `get_background_smart_max_workers` Load Policy on Every Call — Difficulty: Medium — Category: Performance
+### A21: [COMPLETED] [Advisory] `get_discovery_max_workers` / `get_background_smart_max_workers` Load Policy on Every Call — Difficulty: Medium — Category: Performance
 - **Line**: 128-147
 - **Issue**: Both functions call `load_policy(get_config_dir())` on every invocation, reading and parsing `policy.json` from disk.
 - **Impact**: Low — 1-2 extra disk reads per discovery batch. Acceptable for a LAN tool.
@@ -65,7 +65,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/udev_listener.py
 
-### A31: [Advisory] `bay_map.json` reloaded on every udev event — Difficulty: Medium — Category: Performance
+### A31: [COMPLETED] [Advisory] `bay_map.json` reloaded on every udev event — Difficulty: Medium — Category: Performance
 - **Lines**: 212-216
 - **Issue**: `json.load(f)` called for every udev hot-plug event. Unnecessary disk I/O for frequent device changes.
 - **Impact**: Low — performance concern only on systems with rapid hot-plug cycles.
