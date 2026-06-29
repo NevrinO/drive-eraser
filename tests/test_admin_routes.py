@@ -406,8 +406,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "invalid"})
                                 assert response.status_code == 400
 
@@ -424,8 +424,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",
@@ -471,8 +471,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",
@@ -613,6 +613,23 @@ class TestAdminRoutes:
                     assert data["enclosure"]["slots"]["0"]["physical_slot_number"] == 0
                     mock_save.assert_called_once()
 
+    def test_create_enclosure_name_too_long_returns_400(self, admin_session):
+        """Test that enclosure name exceeding 100 chars returns 400 (A91)."""
+        payload = {
+            "id": "test_enc",
+            "name": "A" * 101,
+            "template_id": "test_4bay",
+            "pci_controller": "0000:00:1f.2",
+            "expander_sas_address": None,
+            "display_order": 0,
+            "auto_map_slots": True,
+            "nvme_start_slot": None
+        }
+        response = admin_session.post('/api/admin/enclosures', json=payload)
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert "100 characters" in data["error"]
+
     def test_is_valid_device_name_multi_letter_sata(self, app):
         """Regression: multi-letter SATA device names must be accepted by is_valid_device_name."""
         from routes.admin_routes import is_valid_device_name
@@ -621,10 +638,11 @@ class TestAdminRoutes:
             assert is_valid_device_name(name) is True, f"Valid name rejected: {name}"
 
     def test_is_valid_device_name_sata_partitions(self, app):
-        """SATA partitions with multi-letter base names must be accepted."""
+        """SATA partition names must be rejected — SMART tests target whole disks only."""
         from routes.admin_routes import is_valid_device_name
-        assert is_valid_device_name("sdac1") is True
-        assert is_valid_device_name("sdbt12") is True
+        assert is_valid_device_name("sdac1") is False
+        assert is_valid_device_name("sdbt12") is False
+        assert is_valid_device_name("sda1") is False
 
     def test_is_valid_device_name_nvme(self, app):
         """NVMe device names must be accepted."""

@@ -12,8 +12,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 class TestSASParserWithFixtures:
     """Test SAS-specific parsing using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_dead_drive_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of dead SAS drive fixture (Z1Z3MFCJ, 16,396 grown defects)."""
         from smart_parsing import get_smart_data
@@ -33,8 +33,8 @@ class TestSASParserWithFixtures:
         assert result["power_on_hours"] == 25000
         assert result["rotation_rate"] == 7200
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_healthy_drive_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of healthy SAS drive fixture (S1Z1M0YR, 6 grown defects, 57M NME)."""
         from smart_parsing import get_smart_data
@@ -53,8 +53,8 @@ class TestSASParserWithFixtures:
         assert result["sas_non_medium_errors"] == 57000000
         assert result["power_on_hours"] == 30000
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_sticky_lba_detection(self, mock_get_command_path, mock_run_command):
         """Test sticky LBA detection from background scan log."""
         from smart_parsing import get_smart_data
@@ -71,8 +71,8 @@ class TestSASParserWithFixtures:
         assert result["sas_scan_event_count"] == 6
         assert result["sas_scan_unique_lbas"] == 4  # 1000, 2000, 3000, 4000
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_uncorrectable_errors_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of uncorrectable error counters."""
         from smart_parsing import get_smart_data
@@ -93,8 +93,8 @@ class TestSASParserWithFixtures:
 class TestSSDParserWithFixtures:
     """Test SSD-specific parsing using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sata_ssd_healthy_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of healthy SATA SSD fixture."""
         from smart_parsing import get_smart_data
@@ -114,8 +114,8 @@ class TestSSDParserWithFixtures:
         assert result["reallocated_sectors"] is None  # No bad sectors
         assert result["power_on_hours"] == 10000
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sata_ssd_intel_realloc_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of Intel SSD with reallocated sectors."""
         from smart_parsing import get_smart_data
@@ -139,8 +139,8 @@ class TestSSDParserWithFixtures:
 class TestNVMeParserWithFixtures:
     """Test NVMe-specific parsing using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_nvme_healthy_parsing(self, mock_get_command_path, mock_run_command):
         """Test parsing of healthy NVMe drive fixture."""
         from smart_parsing import get_smart_data
@@ -163,8 +163,8 @@ class TestNVMeParserWithFixtures:
 class TestSASScoringWithFixtures:
     """Test SAS health scoring using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_dead_drive_scoring(self, mock_get_command_path, mock_run_command):
         """Test that dead SAS drive (16,396 grown defects) scores ≤ 5."""
         from smart_parsing import get_smart_data, calculate_drive_health_score
@@ -176,14 +176,14 @@ class TestSASScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
 
         # With 16,396 grown defects, logarithmic penalty should be severe
         # log10(16396) ≈ 4.2, penalty ≈ 4.2 * 20 = 84, health ≈ 16
         assert health <= 5, f"Expected health <= 5 for dead SAS drive, got {health}"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_healthy_drive_scoring(self, mock_get_command_path, mock_run_command):
         """Test that healthy SAS drive (6 grown defects, 57M NME) scores 53-58."""
         from smart_parsing import get_smart_data, calculate_drive_health_score
@@ -195,7 +195,7 @@ class TestSASScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
 
         # With 6 grown defects, log10(6) ≈ 0.78, penalty ≈ 0.78 * 20 = 15.6
         # 30K POH: (30000-20000)/40000*30 = 7.5 penalty
@@ -207,8 +207,8 @@ class TestSASScoringWithFixtures:
 class TestSSDScoringWithFixtures:
     """Test SSD health scoring using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_samsung_ssd_high_poh_scoring(self, mock_get_command_path, mock_run_command):
         """Test Samsung SSD with high POH but zero reallocations scores ≥ 80."""
         from smart_parsing import get_smart_data, calculate_drive_health_score
@@ -220,14 +220,14 @@ class TestSSDScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sata", smart, None)
+        health, _ = calculate_drive_health_score("sata", smart)
 
         # 10% wear, 10K POH (below high threshold), no reallocations
         # Health = 100 - 10 = 90
         assert health >= 80, f"Expected health >= 80 for healthy Samsung SSD, got {health}"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_intel_ssd_realloc_scoring(self, mock_get_command_path, mock_run_command):
         """Test Intel SSD with 8 reallocated sectors and 93% wear scores 60-75."""
         from smart_parsing import get_smart_data, calculate_drive_health_score
@@ -239,7 +239,7 @@ class TestSSDScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sata", smart, None)
+        health, _ = calculate_drive_health_score("sata", smart)
 
         # Normalized wear value is 7 (percentage used), so 7% wear, 93% remaining
         # Base health: 100 - 7 = 93
@@ -251,8 +251,8 @@ class TestSSDScoringWithFixtures:
 class TestSASRecommendationWithFixtures:
     """Test SAS drive recommendations using real fixture data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_dead_drive_recommendation(self, mock_get_command_path, mock_run_command):
         """Test dead SAS drive is recommended DESTROY."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -264,13 +264,13 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         assert recommendation["status"] == "DESTROY"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_healthy_drive_recommendation(self, mock_get_command_path, mock_run_command):
         """Test healthy SAS drive is recommended SCRATCH."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -282,13 +282,13 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         assert recommendation["status"] == "SCRATCH"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_uncorrectable_verify_errors_recommendation(self, mock_get_command_path, mock_run_command):
         """Test SAS with verify errors is recommended DESTROY."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -300,14 +300,14 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Verify errors >= 1 should trigger DESTROY
         assert recommendation["status"] == "DESTROY"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_sticky_lba_recommendation(self, mock_get_command_path, mock_run_command):
         """Test SAS with sticky LBA is recommended at least SCRATCH."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -319,15 +319,15 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Sticky LBA should trigger at least SCRATCH
         assert recommendation["status"] in ["SCRATCH", "DESTROY"]
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
+    @patch('smart_health.get_triage_thresholds')
     def test_sas_grown_defects_exceed_fail_threshold(self, mock_get_triage_thresholds, mock_get_command_path, mock_run_command):
         """Test SAS with grown defects >= fail threshold is recommended DESTROY."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -349,16 +349,16 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Grown defects >= 10000 should trigger DESTROY
         assert recommendation["status"] == "DESTROY"
         assert "grown defects" in recommendation["comment"].lower()
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
+    @patch('smart_health.get_triage_thresholds')
     def test_sas_grown_defects_below_fail_threshold(self, mock_get_triage_thresholds, mock_get_command_path, mock_run_command):
         """Test SAS with grown defects > 0 but < fail threshold is recommended SCRATCH."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -380,15 +380,15 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Grown defects > 0 but < 10000 should trigger SCRATCH
         assert recommendation["status"] == "SCRATCH"
         assert "grown defects" in recommendation["comment"].lower()
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_no_grown_defects_no_defect_recommendation(self, mock_get_command_path, mock_run_command):
         """Test SAS with 0 grown defects does not trigger defect-based recommendations."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
@@ -402,7 +402,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # No grown defects should not trigger defect-based DESTROY/SCRATCH
@@ -415,8 +415,8 @@ class TestSASRecommendationWithFixtures:
 class TestPreWipeHealthGate:
     """Test pre-wipe health gate functionality."""
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_health_gate_disabled(self, mock_get_triage_thresholds, mock_get_smart_data):
         """Test that health gate returns ok when disabled."""
         from smart_parsing import pre_wipe_health_gate
@@ -439,8 +439,8 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is False
         assert result["block_reason"] is None
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_drive_not_accessible(self, mock_get_triage_thresholds, mock_get_smart_data):
         """Test that health gate blocks when drive is not accessible."""
         from smart_parsing import pre_wipe_health_gate
@@ -469,10 +469,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "drive_not_accessible"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_smart_status_failed_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that SMART status FAILED blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -509,10 +509,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "smart_status_failed"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_health_score_below_destroy_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that health score below DESTROY threshold blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -549,10 +549,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "health_score_below_destroy_threshold"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_recommendation_destroy_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that DESTROY recommendation blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -589,10 +589,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "recommendation_destroy"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_recommendation_scratch_blocks_when_configured(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that SCRATCH recommendation blocks wipe when configured."""
         from smart_parsing import pre_wipe_health_gate
@@ -629,10 +629,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "recommendation_scratch"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_pending_sectors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that pending sectors exceeding threshold blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -669,10 +669,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "pending_sectors_exceeded"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_reallocated_sectors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that reallocated sectors exceeding threshold blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -709,10 +709,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "reallocated_sectors_exceeded"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_interface_errors_exceeded_blocks(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that interface errors exceeding threshold blocks wipe."""
         from smart_parsing import pre_wipe_health_gate
@@ -749,10 +749,10 @@ class TestPreWipeHealthGate:
         assert result["blocked"] is True
         assert result["block_reason"] == "interface_errors_exceeded"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_healthy_drive_passes_gate(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Test that healthy drive passes health gate."""
         from smart_parsing import pre_wipe_health_gate
@@ -791,10 +791,10 @@ class TestPreWipeHealthGate:
         assert result["health_score"] == 95
         assert result["recommendation"] == "USED_GOOD"
 
-    @patch('smart_parsing.get_smart_data')
-    @patch('smart_parsing.calculate_drive_health_score')
-    @patch('smart_parsing.get_drive_recommendation')
-    @patch('smart_parsing.get_triage_thresholds')
+    @patch('smart_health_gate.get_smart_data')
+    @patch('smart_health_gate.calculate_drive_health_score')
+    @patch('smart_health_gate.get_drive_recommendation')
+    @patch('smart_health_gate.get_triage_thresholds')
     def test_multi_letter_sata_device_passes_validation(self, mock_get_triage_thresholds, mock_get_drive_recommendation, mock_calculate_health, mock_get_smart_data):
         """Regression: /dev/sdac and /dev/sdbt must not be blocked as invalid_device_path."""
         from smart_parsing import pre_wipe_health_gate

@@ -11,10 +11,10 @@ from layout_templates import normalize_bay_map_document, compose_bay_map_documen
 from device_discovery import (
     discover_controllers_and_devices,
     scan_pci_controllers,
-    validate_device_path,
     validate_pci_address,
     get_scsi_host_slot_projections
 )
+from disk_utils import validate_device_path
 from smart_parsing import get_smart_data
 
 discovery_bp = Blueprint('discovery_routes', __name__)

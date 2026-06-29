@@ -194,7 +194,7 @@ class TestE2EEraseWorkflow:
     @patch('os.listdir')
     @patch('os.path.islink')
     @patch('os.path.realpath')
-    @patch('disk_ops.get_os_parent_device')
+    @patch('os_detection.get_os_parent_device')
     def test_discovery_workflow_os_detection(self, mock_get_os_parent, mock_realpath, mock_islink, mock_listdir, mock_exists):
         """Test that OS drive detection works in discovery workflow."""
         from disk_ops import get_os_by_path
@@ -280,14 +280,19 @@ class TestE2EErrorHandling:
     def test_interrupted_job_workflow(self):
         """Test that interrupted jobs are handled gracefully."""
         from job_management import _check_job_interrupted, _handle_job_signal
+        import job_management
         import signal
 
-        # Initially not interrupted
-        assert _check_job_interrupted() is False
+        # Capture current generation
+        with job_management._job_interrupt_lock:
+            gen_before = job_management._job_interrupt_generation
+
+        # Not interrupted yet
+        assert _check_job_interrupted(gen_before) is False
 
         # Simulate interruption signal
         _handle_job_signal(signal.SIGTERM, None)
-        assert _check_job_interrupted() is True
+        assert _check_job_interrupted(gen_before) is True
 
 
 if __name__ == "__main__":

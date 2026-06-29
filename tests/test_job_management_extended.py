@@ -14,23 +14,26 @@ class TestSignalHandling:
     """Test job interruption signal handling."""
 
     def test_handle_job_signal_sets_flag(self):
-        """Test that signal handler sets interrupted flag."""
+        """Test that signal handler increments generation counter."""
         from job_management import _handle_job_signal, _check_job_interrupted
         import job_management
-        job_management._job_interrupted = False
-        
+
+        with job_management._job_interrupt_lock:
+            gen_before = job_management._job_interrupt_generation
+
         _handle_job_signal(15, None)
-        assert _check_job_interrupted() is True
+        assert _check_job_interrupted(gen_before) is True
 
     def test_check_job_interrupted_returns_flag(self):
-        """Test that check_interrupted returns the flag state."""
+        """Test that check_interrupted returns correct state for a given generation."""
         from job_management import _check_job_interrupted
         import job_management
-        job_management._job_interrupted = False
-        assert _check_job_interrupted() is False
-        
-        job_management._job_interrupted = True
-        assert _check_job_interrupted() is True
+
+        with job_management._job_interrupt_lock:
+            current_gen = job_management._job_interrupt_generation
+
+        assert _check_job_interrupted(current_gen) is False
+        assert _check_job_interrupted(current_gen - 1) is True
 
 
 class TestBuildRecommendedMethod:
@@ -905,9 +908,6 @@ class TestRunEraseJob:
         with ERASE_JOBS_LOCK:
             ERASE_JOBS[job_id] = job
         
-        # Set interrupted flag
-        job_management._job_interrupted = True
-        
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 with patch('job_management.send_slack_notification'):
@@ -919,7 +919,11 @@ class TestRunEraseJob:
                                         with patch('job_management.get_active_logs_dir', return_value=tmpdir):
                                             with patch('subprocess.Popen') as mock_popen:
                                                 mock_process = MagicMock()
-                                                mock_process.poll.return_value = None  # Still running
+                                                # Trigger signal on first poll to simulate interruption after job starts
+                                                def poll_side_effect():
+                                                    job_management._handle_job_signal(15, None)
+                                                    return None
+                                                mock_process.poll.side_effect = poll_side_effect
                                                 mock_popen.return_value = mock_process
                                                 
                                                 run_erase_job(job_id)
@@ -927,7 +931,7 @@ class TestRunEraseJob:
             with ERASE_JOBS_LOCK:
                 assert ERASE_JOBS[job_id]["status"] == "interrupted"
         finally:
-            job_management._job_interrupted = False
+            pass
 
     def test_run_erase_job_log_file_creation_failure(self):
         """Test that run_erase_job handles log file creation failure."""

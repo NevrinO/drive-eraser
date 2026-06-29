@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import base64
 import hashlib
+import hmac
 import sqlite3
 import urllib.request
 import re
@@ -31,7 +32,7 @@ from device_discovery import (
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
-from disk_ops import invalidate_drive_cache, stop_extended_smart_pool
+from disk_ops import invalidate_drive_cache, stop_extended_smart_pool, get_os_by_path, discover_drives
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
@@ -68,12 +69,12 @@ admin_bp = Blueprint('admin_routes', __name__)
 # Device name validation patterns following lesson #9 and #15
 # Use \Z (not $) for strict end-of-string anchor to prevent "/dev/sda\n" bypass
 # Lesson #91: Use specific patterns matching actual system naming conventions
-_SATA_DEVICE_RE = re.compile(r'^sd[a-z]+[0-9]*\Z')
+_SATA_DEVICE_RE = re.compile(r'^sd[a-z]+\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
 
 # Size limits for DoS prevention (Rule #5)
-MAX_ENCODSURES = 100
+MAX_ENCLOSURES = 100
 MAX_SLOTS_PER_ENCLOSURE = 1000
 MAX_TEMPLATES = 50
 
@@ -150,7 +151,7 @@ def require_admin_auth(f):
         lan_passphrase = policy.get("lan_passphrase", "eraser123")
         session_token = request.cookies.get("admin_session")
         
-        if not session_token or session_token != calculate_session_token(lan_passphrase):
+        if not session_token or not hmac.compare_digest(session_token, calculate_session_token(lan_passphrase)):
             return jsonify({"error": "Authentication required"}), 401
         
         return f(*args, **kwargs)
@@ -266,9 +267,11 @@ def export_csv_ledger():
 def cleanup_support_bundle(response):
     if request.path == "/api/admin/support-bundle" and response.status_code == 200:
         tar_path = getattr(g, 'support_bundle_tar_path', None)
-        if tar_path and os.path.exists(tar_path):
+        if tar_path:
             try:
                 os.remove(tar_path)
+            except FileNotFoundError:
+                pass
             except Exception:
                 pass
     return response
@@ -386,7 +389,7 @@ def download_support_bundle():
         try:
             policy_dir = get_config_dir()
             policy_path = os.path.join(policy_dir, "policy.json")
-            if os.path.exists(policy_path):
+            try:
                 with open(policy_path, "r", encoding="utf-8") as f:
                     policy_data = json.load(f)
                 for key in ["wipe_passphrase", "slack_webhook_url", "lan_passphrase"]:
@@ -394,18 +397,24 @@ def download_support_bundle():
                         policy_data[key] = "[REDACTED]"
                 with open(os.path.join(workspace_dir, "redacted_policy.json"), "w", encoding="utf-8") as f:
                     json.dump(policy_data, f, indent=2)
+            except FileNotFoundError:
+                pass
         except Exception:
             pass
             
         try:
             logs_dir = get_logs_dir()
             app_log_path = os.path.join(logs_dir, "app.log")
-            if os.path.exists(app_log_path):
+            try:
                 shutil.copy(app_log_path, os.path.join(workspace_dir, "app.log"))
-                
+            except FileNotFoundError:
+                pass
+
             failed_logs_dir = get_failed_logs_dir()
-            if os.path.exists(failed_logs_dir):
+            try:
                 shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
+            except FileNotFoundError:
+                pass
         except Exception:
             pass
             
@@ -665,15 +674,16 @@ def manage_logo():
             except Exception as e:
                 # Clean up temporary file if it exists
                 temp_path = logo_path + ".tmp"
-                if os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception:
-                        pass
+                try:
+                    os.remove(temp_path)
+                except FileNotFoundError:
+                    pass
+                except Exception:
+                    pass
                 return jsonify({"error": f"Invalid image file: {str(e)}"}), 400
                 
         except Exception as e:
-            logger.error(f"Logo upload failed: {str(e)}")
+            logger.error(f"Logo upload failed: {e}")
             return jsonify({"error": str(e)}), 500
     
     elif request.method == "DELETE":
@@ -862,108 +872,127 @@ def kill_all_jobs():
         killed_jobs = []
         skipped_jobs = []
         
+        # Step 1: Snapshot running/queued jobs inside lock
         with ERASE_JOBS_LOCK:
-            for job_id, job in list(ERASE_JOBS.items()):
-                if job.get("status") in {"running", "queued"}:
-                    request_data = job.get("request", {})
-                    device = request_data.get("device")
-                    method = request_data.get("method")
-                    interface_type = request_data.get("interface_type", "unknown")
-                    bay = request_data.get("bay")
-                    
-                    # Check actual hardware status
-                    hw_status = check_drive_hardware_status(job)
-                    
-                    # Determine if we should kill based on hardware status
+            jobs_snapshot = [
+                (job_id, job)
+                for job_id, job in list(ERASE_JOBS.items())
+                if job.get("status") in {"running", "queued"}
+            ]
+
+        # Step 2: Perform hardware checks and process termination outside lock
+        jobs_to_kill = []
+        for job_id, job in jobs_snapshot:
+            request_data = job.get("request", {})
+            device = request_data.get("device")
+            method = request_data.get("method")
+            interface_type = request_data.get("interface_type", "unknown")
+            bay = request_data.get("bay")
+            
+            # Check actual hardware status
+            hw_status = check_drive_hardware_status(job)
+            
+            # Determine if we should kill based on hardware status
+            should_kill = True
+            skip_reason = None
+            
+            if hw_status.get("can_query"):
+                if hw_status.get("hardware_active") is True:
+                    # Hardware reports it's still active - don't kill
+                    should_kill = False
+                    skip_reason = "hardware_operation_active"
+                elif hw_status.get("hardware_active") is False:
+                    # Hardware reports idle/complete - safe to kill stuck subprocess
                     should_kill = True
-                    skip_reason = None
-                    
-                    if hw_status.get("can_query"):
-                        if hw_status.get("hardware_active") is True:
-                            # Hardware reports it's still active - don't kill
-                            should_kill = False
-                            skip_reason = "hardware_operation_active"
-                        elif hw_status.get("hardware_active") is False:
-                            # Hardware reports idle/complete - safe to kill stuck subprocess
-                            should_kill = True
-                    else:
-                        # Can't query hardware status (overwrite method, etc.)
-                        # Fall back to subprocess status
-                        process = job.get("_process")
-                        if process and process.poll() is None:
-                            # Process is running but we can't verify hardware
-                            # Check if job has been running unusually long (optional safety)
-                            pass  # Will kill based on subprocess alone
-                    
-                    if not should_kill:
-                        # Skip killing - hardware still active
-                        skipped_info = {
-                            "job_id": job_id,
-                            "bay": bay,
-                            "device": device,
-                            "method": method,
-                            "interface_type": interface_type,
-                            "reason": skip_reason,
-                            "hardware_status": {
-                                "state": hw_status.get("hardware_status"),
-                                "progress_percent": hw_status.get("progress_percent"),
-                                "raw_data": hw_status.get("raw_data")
-                            },
-                            "subprocess_status": {
-                                "pid": job.get("_process").pid if job.get("_process") else None,
-                                "is_running": job.get("_process").poll() is None if job.get("_process") else False
-                            },
-                            "job_state": {
-                                "status": job.get("status"),
-                                "current_phase": job.get("current_phase"),
-                                "started_at": job.get("started_at"),
-                                "progress_percent": job.get("progress_percent")
-                            }
-                        }
-                        skipped_jobs.append(skipped_info)
-                        logger.info(f"Skipped killing job {job_id} - hardware still active: {hw_status.get('hardware_status')}")
-                    else:
-                        # Safe to kill - hardware idle or subprocess stuck
-                        process = job.get("_process")
-                        termination_result = {"terminated": False, "error": None}
-                        
-                        if process and process.poll() is None:
-                            try:
-                                process.terminate()
-                                try:
-                                    process.wait(timeout=10)
-                                    termination_result["terminated"] = True
-                                except subprocess.TimeoutExpired:
-                                    process.kill()
-                                    process.wait()
-                                    termination_result["terminated"] = True
-                                    termination_result["method"] = "kill"
-                            except Exception as e:
-                                logger.warning(f"Failed to terminate process for job {job_id}: {e}")
-                                termination_result["error"] = str(e)
-                        
-                        job["status"] = "failed"
-                        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-                        job["error"] = "Job killed by administrator"
-                        job["current_phase"] = "Killed by Admin"
-                        job["_kill_info"] = {
-                            "hardware_status_before_kill": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
-                            "termination_result": termination_result,
-                            "killed_at": datetime.now(timezone.utc).isoformat()
-                        }
-                        persist_job(job)
-                        
-                        killed_info = {
-                            "job_id": job_id,
-                            "bay": bay,
-                            "device": device,
-                            "method": method,
-                            "interface_type": interface_type,
-                            "hardware_status": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
-                            "termination_result": termination_result
-                        }
-                        killed_jobs.append(killed_info)
-                        ERASE_JOBS.pop(job_id, None)
+            else:
+                # Can't query hardware status (overwrite method, etc.)
+                # Fall back to subprocess status
+                process = job.get("_process")
+                if process and process.poll() is None:
+                    # Process is running but we can't verify hardware
+                    pass  # Will kill based on subprocess alone
+            
+            if not should_kill:
+                # Skip killing - hardware still active
+                skipped_info = {
+                    "job_id": job_id,
+                    "bay": bay,
+                    "device": device,
+                    "method": method,
+                    "interface_type": interface_type,
+                    "reason": skip_reason,
+                    "hardware_status": {
+                        "state": hw_status.get("hardware_status"),
+                        "progress_percent": hw_status.get("progress_percent"),
+                        "raw_data": hw_status.get("raw_data")
+                    },
+                    "subprocess_status": {
+                        "pid": job.get("_process").pid if job.get("_process") else None,
+                        "is_running": job.get("_process").poll() is None if job.get("_process") else False
+                    },
+                    "job_state": {
+                        "status": job.get("status"),
+                        "current_phase": job.get("current_phase"),
+                        "started_at": job.get("started_at"),
+                        "progress_percent": job.get("progress_percent")
+                    }
+                }
+                skipped_jobs.append(skipped_info)
+                logger.info(f"Skipped killing job {job_id} - hardware still active: {hw_status.get('hardware_status')}")
+            else:
+                # Safe to kill - hardware idle or subprocess stuck
+                # Terminate process outside lock (process.wait can block)
+                process = job.get("_process")
+                termination_result = {"terminated": False, "error": None}
+                
+                if process and process.poll() is None:
+                    try:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=10)
+                            termination_result["terminated"] = True
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                            termination_result["terminated"] = True
+                            termination_result["method"] = "kill"
+                    except Exception as e:
+                        logger.warning(f"Failed to terminate process for job {job_id}: {e}")
+                        termination_result["error"] = str(e)
+                
+                jobs_to_kill.append((job_id, bay, device, method, interface_type, hw_status, termination_result))
+
+        # Step 3: Apply kill decisions inside lock
+        with ERASE_JOBS_LOCK:
+            for job_id, bay, device, method, interface_type, hw_status, termination_result in jobs_to_kill:
+                job = ERASE_JOBS.get(job_id)
+                if not job or job.get("status") not in {"running", "queued"}:
+                    # Job state changed between snapshot and kill — skip
+                    logger.info(f"Job {job_id} state changed before kill could be applied (termination_result={termination_result}), skipping")
+                    continue
+
+                job["status"] = "failed"
+                job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                job["error"] = "Job killed by administrator"
+                job["current_phase"] = "Killed by Admin"
+                job["_kill_info"] = {
+                    "hardware_status_before_kill": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
+                    "termination_result": termination_result,
+                    "killed_at": datetime.now(timezone.utc).isoformat()
+                }
+                persist_job(job)
+                
+                killed_info = {
+                    "job_id": job_id,
+                    "bay": bay,
+                    "device": device,
+                    "method": method,
+                    "interface_type": interface_type,
+                    "hardware_status": hw_status.get("hardware_status") if hw_status.get("can_query") else "unknown",
+                    "termination_result": termination_result
+                }
+                killed_jobs.append(killed_info)
+                ERASE_JOBS.pop(job_id, None)
 
         # Build response
         response = {
@@ -1057,6 +1086,10 @@ def manage_enclosures():
             for field in required_fields:
                 if field not in payload:
                     return jsonify({"error": f"Missing required field: {field}"}), 400
+
+            # Validate enclosure name length (A91)
+            if len(payload.get("name", "")) > 100:
+                return jsonify({"error": "Enclosure name must be 100 characters or less"}), 400
             
             # Validate enclosure ID format
             if not is_valid_id(payload["id"]):
@@ -1070,7 +1103,7 @@ def manage_enclosures():
             # Validate expander_sas_address if provided
             expander_sas_address = payload.get("expander_sas_address")
             if expander_sas_address is not None:
-                if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
+                if not expander_sas_address.startswith("0x") or len(expander_sas_address) != 18 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
                     return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
             
             # Validate PCI controller exists in master map (outside lock to avoid holding lock during expensive operation)
@@ -1096,8 +1129,8 @@ def manage_enclosures():
                     return jsonify({"error": f"Enclosure ID already exists: {payload['id']}"}), 400
                 
                 # Enforce size limit for DoS prevention (Rule #5)
-                if len(enclosures) >= MAX_ENCODSURES:
-                    return jsonify({"error": f"Maximum number of enclosures ({MAX_ENCODSURES}) reached"}), 400
+                if len(enclosures) >= MAX_ENCLOSURES:
+                    return jsonify({"error": f"Maximum number of enclosures ({MAX_ENCLOSURES}) reached"}), 400
                 
                 # Build enclosure object
                 enclosure = {
@@ -2039,12 +2072,12 @@ def get_drive_models():
         config_dir = get_config_dir()
         drive_models_path = os.path.join(config_dir, "drive_models.json")
         
-        if not os.path.exists(drive_models_path):
+        try:
+            with open(drive_models_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
             return jsonify({"drive_models": {}, "message": "No drive models configured"}), 200
-        
-        with open(drive_models_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        
+
         return jsonify(data), 200
     except Exception as e:
         logger.error(f"Error loading drive models: {e}")
@@ -2407,15 +2440,10 @@ def run_smart_test_endpoint(device):
         # Check if device is the OS drive
         os_dev_node = None
         try:
-            # Check common OS device paths
-            for os_path in ["/dev/sda", "/dev/nvme0n1"]:
-                if os.path.exists(os_path):
-                    try:
-                        if os.path.realpath(device_path) == os.path.realpath(os_path):
-                            logger.warning(f"SMART test rejected for {device}: device is OS drive")
-                            return jsonify({"error": "Cannot run SMART test on OS drive"}), 403
-                    except Exception:
-                        pass
+            os_dev, _ = get_os_by_path()
+            if os_dev and os.path.realpath(device_path) == os.path.realpath(os_dev):
+                logger.warning(f"SMART test rejected for {device}: device is OS drive")
+                return jsonify({"error": "Cannot run SMART test on OS drive"}), 403
         except Exception as e:
             logger.warning(f"Failed to check OS drive status for {device}: {e}")
         
@@ -2443,9 +2471,9 @@ def run_smart_test_endpoint(device):
         # Check if device is a dual-port secondary path
         # This requires checking the current drive discovery data
         try:
-            from device_discovery import get_discovered_drives
-            discovered = get_discovered_drives()
-            for drive in discovered.values():
+            config_dir = get_config_dir()
+            drives = discover_drives(os.path.join(config_dir, "bay_map.json"))
+            for drive in drives:
                 if drive.get("device") == device_path or drive.get("device") == device:
                     if drive.get("sas_secondary_path"):
                         logger.warning(f"SMART test rejected for {device}: device is dual-port secondary path")

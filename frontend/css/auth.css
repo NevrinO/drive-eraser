@@ -1,0 +1,67 @@
+/* Authentication Overlay UI */
+.auth-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(2, 6, 23, 0.96);
+  backdrop-filter: blur(8px);
+  z-index: var(--z-auth);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-overlay.hidden {
+  display: none !important;
+}
+
+.unsaved-changes-indicator {
+  background: var(--color-warning);
+  color: var(--color-black);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unsaved-changes-indicator.hidden {
+  display: none !important;
+}
+
+.auth-dialog {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border-strong);
+  padding: 32px;
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.7);
+}
+
+.auth-dialog h2 {
+  font-size: 1.1rem;
+  margin-bottom: 8px;
+  color: var(--color-white);
+  font-weight: 800;
+}
+
+.auth-dialog p {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 16px;
+  line-height: 1.4;
+}
+
+.auth-error {
+  margin-top: 12px;
+  color: var(--color-danger);
+  font-size: 0.75rem;
+  font-weight: bold;
+  text-align: center;
+}

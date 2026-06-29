@@ -80,7 +80,7 @@ function renderAuditLedger(jobs) {
     const detailsHtml = isExpanded ? renderExpandedAuditRow(job) : "";
     const isSelected = bulkSelectedJobs.has(job.id);
     
-    const uiBadge = job.status === "completed" ? "complete" : job.status === "failed" ? "failed" : job.status === "running" ? "running" : "queued";
+    const uiBadge = job.status === "completed" ? "status-badge--complete" : job.status === "failed" ? "status-badge--failed" : job.status === "running" ? "status-badge--running" : "status-badge--queued";
     const statusLabel = job.status === "completed" ? "PASSED" : job.status.toUpperCase();
 
     const checkboxHtml = bulkSelectMode 

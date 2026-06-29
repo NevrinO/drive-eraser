@@ -141,8 +141,7 @@ function renderLiveDetails(drive) {
 
   let remainingLife = "N/A";
   if (smart.wear_level !== null) {
-    const iface = String(drive.interface_type || "").toLowerCase();
-    const score = (iface.includes("nvme") || iface.includes("sas")) ? (100 - smart.wear_level) : smart.wear_level;
+    const score = 100 - smart.wear_level;
     remainingLife = Math.max(0, Math.min(100, Math.round(score))) + "%";
   }
 

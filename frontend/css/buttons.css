@@ -1,0 +1,141 @@
+/* Floating Action Footer */
+.batch-action-footer {
+  position: fixed;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-lg);
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+  z-index: var(--z-footer);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.batch-action-footer.hidden {
+  transform: translate(-50%, 120px);
+  opacity: 0;
+}
+
+.footer-meta-info {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--color-white);
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--color-surface-2);
+  color: var(--color-white);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 20px;
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  line-height: 1.2;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+.btn.btn-sm {
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  min-height: auto;
+  min-width: auto;
+}
+
+.btn svg,
+.btn .icon {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+}
+
+.btn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-surface-1);
+}
+
+.btn:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn--primary {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-white);
+}
+
+.btn--primary:hover:not(:disabled) {
+  background: var(--color-primary-dark);
+  border-color: var(--color-primary-dark);
+}
+
+.btn--secondary {
+  background: var(--color-surface-2);
+  color: var(--color-white);
+  border: 1px solid var(--color-border);
+}
+
+.btn--toggle {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--color-success);
+  color: var(--color-success);
+  animation: pulse-green-btn 2.2s infinite ease-in-out;
+}
+
+.btn--toggle.active {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: var(--color-white);
+  animation: pulse-danger-border 2.2s infinite ease-in-out;
+}
+
+.btn--danger {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--color-danger);
+  border: 1px solid var(--color-danger);
+}
+
+.btn--danger:hover:not(:disabled) {
+  background: var(--color-danger);
+  color: var(--color-white);
+}
+
+.btn--warning {
+  background: rgba(245, 158, 11, 0.15);
+  color: var(--color-warning);
+  border: 1px solid var(--color-warning);
+}
+
+.btn--warning:hover:not(:disabled) {
+  background: var(--color-warning);
+  color: var(--color-black);
+}
+
+@keyframes pulse-green-btn {
+  0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.3); }
+  70% { box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+@keyframes pulse-danger-border {
+  0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+  70% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+}

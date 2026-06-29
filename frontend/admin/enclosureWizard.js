@@ -1,93 +1,5 @@
-// --- START OF FILE frontend/admin/enclosureManagement.js ---
-// Enclosure management: load, render, create, edit, delete enclosures and slots
-
-let adminEnclosures = {};
-let availableTemplates = [];
-let masterSlotMap = [];
-let cachedUnmappedDrives = null;
-let cachedUnmappedDrivesTime = 0;
-
-// Load all enclosures from backend
-async function loadEnclosures() {
-  try {
-    const response = await safeFetch("/api/admin/enclosures");
-    if (!response.ok) throw new Error("Failed to load enclosures");
-    const data = await response.json();
-    adminEnclosures = {};
-    (data.enclosures || []).forEach(enc => {
-      adminEnclosures[enc.id] = enc;
-    });
-    return data.enclosures || [];
-  } catch (e) {
-    console.error("Failed to load enclosures:", e);
-    return [];
-  }
-}
-
-// Load layout templates
-async function loadTemplates() {
-  try {
-    const response = await safeFetch("/api/admin/layout-templates");
-    if (!response.ok) throw new Error("Failed to load templates");
-    const data = await response.json();
-    availableTemplates = data.templates || [];
-    return availableTemplates;
-  } catch (e) {
-    console.error("Failed to load templates:", e);
-    return [];
-  }
-}
-
-// Load master slot map for controller discovery
-async function loadMasterSlotMap() {
-  try {
-    const response = await safeFetch("/api/admin/master-slot-map");
-    if (!response.ok) throw new Error("Failed to load master slot map");
-    const data = await response.json();
-    masterSlotMap = data.master_map || [];
-    return masterSlotMap;
-  } catch (e) {
-    console.error("Failed to load master slot map:", e);
-    return [];
-  }
-}
-
-// Render enclosure list in admin panel
-function renderEnclosureList(enclosures) {
-  const container = document.getElementById("enclosureList");
-  if (!container) return;
-
-  const sortedEnclosures = [...enclosures].sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
-
-  container.innerHTML = sortedEnclosures.map(enc => `
-    <div class="enclosure-card" data-enclosure-id="${escapeHtml(enc.id)}">
-      <div class="enclosure-header">
-        <div class="enclosure-title">
-          <strong>${escapeHtml(enc.name || enc.id)}</strong>
-          <small style="color: #888;">ID: ${escapeHtml(enc.id)}</small>
-        </div>
-        <div class="enclosure-actions">
-          <button type="button" class="btn btn--secondary btn-sm enclosure-edit-btn" data-enclosure-id="${escapeHtml(enc.id)}">Edit</button>
-          <button type="button" class="btn btn--secondary btn-sm enclosure-delete-btn" data-enclosure-id="${escapeHtml(enc.id)}">Delete</button>
-        </div>
-      </div>
-      <div class="enclosure-details">
-        <div class="kv"><span>Template:</span><span>${escapeHtml(enc.template_name || 'N/A')}</span></div>
-        <div class="kv"><span>PCI Controller:</span><span>${escapeHtml(enc.pci_controller || 'N/A')}</span></div>
-        <div class="kv"><span>Expander SAS:</span><span>${escapeHtml(enc.expander_sas_address || 'N/A')}</span></div>
-        <div class="kv"><span>Slots:</span><span>${Object.keys(enc.slots || {}).length}</span></div>
-      </div>
-    </div>
-  `).join("");
-
-  // Attach event listeners for edit/delete buttons
-  container.querySelectorAll('.enclosure-edit-btn').forEach(btn => {
-    btn.addEventListener('click', () => editEnclosure(btn.dataset.enclosureId));
-  });
-  container.querySelectorAll('.enclosure-delete-btn').forEach(btn => {
-    btn.addEventListener('click', () => deleteEnclosure(btn.dataset.enclosureId));
-  });
-}
+// Enclosure wizard: wizard state, step rendering, configuration, slot assignment
+// Load order: enclosureList.js -> enclosureWizard.js -> enclosureSave.js
 
 // Open new enclosure wizard
 async function openNewEnclosureWizard() {
@@ -97,7 +9,13 @@ async function openNewEnclosureWizard() {
   // Ensure save button listener is attached (modal may not exist at module load)
   const saveBtn = document.getElementById("wizardSaveBtn");
   if (saveBtn && !saveBtn.dataset.enclosureListener) {
-    saveBtn.addEventListener("click", handleSaveEnclosure);
+    saveBtn.addEventListener("click", () => {
+      if (isEditMode) {
+        handleEditEnclosure();
+      } else {
+        handleSaveEnclosure();
+      }
+    });
     saveBtn.dataset.enclosureListener = "true";
   }
 
@@ -146,6 +64,11 @@ async function renderWizardStep() {
   const prevBtn = document.getElementById("wizardPrevBtn");
   const nextBtn = document.getElementById("wizardNextBtn");
   const saveBtn = document.getElementById("wizardSaveBtn");
+
+  if (!step1 || !step2 || !prevBtn || !nextBtn || !saveBtn) {
+    console.error("renderWizardStep: required wizard DOM elements not found");
+    return;
+  }
 
   step1.classList.add("hidden");
   step2.classList.add("hidden");
@@ -296,7 +219,7 @@ async function renderConfiguration() {
     const nvmeSlots = masterSlotMap
       .filter(entry => entry.slot_type === 'pcie_nvme')
       .map(entry => entry.hardware_identifier)
-      .sort((a, b) => parseInt(a) - parseInt(b));
+      .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
     if (nvmeSlots.length === 0) {
       // Fallback: try to get NVMe drives from unmapped drives API
@@ -346,7 +269,7 @@ async function renderConfiguration() {
     wizardData.name = e.target.value;
   });
   document.getElementById("wizardDisplayOrder").addEventListener("input", (e) => {
-    wizardData.display_order = parseInt(e.target.value) || 0;
+    wizardData.display_order = parseInt(e.target.value, 10) || 0;
   });
   container.querySelectorAll("input[name='controller']").forEach(radio => {
     radio.addEventListener("change", (e) => {
@@ -356,7 +279,7 @@ async function renderConfiguration() {
   });
   document.getElementById("wizardTemplateSelect").addEventListener("change", (e) => {
     wizardData.template_id = e.target.value;
-    renderConfiguration(); // Re-render to show/hide NVMe options
+    renderConfiguration().catch(e => console.error("Failed to re-render configuration:", e));
   });
 
   // Bind refresh button to update drive counts
@@ -478,6 +401,26 @@ function renderSlotAssignment() {
     savedSlots = adminEnclosures[editEnclosureId].slots || null;
   }
 
+  // Collect current label and role values from DOM to preserve user modifications
+  // across re-renders (e.g., when starting slot number changes)
+  let domLabels = {};
+  let domRoles = {};
+  const existingTable = container.querySelector('.slot-validation-table');
+  if (existingTable) {
+    container.querySelectorAll('.slot-label-input').forEach(input => {
+      const slotIndex = parseInt(input.dataset.slotIndex, 10);
+      if (!isNaN(slotIndex)) {
+        domLabels[String(slotIndex)] = input.value;
+      }
+    });
+    container.querySelectorAll('.slot-role-select').forEach(select => {
+      const slotIndex = parseInt(select.dataset.slotIndex, 10);
+      if (!isNaN(slotIndex)) {
+        domRoles[String(slotIndex)] = select.value;
+      }
+    });
+  }
+
   for (let slotIndex = 0; slotIndex < positions.length; slotIndex++) {
     const { row, col } = positions[slotIndex];
     const isHybrid = template.hybrid_slots && template.hybrid_slots.includes(slotIndex);
@@ -513,9 +456,9 @@ function renderSlotAssignment() {
 
     slots.push({
       physical_slot_number: physicalSlot,
-      label: savedSlot ? savedSlot.label : `Bay ${slotIndex}`,
-      role: savedSlot ? savedSlot.role : (template.default_role || "wipe"),
-      locked: savedSlot ? savedSlot.locked : false,
+      label: domLabels[slotKey] !== undefined ? domLabels[slotKey] : (savedSlot ? savedSlot.label : `Bay ${slotIndex}`),
+      role: domRoles[slotKey] !== undefined ? domRoles[slotKey] : (savedSlot ? savedSlot.role : (template.default_role || "wipe")),
+      locked: domRoles[slotKey] !== undefined ? (domRoles[slotKey] === 'os') : (savedSlot ? savedSlot.locked : false),
       mappings: {
         sas_sata: savedSasMapping ? {
           slot_type: savedSasMapping.slot_type || sasSlotType,
@@ -538,6 +481,11 @@ function renderSlotAssignment() {
       }
     });
   }
+
+  const nvmeSlotIds = masterSlotMap
+    .filter(e => e.slot_type === 'pcie_nvme')
+    .map(e => e.hardware_identifier)
+    .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
   let html = `
     <div class="form-group" style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
@@ -620,15 +568,9 @@ function renderSlotAssignment() {
         }
       }
 
-      // Build NVMe slot dropdown from master slot map
-      const nvmeSlots = masterSlotMap
-        .filter(e => e.slot_type === 'pcie_nvme')
-        .map(e => e.hardware_identifier)
-        .sort((a, b) => parseInt(a) - parseInt(b));
-
       let nvmeOptions = '<option value="">-- Select NVMe Slot --</option>';
       
-      nvmeSlots.forEach(slot => {
+      nvmeSlotIds.forEach(slot => {
         const selected = nvmeHwId === slot ? 'selected' : '';
         nvmeOptions += `<option value="${escapeHtml(slot)}" ${selected}>Slot ${escapeHtml(slot)}</option>`;
       });
@@ -652,14 +594,14 @@ function renderSlotAssignment() {
   // Bind starting slot input for live recalc
   // Use 'change' instead of 'input' to prevent re-rendering while typing multi-digit numbers
   document.getElementById("wizardStartingSlotLive").addEventListener("change", (e) => {
-    wizardData.starting_slot_number = parseInt(e.target.value) || 0;
+    wizardData.starting_slot_number = parseInt(e.target.value, 10) || 0;
     renderSlotAssignment(); // Re-render with new starting slot
   });
 
   // Bind label input events
   container.querySelectorAll('.slot-label-input').forEach(input => {
     input.addEventListener('input', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
       if (slots[slotIndex]) {
         slots[slotIndex].label = e.target.value;
       }
@@ -669,7 +611,7 @@ function renderSlotAssignment() {
   // Bind role select events
   container.querySelectorAll('.slot-role-select').forEach(select => {
     select.addEventListener('change', (e) => {
-      const slotIndex = parseInt(e.target.dataset.slotIndex);
+      const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
       if (slots[slotIndex]) {
         slots[slotIndex].role = e.target.value;
         slots[slotIndex].locked = e.target.value === 'os';
@@ -681,7 +623,7 @@ function renderSlotAssignment() {
   container.querySelectorAll('.hw-id-input').forEach(input => {
     if (input.tagName === 'INPUT') {
       input.addEventListener('input', (e) => {
-        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
         const interfaceType = e.target.dataset.interface;
         const slotType = e.target.dataset.slotType;
         const value = e.target.value;
@@ -721,7 +663,7 @@ function renderSlotAssignment() {
     } else if (input.tagName === 'SELECT') {
       // For NVMe dropdown, use 'change' event
       input.addEventListener('change', (e) => {
-        const slotIndex = parseInt(e.target.dataset.slotIndex);
+        const slotIndex = parseInt(e.target.dataset.slotIndex, 10);
         const interfaceType = e.target.dataset.interface;
         const value = e.target.value;
 
@@ -731,9 +673,6 @@ function renderSlotAssignment() {
       });
     }
   });
-
-  // Store slots in wizard data for save
-  wizardData.slots = slots;
 }
 
 // Wizard navigation
@@ -746,6 +685,10 @@ document.getElementById("wizardNextBtn")?.addEventListener("click", () => {
     }
     if (trimmedName.length < 2) {
       alert("Enclosure name must be at least 2 characters.");
+      return;
+    }
+    if (trimmedName.length > 100) {
+      alert("Enclosure name must be 100 characters or less.");
       return;
     }
     if (!wizardData.pci_controller) {
@@ -765,329 +708,3 @@ document.getElementById("wizardPrevBtn")?.addEventListener("click", () => {
   currentWizardStep--;
   renderWizardStep();
 });
-
-async function handleSaveEnclosure() {
-  try {
-    // Generate and validate enclosure ID from trimmed name
-    const trimmedName = (wizardData.name || "").trim();
-    const enclosureId = trimmedName.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_-]/g, '');
-    if (!enclosureId || enclosureId.length < 2) {
-      alert("Invalid enclosure name. Please use at least 2 alphanumeric characters.");
-      return;
-    }
-
-    // Get slot mappings from the slot assignment table
-    const container = document.getElementById("slotAssignmentContainer");
-    const slotMappings = {};
-    
-    container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for label input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      slotMappings[slotKey].label = input.value;
-    });
-    
-    container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for role select");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (slotMappings[slotKey]) {
-        slotMappings[slotKey].role = select.value;
-        slotMappings[slotKey].locked = select.value === 'os';
-      }
-    });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      if (!slotMappings[slotKey].mappings) {
-        slotMappings[slotKey].mappings = {};
-      }
-      slotMappings[slotKey].mappings[interfaceType] = {
-        slot_type: slotType,
-        hardware_identifier: input.value
-      };
-    });
-
-    const payload = {
-      id: enclosureId,
-      name: trimmedName,
-      template_id: wizardData.template_id,
-      pci_controller: wizardData.pci_controller,
-      expander_sas_address: wizardData.expander_sas_address,
-      display_order: wizardData.display_order,
-      nvme_start_slot: wizardData.nvme_starting_slot,
-      starting_slot_number: wizardData.starting_slot_number,
-      slot_mappings: slotMappings
-    };
-
-    const response = await safeFetch("/api/admin/enclosures", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      let data;
-      try {
-        data = await response.json();
-      } catch (e) {
-        throw new Error("Failed to create enclosure");
-      }
-      throw new Error(data.error || "Failed to create enclosure");
-    }
-
-    alert("Enclosure created successfully!");
-    closeModal(document.getElementById("enclosureWizardModal"));
-    await loadEnclosures();
-    renderEnclosureList(Object.values(adminEnclosures));
-  } catch (e) {
-    alert(`Error: ${e.message}`);
-  }
-}
-
-async function handleEditEnclosure() {
-  try {
-    if (!editEnclosureId) {
-      alert("Edit mode error: missing enclosure ID");
-      return;
-    }
-
-    const trimmedName = (wizardData.name || "").trim();
-    if (!trimmedName || trimmedName.length < 2) {
-      alert("Enclosure name must be at least 2 characters.");
-      return;
-    }
-
-    // Get slot mappings from the slot assignment table
-    const container = document.getElementById("slotAssignmentContainer");
-    const slotMappings = {};
-    
-    container.querySelectorAll('.slot-label-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for label input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      slotMappings[slotKey].label = input.value;
-    });
-    
-    container.querySelectorAll('.slot-role-select').forEach(select => {
-      const slotIndex = parseInt(select.dataset.slotIndex);
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for role select");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (slotMappings[slotKey]) {
-        slotMappings[slotKey].role = select.value;
-        slotMappings[slotKey].locked = select.value === 'os';
-      }
-    });
-    
-    // Add HW identifiers to slot mappings
-    container.querySelectorAll('.hw-id-input').forEach(input => {
-      const slotIndex = parseInt(input.dataset.slotIndex);
-      const interfaceType = input.dataset.interface;
-      const slotType = input.dataset.slotType;
-      if (isNaN(slotIndex)) {
-        console.error("Invalid slot index for HW ID input");
-        return;
-      }
-      const slotKey = String(slotIndex);
-      if (!slotMappings[slotKey]) {
-        slotMappings[slotKey] = {};
-      }
-      if (!slotMappings[slotKey].mappings) {
-        slotMappings[slotKey].mappings = {};
-      }
-      slotMappings[slotKey].mappings[interfaceType] = {
-        slot_type: slotType,
-        hardware_identifier: input.value
-      };
-    });
-
-    const payload = {
-      name: trimmedName,
-      template_id: wizardData.template_id,
-      pci_controller: wizardData.pci_controller,
-      expander_sas_address: wizardData.expander_sas_address,
-      display_order: wizardData.display_order,
-      nvme_start_slot: wizardData.nvme_starting_slot,
-      starting_slot_number: wizardData.starting_slot_number,
-      slot_mappings: slotMappings
-    };
-
-    const response = await safeFetch(`/api/admin/enclosures/${editEnclosureId}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!response.ok) {
-      let data;
-      try {
-        data = await response.json();
-      } catch (e) {
-        throw new Error("Failed to update enclosure");
-      }
-      throw new Error(data.error || "Failed to update enclosure");
-    }
-
-    alert("Enclosure updated successfully!");
-    closeModal(document.getElementById("enclosureWizardModal"));
-    await loadEnclosures();
-    renderEnclosureList(Object.values(adminEnclosures));
-  } catch (e) {
-    alert(`Error: ${e.message}`);
-  }
-}
-
-// Attach listener at module load for static modals; dynamic modals re-attach in openNewEnclosureWizard/editEnclosure
-const _moduleSaveBtn = document.getElementById("wizardSaveBtn");
-if (_moduleSaveBtn) {
-  _moduleSaveBtn.addEventListener("click", () => {
-    if (isEditMode) {
-      handleEditEnclosure();
-    } else {
-      handleSaveEnclosure();
-    }
-  });
-  _moduleSaveBtn.dataset.enclosureListener = "true";
-}
-
-// Delete enclosure
-async function deleteEnclosure(enclosureId) {
-  if (!confirm(`Are you sure you want to delete enclosure ${enclosureId}?`)) return;
-
-  try {
-    const response = await safeFetch(`/api/admin/enclosures/${enclosureId}`, {
-      method: "DELETE"
-    });
-
-    if (!response.ok) {
-      const data = await response.json();
-      throw new Error(data.error || "Failed to delete enclosure");
-    }
-
-    alert("Enclosure deleted successfully!");
-    await loadEnclosures();
-    renderEnclosureList(Object.values(adminEnclosures));
-  } catch (e) {
-    alert(`Error: ${e.message}`);
-  }
-}
-
-// Edit enclosure
-async function editEnclosure(enclosureId) {
-  const enclosure = adminEnclosures[enclosureId];
-  if (!enclosure) {
-    alert("Enclosure not found.");
-    return;
-  }
-
-  const modal = document.getElementById("enclosureWizardModal");
-  if (!modal) return;
-
-  // Ensure save button listener is attached
-  const saveBtn = document.getElementById("wizardSaveBtn");
-  if (saveBtn && !saveBtn.dataset.enclosureListener) {
-    saveBtn.addEventListener("click", () => {
-      if (isEditMode) {
-        handleEditEnclosure();
-      } else {
-        handleSaveEnclosure();
-      }
-    });
-    saveBtn.dataset.enclosureListener = "true";
-  }
-
-  // Set wizard to edit mode
-  currentWizardStep = 1;
-  isEditMode = true;
-  editEnclosureId = enclosureId;
-  wizardData = {
-    name: enclosure.name || "",
-    template_id: enclosure.template_id || "",
-    pci_controller: enclosure.pci_controller || "",
-    expander_sas_address: enclosure.expander_sas_address || null,
-    display_order: enclosure.display_order || 0,
-    nvme_starting_slot: enclosure.nvme_start_slot || null,
-    starting_slot_number: enclosure.starting_slot_number || null
-  };
-
-  // Update modal title
-  const modalTitle = modal.querySelector(".modal-title");
-  if (modalTitle) {
-    modalTitle.textContent = "Edit Enclosure";
-  }
-
-  await renderWizardStep();
-  openModal(modal);
-}
-
-// Track initialization state to prevent redundant API calls
-let enclosureManagementInitialized = false;
-
-// Initialize enclosure management on admin panel load
-async function initializeEnclosureManagement() {
-  if (enclosureManagementInitialized) {
-    // Data already loaded, just re-render
-    renderEnclosureList(Object.values(adminEnclosures));
-    return;
-  }
-
-  await Promise.all([
-    loadEnclosures(),
-    loadTemplates(),
-    loadMasterSlotMap()
-  ]);
-  renderEnclosureList(Object.values(adminEnclosures));
-  enclosureManagementInitialized = true;
-}
-
-// Wire up "Add Enclosure" button
-function attachEnclosureManagementListeners() {
-  const addEnclosureBtn = document.getElementById("addEnclosureBtn");
-  if (addEnclosureBtn) {
-    addEnclosureBtn.addEventListener("click", openNewEnclosureWizard);
-  }
-
-  const adminTab = document.querySelector('[data-tab="adminPanel"]');
-  if (adminTab) {
-    adminTab.addEventListener("click", () => {
-      initializeEnclosureManagement();
-    });
-  }
-}
-
-// Attach listeners immediately if DOM is ready, otherwise wait for DOMContentLoaded
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", attachEnclosureManagementListeners);
-} else {
-  attachEnclosureManagementListeners();
-}
-// --- END OF FILE frontend/admin/enclosureManagement.js ---

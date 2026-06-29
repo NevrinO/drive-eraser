@@ -320,7 +320,7 @@
       <h2>Remote Network Access Required</h2>
       <p>Please enter the administrator passphrase configured in policy.json to interact with this station.</p>
       <form id="authForm">
-        <input type="password" id="authPassphrase" placeholder="Passphrase" autocomplete="current-password">
+        <input type="password" id="authPassphrase" class="input--auth" placeholder="Passphrase" autocomplete="current-password">
         <button type="submit" class="btn btn--primary mt-3 w-full">Verify Passphrase</button>
       </form>
       <div id="authErrorMsg" class="auth-error hidden">Invalid passphrase. Access denied.</div>
@@ -1130,7 +1130,9 @@
   <script src="/triageReport.js" defer></script>
   <script src="/auditLedger.js" defer></script>
   <script src="/admin/adminUtilities.js" defer></script>
-  <script src="/admin/enclosureManagement.js" defer></script>
+  <script src="/admin/enclosureList.js" defer></script>
+  <script src="/admin/enclosureWizard.js" defer></script>
+  <script src="/admin/enclosureSave.js" defer></script>
   <script src="/admin/bayMapping.js" defer></script>
   <script src="/admin/logoManagement.js" defer></script>
   <script src="/admin/templateManagement.js" defer></script>

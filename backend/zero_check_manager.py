@@ -1,6 +1,7 @@
 # Background zero-check manager for pre-wipe zero detection.
 # Non-blocking, queue-based, with per-bay cancellation and SocketIO events.
 
+import copy
 from collections import deque
 from datetime import datetime, timezone
 import logging
@@ -77,7 +78,7 @@ class ZeroCheckManager:
             status = self._status.get(bay, self._base_status())
             status.update(updates)
             self._status[bay] = status
-        self._emit_update(bay)
+        self._emit_update(bay, status)
         return status
 
     def _next_generation(self, bay):
@@ -101,13 +102,14 @@ class ZeroCheckManager:
             status = self._status.get(bay, self._base_status())
             status.update(updates)
             self._status[bay] = status
-        self._emit_update(bay)
+        self._emit_update(bay, status)
         return status
 
-    def _emit_update(self, bay):
+    def _emit_update(self, bay, status=None):
         try:
             if self._socketio:
-                status = self._get_status(bay)
+                if status is None:
+                    status = self._get_status(bay)
                 self._socketio.emit("zero_check_updated", {"bay": bay, "zero_check": status})
         except Exception as e:
             logging.getLogger("app").warning(f"Failed to emit zero_check_updated for {bay}: {e}")
@@ -200,7 +202,7 @@ class ZeroCheckManager:
 
     def get_all_status(self):
         with self._lock:
-            return {bay: dict(status) for bay, status in self._status.items()}
+            return {bay: copy.deepcopy(status) for bay, status in self._status.items()}
 
     def on_drive_removed(self, bay):
         self.clear_state(bay)

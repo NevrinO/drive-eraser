@@ -2,13 +2,14 @@
 import os
 import json
 import time
+import copy
 import logging
 from threading import Lock, RLock
+from weakref import WeakValueDictionary
 from jsonschema import validate, ValidationError
 
 # Constants
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
-DEFAULT_CERTIFICATE_RETENTION_DAYS = 365  # Default number of days to retain certificates
 SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certificate signature (NIST recommendation: 100,000+)
 DRIVE_DATA_CACHE_TTL = 600  # seconds (10 minutes) - TTL for drive discovery cache
 
@@ -20,20 +21,33 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BAY_MAP_LOCK = RLock()
 
 # High #13: Device-level lock to prevent concurrent operations on same device
-DEVICE_LOCKS = {}  # device_path -> Lock
+DEVICE_LOCKS = WeakValueDictionary()  # device_path -> Lock (auto-cleaned when no references remain)
 DEVICE_LOCKS_LOCK = Lock()  # Lock for accessing DEVICE_LOCKS dict
 
 logger = logging.getLogger("app")
+
+# File-mtime cache for load_policy() to avoid re-reading unchanged policy.json (A1, A21)
+# Keyed by absolute path to prevent collisions between different config dirs with same mtime
+_policy_cache_lock = Lock()
+_policy_cache = {}  # {abs_path: (mtime, result)}
+
+# File-mtime cache for bay_map.json (A31) — defined here so save_bay_map() can invalidate it
+# without circular imports. Used by udev_listener._load_bay_map_cached().
+_bay_map_cache_lock = Lock()
+_bay_map_cache = {}  # {abs_path: (mtime, result)}
 
 def get_device_lock(device_path):
     """
     Get or create a device-specific lock for concurrent operation prevention.
     High #13: Shared lock mechanism for verification operations.
+    Uses WeakValueDictionary so locks are auto-cleaned when no callers hold references.
     """
     with DEVICE_LOCKS_LOCK:
-        if device_path not in DEVICE_LOCKS:
-            DEVICE_LOCKS[device_path] = Lock()
-        return DEVICE_LOCKS[device_path]
+        lock = DEVICE_LOCKS.get(device_path)
+        if lock is None:
+            lock = Lock()
+            DEVICE_LOCKS[device_path] = lock
+        return lock
 
 DEFAULT_POLICY = {
     "prewipe_zero_detection_enabled": True,
@@ -146,7 +160,7 @@ POLICY_SCHEMA = {
             "additionalProperties": False,
         },
     },
-    "additionalProperties": True,  # Allow unknown keys but log warnings
+    "additionalProperties": False,
 }
 
 # JSON schema for template configuration (physical layout definitions)
@@ -295,8 +309,13 @@ def get_data_dir():
         "/opt/drive-eraser/data",
     ]
     for candidate in candidates:
-        if candidate and os.path.isdir(candidate):
+        if not candidate:
+            continue
+        try:
+            os.listdir(candidate)
             return candidate
+        except OSError:
+            continue
     return os.path.join(PROJECT_ROOT, "data")
 
 def get_db_path():
@@ -347,31 +366,6 @@ def purge_old_logs(max_age_days=DEFAULT_LOG_RETENTION_DAYS):
                     pass # Remain stable if a file is currently locked or deleted by another thread
     return purged_count
 
-def purge_old_certificates(max_age_days=DEFAULT_CERTIFICATE_RETENTION_DAYS):
-    """
-    Medium #58: Scans certificate directory and purges any files
-    whose last modified time exceeds max_age_days.
-    """
-    now = time.time()
-    max_age_seconds = max_age_days * 86400
-    cert_dir = get_cert_dir()
-
-    purged_count = 0
-    if not os.path.isdir(cert_dir):
-        return purged_count
-
-    for entry in os.listdir(cert_dir):
-        full_path = os.path.join(cert_dir, entry)
-        # Ensure we only delete certificate files (json and html), avoiding folders
-        if os.path.isfile(full_path) and (entry.endswith(".json") or entry.endswith(".html")):
-            try:
-                mtime = os.path.getmtime(full_path)
-                if (now - mtime) > max_age_seconds:
-                    os.remove(full_path)
-                    purged_count += 1
-            except Exception:
-                pass # Remain stable if a file is currently locked or deleted by another thread
-    return purged_count
 # --- END OF LOGGING DIRECTORY EXTENSIONS ---
 
 def get_config_dir():
@@ -381,25 +375,64 @@ def get_config_dir():
         "/opt/drive-eraser/config",
     ]
     for candidate in candidates:
-        if candidate and os.path.isdir(candidate):
+        if not candidate:
+            continue
+        try:
+            os.listdir(candidate)
             return candidate
+        except OSError:
+            continue
     return os.path.join(PROJECT_ROOT, "config")
 
 def load_policy(config_dir=None):
     """
     Load and validate policy configuration from policy.json.
     High #9: Validates configuration against JSON schema and logs warnings for unknown keys.
+    Uses file-mtime cache to avoid re-reading unchanged policy.json on every call (A1, A21).
     """
     if config_dir is None:
         config_dir = get_config_dir()
     policy_path = os.path.join(config_dir, "policy.json")
-    if not os.path.exists(policy_path):
+
+    # Check file mtime for cache hit (A1, A21)
+    abs_path = os.path.abspath(policy_path)
+    try:
+        stat_result = os.stat(abs_path)
+        current_mtime = stat_result.st_mtime
+    except FileNotFoundError:
+        # File doesn't exist — return defaults, invalidate cache for this path
+        with _policy_cache_lock:
+            _policy_cache.pop(abs_path, None)
         return DEFAULT_POLICY.copy()
+    except OSError:
+        # Can't stat file — fall through to full load to let the error path handle it
+        current_mtime = None
+
+    if current_mtime is not None:
+        with _policy_cache_lock:
+            cached = _policy_cache.get(abs_path)
+            if cached is not None and cached[0] == current_mtime:
+                return copy.deepcopy(cached[1])
+
     try:
         with open(policy_path, "r", encoding="utf-8") as f:
             data = json.load(f)
             if not isinstance(data, dict):
                 raise ValueError("policy.json must contain a JSON object")
+
+            # Strip deprecated keys not in schema before validation (A11)
+            _DEPRECATED_POLICY_KEYS = {"prewipe_spot_check"}
+            deprecated_values = {}
+            for dep_key in _DEPRECATED_POLICY_KEYS:
+                if dep_key in data:
+                    deprecated_values[dep_key] = data.pop(dep_key)
+
+            # Log and strip unknown keys before validation
+            known_keys = set(POLICY_SCHEMA.get("properties", {}).keys())
+            unknown_keys = [k for k in data if k not in known_keys]
+            for k in unknown_keys:
+                logger.warning(f"Unknown key '{k}' in policy.json — ignoring")
+                data.pop(k)
 
             # High #9: Validate against schema
             try:
@@ -408,15 +441,6 @@ def load_policy(config_dir=None):
                 raise ValueError(
                     f"Configuration validation failed: {e.message} "
                     f"(path: {'.'.join(str(p) for p in e.path)})"
-                )
-
-            # High #9: Log warnings for unknown configuration keys
-            known_keys = set(POLICY_SCHEMA["properties"].keys())
-            unknown_keys = set(data.keys()) - known_keys
-            if unknown_keys:
-                logger.warning(
-                    f"Unknown configuration keys in policy.json: {', '.join(sorted(unknown_keys))}. "
-                    f"These keys will be ignored."
                 )
 
             # Merge with defaults
@@ -428,10 +452,14 @@ def load_policy(config_dir=None):
                 merged["secondary_verification_mode"] = merged["crypto_verification_mode"]
 
             # Migration: deprecated prewipe_spot_check -> prewipe_zero_detection_enabled
-            if "prewipe_spot_check" in merged:
+            if "prewipe_spot_check" in deprecated_values:
                 if "prewipe_zero_detection_enabled" not in data:
-                    merged["prewipe_zero_detection_enabled"] = merged["prewipe_spot_check"]
-                merged.pop("prewipe_spot_check", None)
+                    merged["prewipe_zero_detection_enabled"] = deprecated_values["prewipe_spot_check"]
+
+            # Update cache (A1, A21)
+            if current_mtime is not None:
+                with _policy_cache_lock:
+                    _policy_cache[abs_path] = (current_mtime, merged)
 
             return merged
     except Exception as e:
@@ -477,8 +505,20 @@ def save_policy(policy_data, config_dir=None):
         config_dir = get_config_dir()
     os.makedirs(config_dir, exist_ok=True)
     policy_path = os.path.join(config_dir, "policy.json")
-    with open(policy_path, "w", encoding="utf-8") as f:
+
+    # Atomic file save: write to temp file first, then rename (rule #20)
+    temp_path = policy_path + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as f:
         json.dump(policy_data, f, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+
+    # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
+    os.replace(temp_path, policy_path)
+
+    # Invalidate cache so next load_policy() re-reads from disk (prevents stale cache)
+    with _policy_cache_lock:
+        _policy_cache.pop(os.path.abspath(policy_path), None)
 
 def save_bay_map(bay_map_data, config_dir=None):
     if config_dir is None:
@@ -496,27 +536,26 @@ def save_bay_map(bay_map_data, config_dir=None):
     # Atomic save: os.replace is atomic on POSIX and overwrites on Windows
     os.replace(temp_path, bay_map_path)
 
+    # Invalidate udev_listener's bay_map cache so next read gets fresh data
+    with _bay_map_cache_lock:
+        _bay_map_cache.pop(os.path.abspath(bay_map_path), None)
+
 def load_bay_map(config_dir=None):
     """
     Load bay map configuration with validation for placeholder values.
     Critical #7: Detects "REPLACE_ME" placeholder values and logs warning but allows load to proceed.
-    Advisory #7: Fixed TOCTOU race condition by moving existence check inside lock.
+    Advisory #7: Fixed TOCTOU race condition by removing existence check and catching FileNotFoundError.
     """
     if config_dir is None:
         config_dir = get_config_dir()
     bay_map_path = os.path.join(config_dir, "bay_map.json")
     
     with BAY_MAP_LOCK:
-        # Advisory #7: Move existence check inside lock to prevent TOCTOU race condition
-        if not os.path.exists(bay_map_path):
-            return {}
-        
         try:
             with open(bay_map_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
             # Critical #7: Detect placeholder values and log warning
-            logger = __import__("logging").getLogger("app")
             has_placeholders = False
             for bay_id, bay_config in data.items():
                 if isinstance(bay_config, dict) and bay_config.get("by_path") == "REPLACE_ME":
@@ -527,8 +566,9 @@ def load_bay_map(config_dir=None):
                 logger.warning("Bay map contains placeholder device paths (REPLACE_ME). System will load but drive operations will fail until bays are properly configured.")
             
             return data
+        except FileNotFoundError:
+            return {}
         except Exception as e:
-            logger = __import__("logging").getLogger("app")
             logger.error(f"Failed to load bay map: {e}")
             return {}
 # --- END OF FILE backend/common.py ---

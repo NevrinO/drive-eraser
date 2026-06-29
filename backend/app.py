@@ -19,7 +19,7 @@ register_blueprints(app)
 # Must be registered after blueprints to avoid Flask's "first request" state
 @app.before_request
 def security_gate():
-    from flask import request, jsonify
+    from flask import request
     from app_config import is_localhost, load_policy, calculate_session_token
     
     if not request.path.startswith("/api/"):
@@ -64,20 +64,12 @@ def _centralized_signal_handler(signum, frame):
     crypto_verification._handle_verification_signal(signum, frame)
     disk_ops._handle_discovery_signal(signum, frame)
     udev_listener.stop_udev_listener()
-    stop_smart_test_update_thread()
-    disk_ops.stop_extended_smart_pool(wait=True)
+    stop_smart_test_update_thread(wait=False)
+    disk_ops.stop_extended_smart_pool(wait=False)
     # Exit gracefully after setting interruption flags
     import sys
     logger.info(f"Received signal {signum}, shutting down...")
-    sys.exit(0)
-
-# Register centralized signal handlers (only in main thread)
-try:
-    signal.signal(signal.SIGTERM, _centralized_signal_handler)
-    signal.signal(signal.SIGINT, _centralized_signal_handler)
-except ValueError:
-    # Signal handlers can only be registered in main thread
-    pass
+    sys.exit(130)
 
 # Critical #3: Add CSP HTTP header
 @app.after_request
@@ -93,28 +85,11 @@ def handle_exception(e):
     logger.error(f"Unhandled exception: {e}", exc_info=True)
     return jsonify({"error": "Internal server error"}), 500
 
-# Initialize database on module import (required for WSGI deployments)
-init_wipe_db()
-
-# Set WebSocket manager for udev event listener
-udev_listener.set_websocket_manager(socketio)
-
-# Set WebSocket manager for disk_ops (SMART data updates)
-disk_ops.set_websocket_manager(socketio)
-
-# Initialize background zero-check manager with current policy concurrency limit
-config_dir = get_config_dir()
-_policy = load_policy(config_dir)
-ZERO_CHECK_CONCURRENCY = int(_policy.get("zero_detection_concurrency_limit", 8))
-zero_check_manager = get_zero_check_manager(socketio=socketio, max_concurrency=ZERO_CHECK_CONCURRENCY)
-
-# Start udev event listener for real-time device discovery
-udev_listener.start_udev_listener()
-
 # Background thread to update SMART test status in database
 SMART_TEST_UPDATE_INTERVAL = 30  # Check every 30 seconds
 smart_test_update_thread = None
 smart_test_update_stop_event = threading.Event()
+smart_test_update_thread_lock = threading.Lock()
 
 def update_smart_test_status_background():
     """Background thread to update SMART test status in database.
@@ -141,11 +116,6 @@ def update_smart_test_status_background():
                 
                 device = test.get("device")
                 if not device:
-                    continue
-                
-                # Check if device still exists before querying SMART status
-                if not os.path.exists(device):
-                    logger.debug(f"Device {device} no longer exists, skipping SMART status check")
                     continue
                 
                 try:
@@ -210,25 +180,78 @@ def update_smart_test_status_background():
 def start_smart_test_update_thread():
     """Start the background thread for SMART test status updates."""
     global smart_test_update_thread
-    if smart_test_update_thread is None or not smart_test_update_thread.is_alive():
-        smart_test_update_stop_event.clear()
-        smart_test_update_thread = threading.Thread(target=update_smart_test_status_background, daemon=True)
-        smart_test_update_thread.start()
-        logger.info("Started SMART test status background thread")
+    with smart_test_update_thread_lock:
+        if smart_test_update_thread is None or not smart_test_update_thread.is_alive():
+            smart_test_update_stop_event.clear()
+            smart_test_update_thread = threading.Thread(target=update_smart_test_status_background, daemon=True)
+            smart_test_update_thread.start()
+            logger.info("Started SMART test status background thread")
 
-def stop_smart_test_update_thread():
-    """Stop the background thread for SMART test status updates."""
+def stop_smart_test_update_thread(wait=True):
+    """Stop the background thread for SMART test status updates.
+
+    Args:
+        wait: If True, join the thread (up to 5s). If False, just signal
+              and nullify without joining — used from signal handlers where
+              blocking is unsafe. The daemon thread is killed on process exit.
+    """
     global smart_test_update_thread
-    if smart_test_update_thread and smart_test_update_thread.is_alive():
-        smart_test_update_stop_event.set()
-        smart_test_update_thread.join(timeout=5)
-        logger.info("Stopped SMART test status background thread")
+    with smart_test_update_thread_lock:
+        thread = smart_test_update_thread
+        if thread and thread.is_alive():
+            smart_test_update_stop_event.set()
+        else:
+            return
+    if wait:
+        thread.join(timeout=5)
+    with smart_test_update_thread_lock:
+        if smart_test_update_thread is thread:
+            smart_test_update_thread = None
+    logger.info("Stopped SMART test status background thread")
 
-# Start the background thread
-start_smart_test_update_thread()
+def create_app():
+    """Application factory: initializes database, background threads, and managers.
+    
+    Call this once at startup (from main() or wsgi.py) to trigger side effects.
+    Importing app.py alone does NOT trigger side effects — safe for testing.
+    
+    Returns:
+        (app, socketio) tuple
+    """
+    # Initialize database
+    init_wipe_db()
+    
+    # Set WebSocket managers
+    udev_listener.set_websocket_manager(socketio)
+    disk_ops.set_websocket_manager(socketio)
+    
+    # Initialize zero-check manager with current policy concurrency limit
+    config_dir = get_config_dir()
+    _policy = load_policy(config_dir)
+    zero_check_concurrency = int(_policy.get("zero_detection_concurrency_limit", 8))
+    get_zero_check_manager(socketio=socketio, max_concurrency=zero_check_concurrency)
+    
+    # Start udev event listener for real-time device discovery
+    udev_listener.start_udev_listener()
+    
+    # Start SMART test status background thread
+    start_smart_test_update_thread()
+    
+    # Register signal handlers (only in main thread)
+    try:
+        signal.signal(signal.SIGTERM, _centralized_signal_handler)
+        signal.signal(signal.SIGINT, _centralized_signal_handler)
+    except ValueError:
+        # Signal handlers can only be registered in main thread
+        pass
+    
+    return app, socketio
+
 
 def main():
     """Run the Drive Eraser Flask-SocketIO server."""
+    app, socketio = create_app()
+    
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
     

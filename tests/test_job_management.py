@@ -512,22 +512,20 @@ class TestSignalHandling:
     """Test signal handling for job interruption."""
 
     def test_handle_job_signal_sets_flag(self):
-        """Test that signal handler sets interruption flag."""
+        """Test that signal handler increments generation counter."""
         import job_management
-        original_state = job_management._job_interrupted
-        try:
-            job_management._job_interrupted = False
-            _handle_job_signal(15, None)
-            assert _check_job_interrupted() is True
-        finally:
-            job_management._job_interrupted = original_state
+        with job_management._job_interrupt_lock:
+            gen_before = job_management._job_interrupt_generation
+        _handle_job_signal(15, None)
+        assert _check_job_interrupted(gen_before) is True
 
     def test_check_interrupted_returns_flag(self):
-        """Test that check function returns the interruption flag value."""
+        """Test that check function returns correct interruption state for a given generation."""
         import job_management
-        job_management._job_interrupted = False
-        result1 = _check_job_interrupted()
-        result2 = _check_job_interrupted()
+        with job_management._job_interrupt_lock:
+            current_gen = job_management._job_interrupt_generation
+        result1 = _check_job_interrupted(current_gen)
+        result2 = _check_job_interrupted(current_gen)
         assert result1 == result2 == False
 
 

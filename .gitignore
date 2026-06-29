@@ -241,5 +241,11 @@ __marimo__/
 # Agent logs and scratchpad
 .devin/archive/
 
+# Cross-session progress tracking (working file, not project content)
+progress.txt
+
+# Triage script output (generated, not project content)
+scripts/triage_output.json
+
 # Release build artifacts
 drive-eraser-*.zip

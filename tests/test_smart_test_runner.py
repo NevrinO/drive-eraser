@@ -15,8 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 class TestRunSmartTest:
     """Test run_smart_test function."""
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.validate_device_path')
     @patch('subprocess.run')
     def test_run_smart_test_short(self, mock_subprocess_run, mock_validate, mock_get_command_path):
         """Test running a short SMART test."""
@@ -37,8 +37,8 @@ class TestRunSmartTest:
         assert result["estimated_minutes"] == 2
         assert "poll_command" in result
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.validate_device_path')
     @patch('subprocess.run')
     def test_run_smart_test_extended(self, mock_subprocess_run, mock_validate, mock_get_command_path):
         """Test running an extended SMART test (normalized to 'long' for smartctl)."""
@@ -58,8 +58,8 @@ class TestRunSmartTest:
         assert result["status"] == "started"
         assert result["estimated_minutes"] == 120
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.validate_device_path')
     @patch('subprocess.run')
     def test_run_smart_test_extended_alias(self, mock_subprocess_run, mock_validate, mock_get_command_path):
         """Test that 'extended' is aliased to 'long' for smartctl compatibility."""
@@ -78,7 +78,7 @@ class TestRunSmartTest:
         assert result["test_type"] == "long"  # Should be normalized to smartctl's expected value
         assert result["status"] == "started"
 
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.validate_device_path')
     def test_run_smart_test_invalid_device(self, mock_validate):
         """Test that invalid device path is rejected."""
         from smart_parsing import run_smart_test
@@ -90,8 +90,8 @@ class TestRunSmartTest:
         assert result["status"] == "failed"
         assert "error" in result
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.validate_device_path')
     def test_run_smart_test_invalid_test_type(self, mock_validate, mock_get_command_path):
         """Test that invalid test type is rejected."""
         from smart_parsing import run_smart_test
@@ -104,8 +104,8 @@ class TestRunSmartTest:
         assert result["status"] == "failed"
         assert "Invalid test type" in result["error"]
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.validate_device_path')
     def test_run_smart_test_smartctl_not_found(self, mock_validate, mock_get_command_path):
         """Test that missing smartctl is handled."""
         from smart_parsing import run_smart_test
@@ -122,9 +122,9 @@ class TestRunSmartTest:
 class TestGetSmartTestStatus:
     """Test get_smart_test_status function."""
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_in_progress(self, mock_validate, mock_run_command, mock_get_command_path):
         """Test getting status of in-progress test."""
         from smart_parsing import get_smart_test_status
@@ -150,9 +150,9 @@ class TestGetSmartTestStatus:
         assert result["status"] == "in_progress"
         assert result["percentage"] == 50.0  # (90 - 45) / 90 * 100
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_completed(self, mock_validate, mock_run_command, mock_get_command_path):
         """Test getting status of completed test."""
         from smart_parsing import get_smart_test_status
@@ -181,9 +181,9 @@ class TestGetSmartTestStatus:
         assert result["percentage"] == 0
         assert result["latest_result"]["status"] == "Completed without error"
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_failed(self, mock_validate, mock_run_command, mock_get_command_path):
         """Test getting status of failed test."""
         from smart_parsing import get_smart_test_status
@@ -211,9 +211,9 @@ class TestGetSmartTestStatus:
         assert result["status"] == "failed"
         assert result["latest_result"]["lba"] == 123456
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_extended_table(self, mock_validate, mock_run_command, mock_get_command_path):
         """Test getting status when self-test log is under extended.table (smartctl 7.x)."""
         from smart_parsing import get_smart_test_status
@@ -247,9 +247,9 @@ class TestGetSmartTestStatus:
         assert result["latest_result"]["hours"] == 244
         assert len(result["self_test_log_table"]) == 1
 
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_standard_table_from_selftest_flag(self, mock_validate, mock_run_command, mock_get_command_path):
         """Test parsing standard.table format from 'smartctl -j -l selftest' (the polling command).
         
@@ -294,7 +294,7 @@ class TestGetSmartTestStatus:
         assert result["latest_result"]["hours"] == 245
         assert len(result["self_test_log_table"]) == 2
 
-    @patch('smart_parsing.validate_device_path')
+    @patch('smart_test_runner.validate_device_path')
     def test_get_smart_test_status_invalid_device(self, mock_validate):
         """Test that invalid device path is rejected."""
         from smart_parsing import get_smart_test_status

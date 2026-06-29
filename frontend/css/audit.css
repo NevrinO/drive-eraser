@@ -1,0 +1,181 @@
+.audit-vault-list {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+
+.audit-row {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px 20px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.audit-row:hover {
+  border-color: var(--color-border-strong);
+}
+
+.audit-summary-line {
+  display: grid;
+  grid-template-columns: 260px 140px 1fr 1fr 140px;
+  align-items: center;
+  gap: 16px;
+}
+
+.audit-summary-line.bulk-mode {
+  grid-template-columns: 30px 260px 140px 1fr 1fr 140px;
+}
+
+.job-id-text {
+  font-family: monospace;
+  font-weight: 800;
+  font-size: 0.95rem;
+  color: var(--color-white);
+  min-width: 240px;
+}
+
+.ticket-text {
+  font-weight: 700;
+  font-size: 0.85rem;
+  color: var(--color-text-muted);
+}
+
+.audit-status-chip {
+  text-align: right;
+}
+
+.status-badge {
+  font-size: 0.65rem;
+  font-weight: 800;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+}
+
+.status-badge--complete { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid var(--color-success); }
+.status-badge--failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
+.status-badge--running { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
+.status-badge--queued { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-text-muted); }
+.status-badge--ready { background: rgba(6, 182, 212, 0.15); color: var(--color-teal); border: 1px solid var(--color-teal); }
+.status-badge--view-only { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
+.status-badge--warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
+.status-badge--empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+.expanded-audit-details {
+  margin-top: 16px;
+  border-top: 1px solid var(--color-border);
+  padding-top: 16px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.audit-meta-col {
+  display: grid;
+  gap: 8px;
+}
+
+.audit-actions-col {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.audit-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.kv {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  display: flex;
+  justify-content: space-between;
+}
+
+.kv span:last-child {
+  color: var(--color-white);
+  font-weight: 700;
+  word-break: break-word;
+  overflow-wrap: break-word;
+}
+
+.batch-config-list {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 8px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.batch-config-row {
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: 100px 1fr auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.batch-config-row span:first-child {
+  font-weight: 800;
+  color: var(--color-white);
+}
+
+.confirmation-section {
+  border-top: 1px dashed var(--color-border-strong);
+  padding-top: 14px;
+}
+
+.confirmation-hint-label {
+  font-size: 11px;
+  color: var(--color-warning);
+  font-weight: 800;
+  text-transform: none;
+  margin-top: 2px;
+}
+
+/* Dynamic Global Security Badge Colors */
+.reliability-badge.secure {
+  background: rgba(16, 185, 129, 0.1);
+  border-color: var(--color-success);
+  color: var(--color-success);
+}
+
+.reliability-badge.unsecured {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: var(--color-warning);
+  color: var(--color-warning);
+}
+
+/* Details Viewer Status Chip Styles - consolidated into .status-badge system */
+.status-chip {
+  display: inline-block;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+/* Status chip color variants — used by smartDeepDive.js and modals.js */
+.status-chip.status-complete { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid var(--color-success); }
+.status-chip.status-failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
+.status-chip.status-ready { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
+.status-chip.status-view-only { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
+.status-chip.status-empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+.status-chip.status-warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }

@@ -3,6 +3,7 @@ import os
 import json
 import sqlite3
 import io
+import hmac
 from datetime import datetime
 from threading import Thread
 from flask import Blueprint, jsonify, request, send_file
@@ -77,7 +78,7 @@ def get_certificate(job_id):
         policy = load_policy()
         lan_passphrase = policy.get("lan_passphrase", "eraser123")
         session_token = request.cookies.get("admin_session")
-        if not session_token or session_token != calculate_session_token(lan_passphrase):
+        if not session_token or not hmac.compare_digest(session_token, calculate_session_token(lan_passphrase)):
             return jsonify({"error": "Authentication required for bulk certificate downloads"}), 401
     
     if response_format == "json":
