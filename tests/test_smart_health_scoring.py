@@ -332,6 +332,7 @@ class TestDriveRecommendation:
     def test_recommendation_new_stock_ssd(self):
         """Test NEW_STOCK recommendation for pristine SSD."""
         from smart_parsing import get_drive_recommendation
+        from smart_data_parsing import _DEFAULT_TRIAGE_THRESHOLDS
 
         smart = {
             "power_on_hours": 500,
@@ -342,8 +343,9 @@ class TestDriveRecommendation:
             "wear_level": 0,
             "status": "PASSED"
         }
-        result = get_drive_recommendation("nvme", smart, health_score=95)
-        assert result["status"] == "NEW_STOCK"
+        with patch('smart_health.get_triage_thresholds', return_value=_DEFAULT_TRIAGE_THRESHOLDS.copy()):
+            result = get_drive_recommendation("nvme", smart, health_score=95)
+            assert result["status"] == "NEW_STOCK"
 
     def test_recommendation_destroy_failed_smart(self):
         """Test DESTROY recommendation for failed SMART."""

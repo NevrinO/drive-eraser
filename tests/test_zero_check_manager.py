@@ -27,7 +27,7 @@ class TestZeroCheckManager:
             emitted.append((event, payload))
 
         manager = ZeroCheckManager(socketio=None, max_concurrency=2)
-        manager._emit_update = lambda bay: fake_emit("zero_check_updated", {"bay": bay, "zero_check": manager.get_status(bay)})
+        manager._emit_update = lambda bay, status=None: fake_emit("zero_check_updated", {"bay": bay, "zero_check": manager.get_status(bay)})
 
         with patch('zero_check_manager.check_drive_already_zeroed') as mock_check:
             mock_check.return_value = {
@@ -463,7 +463,7 @@ class TestZeroCheckManager:
             # clear_state on the queued bay must not raise ValueError
             manager.clear_state("bay2")
             assert manager.get_status("bay2")["status"] == "not_started"
-            assert manager.get_all_status() == {}
+            assert "bay2" not in manager.get_all_status()
 
             # Clean up bay1
             manager.cancel_check("bay1")

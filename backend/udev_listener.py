@@ -308,7 +308,7 @@ def udev_event_listener_thread():
                 with _runtime_slot_lock:
                     for (enc_id, slot_num), state in list(_runtime_slot_state.items()):
                         if state and state.get('logical_device') == final_dev_node:
-                            _runtime_slot_state.pop((enc_id, slot_num), None)
+                            _runtime_slot_state[(enc_id, slot_num)] = None
 
                             # Clear any per-bay zero-check state so a newly inserted drive
                             # is not suppressed by a completed check from the previous drive.
