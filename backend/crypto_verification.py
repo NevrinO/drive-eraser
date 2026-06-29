@@ -9,12 +9,13 @@ import random
 import logging
 import threading
 
+import disk_utils
 from disk_utils import resolve_command_path, validate_device_path, get_command_path
 from common import get_device_lock, load_policy
 
 
 def resolve_verify_command_path(command_name):
-    return get_command_path(command_name)
+    return disk_utils.get_command_path(command_name)
 
 # High #12: Global flag for signal interruption
 _verification_interrupted = False
