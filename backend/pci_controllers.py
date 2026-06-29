@@ -133,7 +133,7 @@ def scan_pci_controllers(use_cache: bool = True) -> List[Dict]:
     return controllers
 
 
-def _map_pci_class_to_type(class_code: str) -> str:
+def _map_pci_class_to_type(class_code: str, description: str = "") -> str:
     """Map PCI class code to controller type string."""
     class_map = {
         '0100': 'scsi',
