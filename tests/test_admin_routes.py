@@ -406,8 +406,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "invalid"})
                                 assert response.status_code == 400
 
@@ -424,8 +424,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",
@@ -471,8 +471,8 @@ class TestAdminRoutes:
                         # Mock lsblk to avoid mounted drive check (403)
                         with patch('routes.admin_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
-                            # Mock device_discovery to avoid locked/secondary path checks (403)
-                            with patch('device_discovery.get_discovered_drives', return_value={}, create=True):
+                            # Mock discover_drives to avoid locked/secondary path checks (403)
+                            with patch('routes.admin_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",

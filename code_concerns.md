@@ -101,7 +101,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/device_discovery.py
 
-### A64: [Advisory] File size 1562 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
+### A64: [COMPLETED] [Advisory] File size 1562 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
 - **Lines**: 1-1562
 - **Issue**: File is 1562 lines, nearly double the 800-line threshold. Contains PCI scanning, NVMe info, enclosure hardware info, SAS expander detection, master slot map generation, SCSI host slot projections, multipath resolution, and 8 separate cache invalidation/management sections — all in one file.
 - **Impact**: Medium — difficult to navigate and maintain. AI agents with ~200k context windows must read the full file plus all context (callers, lessons-learned, security deviations) within a single generation.

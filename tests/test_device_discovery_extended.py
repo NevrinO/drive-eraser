@@ -85,7 +85,7 @@ class TestScanPciControllers:
     def test_successful_scan(self):
         """Test successful PCI scan."""
         from device_discovery import scan_pci_controllers
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="0000:00:1f.2 SATA controller: Intel Device 8c02 [0106] [8086:8c02]\n"
@@ -103,7 +103,7 @@ class TestScanPciControllers:
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="0000:00:1f.2 SATA controller [0106]")
             # First call
             result1 = scan_pci_controllers(use_cache=True)
@@ -116,7 +116,7 @@ class TestScanPciControllers:
     def test_scan_without_cache(self):
         """Test that cache is bypassed when disabled."""
         from device_discovery import scan_pci_controllers
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="0000:00:1f.2 SATA controller [0106]")
             # Both calls should bypass cache
             result1 = scan_pci_controllers(use_cache=False)
@@ -126,7 +126,7 @@ class TestScanPciControllers:
     def test_scan_failure_returns_empty(self):
         """Test that scan failure returns empty list."""
         from device_discovery import scan_pci_controllers
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stderr="lspci error")
             result = scan_pci_controllers(use_cache=False)
             assert result == []
@@ -135,21 +135,21 @@ class TestScanPciControllers:
         """Test that scan timeout is handled."""
         from device_discovery import scan_pci_controllers
         from subprocess import TimeoutExpired
-        with patch('device_discovery.subprocess.run', side_effect=TimeoutExpired("lspci", 10)):
+        with patch('pci_controllers.subprocess.run', side_effect=TimeoutExpired("lspci", 10)):
             result = scan_pci_controllers(use_cache=False)
             assert result == []
 
     def test_scan_command_not_found(self):
         """Test that missing lspci command is handled."""
         from device_discovery import scan_pci_controllers
-        with patch('device_discovery.subprocess.run', side_effect=FileNotFoundError):
+        with patch('pci_controllers.subprocess.run', side_effect=FileNotFoundError):
             result = scan_pci_controllers(use_cache=False)
             assert result == []
 
     def test_filters_non_storage_controllers(self):
         """Test that non-storage controllers are filtered out."""
         from device_discovery import scan_pci_controllers
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(
                 returncode=0,
                 stdout="0000:00:02.0 VGA controller: Intel Device [0300]\n"
@@ -165,12 +165,12 @@ class TestScanPciControllers:
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
-        with patch('device_discovery.subprocess.run') as mock_run:
+        with patch('pci_controllers.subprocess.run') as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="0000:00:1f.2 SATA controller [0106]")
             # First call
             result1 = scan_pci_controllers(use_cache=True)
             # Expire cache
-            with patch('device_discovery.time.time', return_value=time.time() + _PCI_CACHE_TTL + 1):
+            with patch('pci_controllers.time.time', return_value=time.time() + _PCI_CACHE_TTL + 1):
                 # Second call should bypass expired cache
                 result2 = scan_pci_controllers(use_cache=True)
             assert mock_run.call_count == 2
@@ -216,13 +216,13 @@ class TestDiscoverControllersAndDevices:
     def test_successful_discovery(self):
         """Test successful discovery."""
         from device_discovery import discover_controllers_and_devices
-        with patch('device_discovery.scan_pci_controllers', return_value=[
+        with patch('pci_controllers.scan_pci_controllers', return_value=[
             {'pci_address': '0000:00:1f.2', 'controller_type': 'sata', 'vendor_id': '8086', 'device_id': '8c02'}
         ]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=['sda', 'sdb']):
-                    with patch('device_discovery.validate_device_path', return_value=True):
-                        with patch('device_discovery.get_controller_for_device', return_value={
+                    with patch('pci_controllers.validate_device_path', return_value=True):
+                        with patch('pci_controllers.get_controller_for_device', return_value={
                             'pci_address': '0000:00:1f.2', 'controller_type': 'sata'
                         }):
                             result = discover_controllers_and_devices(use_cache=False)
@@ -232,7 +232,7 @@ class TestDiscoverControllersAndDevices:
     def test_discovery_with_cache(self):
         """Test that discovery cache is used."""
         from device_discovery import discover_controllers_and_devices
-        with patch('device_discovery.scan_pci_controllers', return_value=[]):
+        with patch('pci_controllers.scan_pci_controllers', return_value=[]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=[]):
                     # First call
@@ -244,7 +244,7 @@ class TestDiscoverControllersAndDevices:
     def test_skips_partitions(self):
         """Test that partitions are skipped."""
         from device_discovery import discover_controllers_and_devices
-        with patch('device_discovery.scan_pci_controllers', return_value=[]):
+        with patch('pci_controllers.scan_pci_controllers', return_value=[]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=['sda', 'sda1', 'sdb2']):
                     result = discover_controllers_and_devices(use_cache=False)
@@ -254,7 +254,7 @@ class TestDiscoverControllersAndDevices:
     def test_skips_device_mapper(self):
         """Test that device mapper devices are skipped."""
         from device_discovery import discover_controllers_and_devices
-        with patch('device_discovery.scan_pci_controllers', return_value=[]):
+        with patch('pci_controllers.scan_pci_controllers', return_value=[]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=['dm-0', 'dm-1', 'sda']):
                     result = discover_controllers_and_devices(use_cache=False)
@@ -264,14 +264,14 @@ class TestDiscoverControllersAndDevices:
     def test_groups_by_controller_type(self):
         """Test that devices are grouped by controller type."""
         from device_discovery import discover_controllers_and_devices
-        with patch('device_discovery.scan_pci_controllers', return_value=[
+        with patch('pci_controllers.scan_pci_controllers', return_value=[
             {'pci_address': '0000:00:1f.2', 'controller_type': 'sata'},
             {'pci_address': '0000:01:00.0', 'controller_type': 'nvme'}
         ]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=['sda', 'nvme0n1']):
-                    with patch('device_discovery.validate_device_path', return_value=True):
-                        with patch('device_discovery.get_controller_for_device') as mock_get:
+                    with patch('pci_controllers.validate_device_path', return_value=True):
+                        with patch('pci_controllers.get_controller_for_device') as mock_get:
                             mock_get.side_effect = [
                                 {'pci_address': '0000:00:1f.2', 'controller_type': 'sata'},
                                 {'pci_address': '0000:01:00.0', 'controller_type': 'nvme'}
@@ -286,11 +286,11 @@ class TestDiscoverControllersAndDevices:
         # Clear cache before test
         _DISCOVERY_CACHE['data'] = None
         _DISCOVERY_CACHE['timestamp'] = 0
-        with patch('device_discovery.scan_pci_controllers', return_value=[]):
+        with patch('pci_controllers.scan_pci_controllers', return_value=[]):
             with patch('os.path.exists', return_value=True):
                 with patch('os.listdir', return_value=['sda']):
-                    with patch('device_discovery.validate_device_path', return_value=True):
-                        with patch('device_discovery.get_controller_for_device', return_value=None):
+                    with patch('pci_controllers.validate_device_path', return_value=True):
+                        with patch('pci_controllers.get_controller_for_device', return_value=None):
                             result = discover_controllers_and_devices(use_cache=False)
                             # Devices without controllers are added to unknown bucket
                             assert len(result['unknown']) == 1
@@ -481,8 +481,8 @@ class TestGetScsiHostSlotProjections:
                             return []
                     mock_listdir.side_effect = listdir_side_effect
                     with patch('os.path.realpath', return_value='/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0'):
-                        with patch('device_discovery.is_enclosure_device', return_value=False):
-                            with patch('device_discovery.get_max_slot_from_enclosure', return_value=2):
+                        with patch('slot_mapping.is_enclosure_device', return_value=False):
+                            with patch('slot_mapping.get_max_slot_from_enclosure', return_value=2):
                                 result = get_scsi_host_slot_projections()
                                 assert len(result) == 3  # slots 0, 1, 2
                                 assert result[0]['pci_address'] == '0000:00:1f.2'
@@ -507,7 +507,7 @@ class TestGetScsiHostSlotProjections:
                 mock_listdir.side_effect = listdir_side_effect
                 with patch('os.path.isdir', return_value=True):
                     with patch('os.path.realpath', return_value='/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0'):
-                        with patch('device_discovery.get_max_slot_from_enclosure', return_value=0):
+                        with patch('slot_mapping.get_max_slot_from_enclosure', return_value=0):
                             result = get_scsi_host_slot_projections(use_cache=False)
                             # No SCSI devices means no slots projected
                             assert len(result) == 0
@@ -519,8 +519,8 @@ class TestGetScsiHostSlotProjections:
             with patch('os.listdir', side_effect=['host0', '0:0:0:0']):
                 with patch('os.path.isdir', return_value=True):
                     with patch('os.path.realpath', return_value='/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0'):
-                        with patch('device_discovery.is_enclosure_device', return_value=False):
-                            with patch('device_discovery.get_max_slot_from_enclosure', return_value=2000):  # Exceeds limit
+                        with patch('slot_mapping.is_enclosure_device', return_value=False):
+                            with patch('slot_mapping.get_max_slot_from_enclosure', return_value=2000):  # Exceeds limit
                                 result = get_scsi_host_slot_projections()
                                 # Should be limited to MAX_TOTAL_PROJECTIONS
                                 assert len(result) <= 1000
@@ -549,8 +549,8 @@ class TestGetScsiHostSlotProjections:
                     # Fourth call: list block entries for slot 1 (empty)
                     mock_listdir.side_effect = [['host0'], ['0:0:0:0', '0:0:1:0'], ['sda'], []]
                     with patch('os.path.realpath', return_value='/sys/devices/pci0000:00/0000:00:1f.2/ata1/host0'):
-                        with patch('device_discovery.is_enclosure_device', return_value=False):
-                            with patch('device_discovery.get_max_slot_from_enclosure', return_value=1):
+                        with patch('slot_mapping.is_enclosure_device', return_value=False):
+                            with patch('slot_mapping.get_max_slot_from_enclosure', return_value=1):
                                 result = get_scsi_host_slot_projections(use_cache=False)
                                 assert len(result) == 2  # slots 0, 1
                                 # Slot 0 should be occupied

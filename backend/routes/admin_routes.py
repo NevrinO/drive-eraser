@@ -32,7 +32,7 @@ from device_discovery import (
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from app_config import get_local_ip
-from disk_ops import invalidate_drive_cache, stop_extended_smart_pool, get_os_by_path
+from disk_ops import invalidate_drive_cache, stop_extended_smart_pool, get_os_by_path, discover_drives
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
@@ -2471,9 +2471,9 @@ def run_smart_test_endpoint(device):
         # Check if device is a dual-port secondary path
         # This requires checking the current drive discovery data
         try:
-            from device_discovery import get_discovered_drives
-            discovered = get_discovered_drives()
-            for drive in discovered.values():
+            config_dir = get_config_dir()
+            drives = discover_drives(os.path.join(config_dir, "bay_map.json"))
+            for drive in drives:
                 if drive.get("device") == device_path or drive.get("device") == device:
                     if drive.get("sas_secondary_path"):
                         logger.warning(f"SMART test rejected for {device}: device is dual-port secondary path")

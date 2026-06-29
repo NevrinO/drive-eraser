@@ -121,7 +121,7 @@ class TestValidatePciAddress:
 class TestScanPciControllers:
     """Test PCI controller scanning."""
 
-    @patch('device_discovery.subprocess.run')
+    @patch('pci_controllers.subprocess.run')
     def test_successful_scan(self, mock_run):
         """Test successful PCI controller scan."""
         mock_run.return_value = MagicMock(
@@ -132,7 +132,7 @@ class TestScanPciControllers:
         assert len(result) > 0
         assert result[0]['pci_address'] == "0000:00:1f.2"
 
-    @patch('device_discovery.subprocess.run')
+    @patch('pci_controllers.subprocess.run')
     def test_scan_with_cache(self, mock_run):
         """Test that cache is used when enabled."""
         mock_run.return_value = MagicMock(
@@ -145,7 +145,7 @@ class TestScanPciControllers:
         result2 = scan_pci_controllers(use_cache=True)
         assert len(result1) == len(result2)
 
-    @patch('device_discovery.subprocess.run')
+    @patch('pci_controllers.subprocess.run')
     def test_scan_failure_returns_empty(self, mock_run):
         """Test that scan failure returns empty list."""
         mock_run.return_value = MagicMock(
@@ -155,7 +155,7 @@ class TestScanPciControllers:
         result = scan_pci_controllers(use_cache=False)
         assert result == []
 
-    @patch('device_discovery.subprocess.run')
+    @patch('pci_controllers.subprocess.run')
     def test_scan_timeout(self, mock_run):
         """Test that timeout is handled."""
         import subprocess
@@ -163,7 +163,7 @@ class TestScanPciControllers:
         result = scan_pci_controllers(use_cache=False)
         assert result == []
 
-    @patch('device_discovery.subprocess.run')
+    @patch('pci_controllers.subprocess.run')
     def test_filters_non_storage_controllers(self, mock_run):
         """Test that non-storage controllers are filtered out."""
         mock_run.return_value = MagicMock(

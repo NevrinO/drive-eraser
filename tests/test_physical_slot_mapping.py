@@ -15,14 +15,14 @@ class TestResolveMultipathParent:
 
     def test_single_path_device_no_multipath(self):
         """Test that single-path device returns original path."""
-        from device_discovery import resolve_multipath_parent
-        with patch('device_discovery.os.path.isdir', return_value=False):
+        from slot_mapping import resolve_multipath_parent
+        with patch('slot_mapping.os.path.isdir', return_value=False):
             result = resolve_multipath_parent('sda')
             assert result == '/dev/sda'
 
     def test_dual_path_device_resolves_to_mapper(self):
         """Test that dual-path device resolves to /dev/mapper/mpathX."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         
         # Use side_effect to handle different directory paths
         def isdir_side_effect(path):
@@ -44,15 +44,15 @@ class TestResolveMultipathParent:
                 return '/dev/dm-0'  # mpatha symlink points to dm-0
             return path
         
-        with patch('device_discovery.os.path.isdir', side_effect=isdir_side_effect):
-            with patch('device_discovery.os.listdir', side_effect=listdir_side_effect):
-                with patch('device_discovery.os.path.realpath', side_effect=realpath_side_effect):
+        with patch('slot_mapping.os.path.isdir', side_effect=isdir_side_effect):
+            with patch('slot_mapping.os.listdir', side_effect=listdir_side_effect):
+                with patch('slot_mapping.os.path.realpath', side_effect=realpath_side_effect):
                     result = resolve_multipath_parent('sdb')
                     assert result == '/dev/mapper/mpatha'
 
     def test_dual_path_device_fallback_to_dm(self):
         """Test fallback to /dev/dm-X when mapper symlink not found."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         
         def isdir_side_effect(path):
             if 'holders' in path:
@@ -66,41 +66,41 @@ class TestResolveMultipathParent:
                 return ['dm-0']  # holders contains dm-0
             return []
         
-        with patch('device_discovery.os.path.isdir', side_effect=isdir_side_effect):
-            with patch('device_discovery.os.listdir', side_effect=listdir_side_effect):
+        with patch('slot_mapping.os.path.isdir', side_effect=isdir_side_effect):
+            with patch('slot_mapping.os.listdir', side_effect=listdir_side_effect):
                 result = resolve_multipath_parent('sdc')
                 assert result == '/dev/dm-0'
 
     def test_already_device_mapper_node(self):
         """Test that device mapper nodes return as-is."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         assert resolve_multipath_parent('dm-0') == '/dev/dm-0'
         # 'mapper/' prefix contains '/' and is rejected by regex validation
         assert resolve_multipath_parent('mapper/mpatha') == '/dev/unknown'
 
     def test_none_input_handling(self):
         """Test handling of None input."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         result = resolve_multipath_parent(None)
         assert result == '/dev/unknown'
 
     def test_non_string_input_handling(self):
         """Test handling of non-string input."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         result = resolve_multipath_parent(123)
         assert result == '/dev/123'
 
     def test_holders_directory_error_handling(self):
         """Test error handling when holders directory access fails."""
-        from device_discovery import resolve_multipath_parent
-        with patch('device_discovery.os.path.isdir', return_value=True):
-            with patch('device_discovery.os.listdir', side_effect=OSError):
+        from slot_mapping import resolve_multipath_parent
+        with patch('slot_mapping.os.path.isdir', return_value=True):
+            with patch('slot_mapping.os.listdir', side_effect=OSError):
                 result = resolve_multipath_parent('sda')
                 assert result == '/dev/sda'
 
     def test_path_traversal_rejected(self):
         """Test that dev_name with path traversal chars returns /dev/unknown (A59)."""
-        from device_discovery import resolve_multipath_parent
+        from slot_mapping import resolve_multipath_parent
         assert resolve_multipath_parent("../etc/passwd") == "/dev/unknown"
         assert resolve_multipath_parent("sda/../../etc") == "/dev/unknown"
         assert resolve_multipath_parent("sda\x00") == "/dev/unknown"
@@ -112,13 +112,13 @@ class TestGenerateMasterSlotMap:
 
     def test_sas_expander_detection(self):
         """Test SAS expander topology detection from by-path."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=[
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=[
                 'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0',
                 'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy1-lun-0'
             ]):
@@ -131,7 +131,7 @@ class TestGenerateMasterSlotMap:
 
     def test_pcie_nvme_detection(self):
         """Test PCIe NVMe slot detection from /sys/bus/pci/slots/."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
@@ -154,22 +154,22 @@ class TestGenerateMasterSlotMap:
         mock_file.read.return_value = '0000:01:00.0\n'
         mock_file.__enter__.return_value = mock_file
 
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', side_effect=listdir_side_effect):
-                with patch('device_discovery.open', return_value=mock_file):
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', side_effect=listdir_side_effect):
+                with patch('slot_mapping.open', return_value=mock_file):
                     result = generate_master_slot_map(force_refresh=True)
                     nvme_slots = [s for s in result if s['slot_type'] == 'pcie_nvme']
                     assert len(nvme_slots) >= 0  # May be 0 if sysfs mocking incomplete
 
     def test_sas_direct_detection(self):
         """Test direct-attached SAS detection."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=[
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=[
                 'pci-0000:01:00.0-scsi-0:0:0:0',
                 'pci-0000:01:00.0-scsi-0:0:1:0'
             ]):
@@ -180,13 +180,13 @@ class TestGenerateMasterSlotMap:
 
     def test_motherboard_sata_detection(self):
         """Test motherboard SATA detection."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=[
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=[
                 'pci-0000:00:1f.2-ata-1',
                 'pci-0000:00:1f.2-ata-2'
             ]):
@@ -197,7 +197,7 @@ class TestGenerateMasterSlotMap:
 
     def test_duplicate_prevention_sas_expander_vs_direct(self):
         """Test that SAS expander entries prevent duplicate SAS direct entries."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
@@ -213,8 +213,8 @@ class TestGenerateMasterSlotMap:
                 ]
             return []
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', side_effect=listdir_side_effect):
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', side_effect=listdir_side_effect):
                 result = generate_master_slot_map(force_refresh=True)
                 # Should only have one entry for slot 0 (expander takes precedence)
                 slot_0_entries = [s for s in result if s['physical_slot_number'] == 0 and s['pci_controller'] == '0000:af:00.0']
@@ -223,13 +223,13 @@ class TestGenerateMasterSlotMap:
 
     def test_pci_address_validation_defense_in_depth(self):
         """Test that invalid PCI addresses are filtered out (defense-in-depth)."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=[
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=[
                 'pci-invalid-addr-sas-exp0x500056b3059bdcff-phy0-lun-0'
             ]):
                 result = generate_master_slot_map(force_refresh=True)
@@ -238,7 +238,7 @@ class TestGenerateMasterSlotMap:
 
     def test_max_slot_limit_enforcement(self):
         """Test that MAX_TOTAL_SLOTS limit is enforced (DoS prevention)."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
@@ -246,21 +246,21 @@ class TestGenerateMasterSlotMap:
         # Generate more than MAX_TOTAL_SLOTS entries
         large_list = [f'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy{i}-lun-0' for i in range(1500)]
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=large_list):
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=large_list):
                 result = generate_master_slot_map(force_refresh=True)
                 # Should be limited to MAX_TOTAL_SLOTS (1000)
                 assert len(result) <= 1000
 
     def test_cache_usage(self):
         """Test that cache is used when not forcing refresh."""
-        from device_discovery import generate_master_slot_map, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, _MASTER_SLOT_CACHE
         # Clear cache before test
         _MASTER_SLOT_CACHE['data'] = None
         _MASTER_SLOT_CACHE['timestamp'] = 0
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=['pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0']):
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=['pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0']):
                 # First call with force_refresh
                 result1 = generate_master_slot_map(force_refresh=True)
                 # Second call without force_refresh should use cache
@@ -269,11 +269,11 @@ class TestGenerateMasterSlotMap:
 
     def test_invalidate_master_slot_cache(self):
         """Test cache invalidation."""
-        from device_discovery import generate_master_slot_map, invalidate_master_slot_cache, _MASTER_SLOT_CACHE
+        from slot_mapping import generate_master_slot_map, invalidate_master_slot_cache, _MASTER_SLOT_CACHE
         
         # Populate cache
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=['pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0']):
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=['pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0']):
                 generate_master_slot_map(force_refresh=True)
                 assert _MASTER_SLOT_CACHE['data'] is not None
         
@@ -725,10 +725,10 @@ class TestAutoMappingLogic:
 
     def test_auto_mapping_0_to_0_sequential(self):
         """Test that auto-mapping maps slot 0→0, 1→1, etc."""
-        from device_discovery import generate_master_slot_map
+        from slot_mapping import generate_master_slot_map
         
-        with patch('device_discovery.os.path.exists', return_value=True):
-            with patch('device_discovery.os.listdir', return_value=[
+        with patch('slot_mapping.os.path.exists', return_value=True):
+            with patch('slot_mapping.os.listdir', return_value=[
                 'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy0-lun-0',
                 'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy1-lun-0',
                 'pci-0000:af:00.0-sas-exp0x500056b3059bdcff-phy2-lun-0'
@@ -804,7 +804,7 @@ class TestConfigurationErrorDetection:
 
     def test_invalid_pci_address_rejected(self):
         """Test that invalid PCI addresses are rejected."""
-        from device_discovery import validate_pci_address
+        from pci_controllers import validate_pci_address
         assert validate_pci_address("invalid") is False
         assert validate_pci_address("00:1f.2") is False  # Missing domain
         # Note: Function number is optional per regex (e.g., 0000:18:00 is valid for some PCIe slots)
