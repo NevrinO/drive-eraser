@@ -85,6 +85,8 @@ def get_os_by_path():
 
     dev_node = f"/dev/{parent_name}"
     by_path_dir = "/dev/disk/by-path/"
+    if not os.path.exists(by_path_dir):
+        return dev_node, None
     try:
         for entry in os.listdir(by_path_dir):
             full_path = os.path.join(by_path_dir, entry)
