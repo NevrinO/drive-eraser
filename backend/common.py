@@ -427,6 +427,13 @@ def load_policy(config_dir=None):
                 if dep_key in data:
                     deprecated_values[dep_key] = data.pop(dep_key)
 
+            # Log and strip unknown keys before validation
+            known_keys = set(POLICY_SCHEMA.get("properties", {}).keys())
+            unknown_keys = [k for k in data if k not in known_keys]
+            for k in unknown_keys:
+                logger.warning(f"Unknown key '{k}' in policy.json — ignoring")
+                data.pop(k)
+
             # High #9: Validate against schema
             try:
                 validate(instance=data, schema=POLICY_SCHEMA)
