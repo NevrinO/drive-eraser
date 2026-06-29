@@ -1,0 +1,132 @@
+/* --- LOGGING, DIAGNOSTICS & GATEWAY ADMIN EXTENSIONS --- */
+
+.admin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.admin-card {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.card-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--color-white);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.admin-desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  margin-bottom: 12px;
+}
+
+.progress-bar-container {
+  background: var(--color-surface-3);
+  border-radius: 2px;
+  height: 8px;
+  overflow: hidden;
+  flex-grow: 1;
+  margin: 0 12px;
+  border: 1px solid var(--color-border);
+}
+
+.progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  transition: width 0.3s ease;
+}
+
+.metric-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  font-size: 0.8rem;
+}
+
+.metric-label {
+  min-width: 100px;
+}
+
+.metric-value {
+  min-width: 45px;
+  text-align: right;
+  font-weight: bold;
+}
+
+.metric-value-static {
+  font-weight: bold;
+  color: var(--color-primary);
+}
+
+.bay-mapping-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+  gap: 12px;
+}
+
+.mapping-row span {
+  font-size: 0.8rem;
+  font-weight: bold;
+  min-width: 70px;
+}
+
+.mapping-row select {
+  flex-grow: 1;
+  padding: 6px;
+  background: var(--color-surface-3);
+  border: 1px solid var(--color-border);
+  color: var(--color-white);
+  font-size: 0.75rem;
+}
+
+.test-result-label {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  font-weight: bold;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+}
+
+.test-result-label--success {
+  background: var(--color-success-dark);
+  color: var(--color-success-light);
+  border: 1px solid var(--color-success-border);
+}
+
+.test-result-label--error {
+  background: var(--color-danger-dark);
+  color: var(--color-danger-light);
+  border: 1px solid var(--color-danger-border);
+}
+
+.test-result-label--warning {
+  background: var(--color-warning-dark);
+  color: var(--color-warning-light);
+  border: 1px solid var(--color-warning-border);
+}
+
+.button-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}

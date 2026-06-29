@@ -89,7 +89,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## frontend/styles.css
 
-### A52: [Advisory] File size 1732 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
+### A52: [COMPLETED] [Advisory] File size 1732 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
 - **Lines**: 1-1732
 - **Issue**: File is 1732 lines, more than double the 800-line threshold. Contains all CSS for the entire application: base/reset, layout, bay cards, buttons, audit ledger, modals, admin panel, auth overlay, utilities, enclosure management, triage table, print styles.
 - **Impact**: Medium — difficult to navigate and maintain. AI agents with ~200k context windows may struggle to read the file plus all necessary context (HTML, JS callers, lessons-learned).
@@ -134,9 +134,9 @@ Running document for findings across the codebase that need a deeper look before
 
 ---
 
-## frontend/admin/enclosureManagement.js
+## frontend/admin/enclosureList.js (was enclosureManagement.js)
 
-### A90: [Advisory] File size 1094 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
+### A90: [COMPLETED] [Advisory] File size 1094 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
 - **Lines**: 1-1094
 - **Issue**: File is 1094 lines, exceeding the 800-line threshold. Contains enclosure CRUD, wizard state management, configuration rendering (controller/template selection with hardware info), slot assignment rendering with traversal logic, HW identifier validation, and save/edit handlers — 6+ distinct responsibilities in one file.
 - **Impact**: Medium — difficult to navigate and maintain. AI agents with ~200k context windows must read the full file plus all context within a single generation.

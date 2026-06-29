@@ -11,9 +11,9 @@ from layout_templates import build_traversal_positions, SUPPORTED_TRAVERSALS
 
 
 def js_build_traversal_positions(rows, cols, traversal, slot_count):
-    """Port of the frontend buildTraversalPositions function from enclosureManagement.js.
+    """Port of the frontend buildTraversalPositions function from enclosureWizard.js.
 
-    This is a direct copy of the JS logic (lines 411-449) for parity testing.
+    This is a direct copy of the JS logic (lines 325-364) for parity testing.
     If the frontend implementation changes, this function must be updated to match,
     which will cause the parity test to fail if the backend hasn't been updated too.
     """
