@@ -330,7 +330,7 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_device_path", "details": "Device path validation failed"}
 
     logger = logging.getLogger("app")
-    dd_cmd = get_command_path("dd")
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
@@ -466,7 +466,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
     """
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = get_command_path("dd")
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
@@ -559,7 +559,7 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
     """
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = get_command_path("dd")
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_capture", "details": "dd command not found"}
 
@@ -650,7 +650,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     """
     if not validate_device_path(device):
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {}}
-    dd_cmd = get_command_path("dd")
+    dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_comparison", "details": {}}
     logger = logging.getLogger("app")
