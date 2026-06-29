@@ -126,11 +126,17 @@ class TestMainEntry:
         assert bind_address == "0.0.0.0"
         assert port == 8080
 
+    @patch('app.start_smart_test_update_thread')
+    @patch('app.udev_listener')
+    @patch('app.disk_ops')
+    @patch('app.get_zero_check_manager')
+    @patch('app.init_wipe_db')
     @patch('app.load_policy')
     @patch('app.validate_policy')
     @patch('app.socketio')
     def test_main_passes_allow_unsafe_werkzeug(
-        self, mock_socketio, mock_validate_policy, mock_load_policy
+        self, mock_socketio, mock_validate_policy, mock_load_policy,
+        mock_init, mock_zero_check, mock_disk_ops, mock_udev, mock_smart_thread
     ):
         """Regression test: main() must allow Werkzeug in production mode."""
         mock_load_policy.return_value = {"bind_address": "0.0.0.0", "port": 5000}

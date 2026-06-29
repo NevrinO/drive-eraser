@@ -71,14 +71,6 @@ def _centralized_signal_handler(signum, frame):
     logger.info(f"Received signal {signum}, shutting down...")
     sys.exit(130)
 
-# Register centralized signal handlers (only in main thread)
-try:
-    signal.signal(signal.SIGTERM, _centralized_signal_handler)
-    signal.signal(signal.SIGINT, _centralized_signal_handler)
-except ValueError:
-    # Signal handlers can only be registered in main thread
-    pass
-
 # Critical #3: Add CSP HTTP header
 @app.after_request
 def add_security_headers(response):
@@ -92,24 +84,6 @@ def handle_exception(e):
     """Global exception handler to return JSON for all errors."""
     logger.error(f"Unhandled exception: {e}", exc_info=True)
     return jsonify({"error": "Internal server error"}), 500
-
-# Initialize database on module import (required for WSGI deployments)
-init_wipe_db()
-
-# Set WebSocket manager for udev event listener
-udev_listener.set_websocket_manager(socketio)
-
-# Set WebSocket manager for disk_ops (SMART data updates)
-disk_ops.set_websocket_manager(socketio)
-
-# Initialize background zero-check manager with current policy concurrency limit
-config_dir = get_config_dir()
-_policy = load_policy(config_dir)
-ZERO_CHECK_CONCURRENCY = int(_policy.get("zero_detection_concurrency_limit", 8))
-zero_check_manager = get_zero_check_manager(socketio=socketio, max_concurrency=ZERO_CHECK_CONCURRENCY)
-
-# Start udev event listener for real-time device discovery
-udev_listener.start_udev_listener()
 
 # Background thread to update SMART test status in database
 SMART_TEST_UPDATE_INTERVAL = 30  # Check every 30 seconds
@@ -235,11 +209,49 @@ def stop_smart_test_update_thread(wait=True):
             smart_test_update_thread = None
     logger.info("Stopped SMART test status background thread")
 
-# Start the background thread
-start_smart_test_update_thread()
+def create_app():
+    """Application factory: initializes database, background threads, and managers.
+    
+    Call this once at startup (from main() or wsgi.py) to trigger side effects.
+    Importing app.py alone does NOT trigger side effects — safe for testing.
+    
+    Returns:
+        (app, socketio) tuple
+    """
+    # Initialize database
+    init_wipe_db()
+    
+    # Set WebSocket managers
+    udev_listener.set_websocket_manager(socketio)
+    disk_ops.set_websocket_manager(socketio)
+    
+    # Initialize zero-check manager with current policy concurrency limit
+    config_dir = get_config_dir()
+    _policy = load_policy(config_dir)
+    zero_check_concurrency = int(_policy.get("zero_detection_concurrency_limit", 8))
+    get_zero_check_manager(socketio=socketio, max_concurrency=zero_check_concurrency)
+    
+    # Start udev event listener for real-time device discovery
+    udev_listener.start_udev_listener()
+    
+    # Start SMART test status background thread
+    start_smart_test_update_thread()
+    
+    # Register signal handlers (only in main thread)
+    try:
+        signal.signal(signal.SIGTERM, _centralized_signal_handler)
+        signal.signal(signal.SIGINT, _centralized_signal_handler)
+    except ValueError:
+        # Signal handlers can only be registered in main thread
+        pass
+    
+    return app, socketio
+
 
 def main():
     """Run the Drive Eraser Flask-SocketIO server."""
+    app, socketio = create_app()
+    
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
     

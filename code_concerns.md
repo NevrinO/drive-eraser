@@ -14,7 +14,7 @@ Running document for findings across the codebase that need a deeper look before
 - **Depends-on**: none
 - **Related**: none
 
-### A6: [Advisory] Module-Level Side Effects Make Testing Fragile — Difficulty: Medium — Category: Architecture
+### A6: [COMPLETED] [Advisory] Module-Level Side Effects Make Testing Fragile — Difficulty: Medium — Category: Architecture
 - **Lines**: 97, 100, 103, 109, 112, 228
 - **Issue**: `init_wipe_db()`, `udev_listener.start_udev_listener()`, `start_smart_test_update_thread()`, and `get_zero_check_manager()` all execute at import time. Any test importing `app.py` triggers database initialization, starts a udev listener (fails on Windows), and spawns a background thread.
 - **Impact**: Test suite fragility, especially cross-platform. Documented as necessary for WSGI deployment (line 96).
