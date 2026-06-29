@@ -137,10 +137,12 @@ async function loadDrives(silent = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
 
-    // Load enclosures for workbench grouping
-    await loadEnclosuresForWorkbench();
+    // Load enclosures and drives in parallel — they are independent
+    const [_, response] = await Promise.all([
+      loadEnclosuresForWorkbench(),
+      safeFetch("/api/drives")
+    ]);
 
-    const response = await safeFetch("/api/drives");
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     let drives;
     try {

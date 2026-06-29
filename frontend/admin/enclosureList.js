@@ -158,6 +158,9 @@ async function editEnclosure(enclosureId) {
     modalTitle.textContent = "Edit Enclosure";
   }
 
+  // Load wizard data lazily (templates + master slot map needed for rendering)
+  await ensureWizardDataLoaded();
+
   await renderWizardStep();
   openModal(modal);
 }
@@ -173,11 +176,9 @@ async function initializeEnclosureManagement() {
     return;
   }
 
-  await Promise.all([
-    loadEnclosures(),
-    loadTemplates(),
-    loadMasterSlotMap()
-  ]);
+  // Only load enclosures — templates and master slot map are loaded lazily
+  // when the wizard opens, since they involve a slow sysfs scan
+  await loadEnclosures();
   renderEnclosureList(Object.values(adminEnclosures));
   enclosureManagementInitialized = true;
 }

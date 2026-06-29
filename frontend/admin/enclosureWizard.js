@@ -1,6 +1,25 @@
 // Enclosure wizard: wizard state, step rendering, configuration, slot assignment
 // Load order: enclosureList.js -> enclosureWizard.js -> enclosureSave.js
 
+// Lazily load templates and master slot map (needed for wizard rendering)
+// These involve a slow sysfs scan so we defer them until the wizard is opened
+let _wizardDataLoaded = false;
+let _wizardDataPromise = null;
+
+async function ensureWizardDataLoaded() {
+  if (_wizardDataLoaded) return;
+  if (_wizardDataPromise) return _wizardDataPromise;
+  _wizardDataPromise = (async () => {
+    try {
+      await Promise.all([loadTemplates(), loadMasterSlotMap()]);
+      _wizardDataLoaded = true;
+    } finally {
+      _wizardDataPromise = null;
+    }
+  })();
+  return _wizardDataPromise;
+}
+
 // Open new enclosure wizard
 async function openNewEnclosureWizard() {
   const modal = document.getElementById("enclosureWizardModal");
@@ -38,6 +57,9 @@ async function openNewEnclosureWizard() {
   if (modalTitle) {
     modalTitle.textContent = "Add New Enclosure";
   }
+
+  // Load wizard data lazily (templates + master slot map needed for rendering)
+  await ensureWizardDataLoaded();
 
   await renderWizardStep();
   openModal(modal);
