@@ -480,7 +480,7 @@ class TestTriageThresholds:
         """Test that default thresholds are returned when policy loading fails."""
         from smart_parsing import get_triage_thresholds
 
-        with patch('smart_parsing.load_policy', side_effect=Exception("Test error")):
+        with patch('smart_data_parsing.load_policy', side_effect=Exception("Test error")):
             thresholds = get_triage_thresholds()
             assert "ssd_new_poh_threshold" in thresholds
             assert thresholds["ssd_new_poh_threshold"] == 720
@@ -489,7 +489,7 @@ class TestTriageThresholds:
         """Test that custom thresholds from policy are used."""
         from smart_parsing import get_triage_thresholds
 
-        with patch('smart_parsing.load_policy', return_value={"triage_thresholds": {"ssd_new_poh_threshold": 1000}}):
+        with patch('smart_data_parsing.load_policy', return_value={"triage_thresholds": {"ssd_new_poh_threshold": 1000}}):
             thresholds = get_triage_thresholds()
             assert thresholds["ssd_new_poh_threshold"] == 1000
 
@@ -515,8 +515,8 @@ class TestTriageThresholds:
 class TestSASFields:
     """Test new SAS-specific fields in smart data."""
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_fields_present_in_empty_template(self, mock_get_command_path, mock_run_command):
         """Test that SAS-specific fields are present in the empty template."""
         from smart_parsing import get_smart_data
@@ -535,9 +535,9 @@ class TestSASFields:
         assert "sas_sticky_lba_detected" in result
         assert "model_profile" in result
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
-    @patch('smart_parsing.get_config_dir')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
+    @patch('smart_data_parsing.get_config_dir')
     @patch('os.path.exists')
     def test_model_profile_loading(self, mock_exists, mock_get_config_dir, mock_get_command_path, mock_run_command):
         """Test that model_profile is loaded from drive_models.json."""
@@ -581,8 +581,8 @@ class TestSASFields:
             assert result["model_profile"]["product"] == "ST4000NM0023"
             assert result["model_profile"]["revision"] == "0003"
 
-    @patch('smart_parsing.run_command')
-    @patch('smart_parsing.get_command_path')
+    @patch('smart_data_parsing.run_command')
+    @patch('smart_data_parsing.get_command_path')
     def test_sas_fields_populated_from_smartctl(self, mock_get_command_path, mock_run_command):
         """Test that SAS-specific fields are populated from smartctl JSON output."""
         from smart_parsing import get_smart_data

@@ -119,7 +119,7 @@ Running document for findings across the codebase that need a deeper look before
 
 ## backend/smart_parsing.py
 
-### A78: [Advisory] File size 1227 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
+### A78: [COMPLETED] [Advisory] File size 1227 lines exceeds 800-line threshold — Difficulty: High — Category: Organization
 - **Lines**: 1-1227
 - **Issue**: File is 1227 lines, exceeding the 800-line threshold. Contains SMART data parsing, interface detection, health scoring, drive recommendation, SMART test execution, SMART test status polling with rollover correction, pre-wipe health gate, and device path validation — 8 distinct responsibilities in one file.
 - **Impact**: Medium — difficult to navigate and maintain. AI agents with ~200k context windows must read the full file plus all context (callers, lessons-learned, security deviations) within a single generation.
