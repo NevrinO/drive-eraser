@@ -585,7 +585,7 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
         # Get capacity using blockdev with retry logic
         result = _run_blockdev_getsize64(device, retries, retry_delay)
         if result["error"]:
-            return {"ok": False, "error": result["error"], "details": f"blockdev failed: {result['details']}"}
+            return {"ok": False, "error": "capture_capacity_check_failed", "details": f"blockdev failed: {result['details']}"}
         capacity = result["capacity"]
 
         # Always capture first 32MB (holds VBR/partition table)
