@@ -82,8 +82,6 @@ def purge_completed(text: str) -> tuple[str, int]:
         m = CANONICAL_HEADING.match(line)
         if m and "[COMPLETED]" in line:
             i += 1
-            # Check if there is body content to skip
-            has_body = False
             # Skip body lines until next ### or --- or ## or EOF
             while i < len(lines):
                 next_line = lines[i]
@@ -91,18 +89,13 @@ def purge_completed(text: str) -> tuple[str, int]:
                     next_line.startswith("## ") or
                     next_line.strip() == "---"):
                     break
-                if next_line.strip():
-                    has_body = True
                 i += 1
             # Skip trailing blank line if present (but not before --- or ##)
             if i < len(lines) and lines[i].strip() == "" and i + 1 < len(lines):
                 peek = lines[i + 1]
                 if peek.startswith("### ") or peek.startswith("## ") or peek.strip() == "---":
                     i += 1  # skip the blank line
-            if has_body:
-                purged += 1
-            else:
-                result.append(line)  # already collapsed, keep header
+            purged += 1
         else:
             result.append(line)
             i += 1

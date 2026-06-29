@@ -360,7 +360,7 @@ def _collect_drive_data(dev_node, resolved_active_path, configured_active_path, 
         recommendation = {"status": "UNKNOWN", "comment": "SMART data collection in progress"}
     else:
         thresholds = get_triage_thresholds()
-        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, thresholds=thresholds)
         recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
 
     drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
@@ -763,7 +763,7 @@ def _process_single_drive_extended_smart(item, passphrase):
         _process_marker_status(marker_status, interface_type, smart)
 
         thresholds = get_triage_thresholds()
-        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+        health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, thresholds=thresholds)
         recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
         drive_type = "ssd" if is_drive_ssd(interface_type, smart) else "hdd"
 

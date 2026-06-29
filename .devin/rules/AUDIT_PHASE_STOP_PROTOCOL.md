@@ -23,10 +23,9 @@
 ## Phase Transition Protocol
 1. Complete current phase
 2. Write phase output file (ledger or markdown)
-3. Create `.agent-signal.json` with phase context (per agent-coordination.md)
-4. **STOP and notify user** that phase is complete
-5. Wait for user to trigger next agent or request continuation
-6. User request "continue" = execute next phase only
+3. **STOP and notify user** that phase is complete
+4. Wait for user to trigger next agent or request continuation
+5. User request "continue" = execute next phase only
 
 ## Agent Handoff
 When stopping at phase end, notify user with:

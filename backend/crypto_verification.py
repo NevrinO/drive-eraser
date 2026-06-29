@@ -710,43 +710,28 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
 
         if any_changed:
             # Some chunks changed - verify unchanged chunks are all zero (partial wipe detection)
+            # Optimization (A16): Compare before_hashes against pre-computed all-zeros hash.
+            # If before-hash matches all-zeros hash, chunk was zero before wipe and is still
+            # unchanged → still zero, no dd read needed. If before-hash differs, chunk was
+            # non-zero before wipe and is still unchanged → partial wipe, no dd read needed.
             if unchanged_indices:
+                _zeros_hash_cache = {}
+                def _get_zeros_hash(size):
+                    if size not in _zeros_hash_cache:
+                        _zeros_hash_cache[size] = hashlib.sha256(b'\x00' * size).hexdigest()
+                    return _zeros_hash_cache[size]
+
                 unchanged_nonzero_found = False
                 first_nonzero_offset = None
                 for idx in unchanged_indices:
                     offset = offsets[idx]
-                    # High #12: Check for interruption before each read
                     if _check_interrupted():
                         logger.warning(f"Hash comparison interrupted during unchanged verification at offset {offset}")
                         return {"ok": False, "status": "verification_interrupted", "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
 
-                    skip_blocks = offset // chunk_size_bytes
                     read_size = min(chunk_size_bytes, capacity - offset)
-                    actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
-                    
-                    # Feature C: Use retry logic for dd reads
-                    dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
-                    if dd_result["error"]:
-                        return {
-                            "ok": False,
-                            "status": "verification_error",
-                            "error": "crypto_comparison_unchanged_verification_failed",
-                            "details": {
-                                "offset": offset,
-                                "exception": dd_result['error'],
-                                "retries_attempted": retries + 1,
-                                "stderr": dd_result['details'],
-                                "total_verified_bytes": total_verified_bytes,
-                                "chunks_checked": len(offsets),
-                                "chunk_size_bytes": chunk_size_bytes,
-                                "changed_indices": [i for i in range(len(offsets)) if i not in unchanged_indices],
-                                "unchanged_indices": unchanged_indices,
-                                "before_hashes": before_hashes,
-                                "after_hashes": after_hashes
-                            }
-                        }
-                    data = dd_result["data"]
-                    if data and any(memoryview(data)):
+                    zeros_hash = _get_zeros_hash(read_size)
+                    if not hmac.compare_digest(before_hashes[idx], zeros_hash):
                         unchanged_nonzero_found = True
                         first_nonzero_offset = offset
                 

@@ -573,7 +573,7 @@ class TestVerifyCryptoHashComparison:
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
                         MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after (changed)
                         MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 after (unchanged)
-                        MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 zero check
+                        # No zero-check dd read needed — before-hash comparison detects non-zero unchanged chunk
                     ]
                     from crypto_verification import verify_crypto_hash_comparison
                     before_state = {
@@ -599,7 +599,7 @@ class TestVerifyCryptoHashComparison:
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
                         MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after (changed)
                         MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 1 after (unchanged)
-                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 1 zero check
+                        # No zero-check dd read needed — before-hash matches all-zeros hash
                     ]
                     from crypto_verification import verify_crypto_hash_comparison
                     before_state = {
@@ -650,16 +650,16 @@ class TestVerifyCryptoHashComparison:
                         assert result["ok"] is True
                         assert mock_sleep.call_count == 1  # 1 retry
 
-    def test_unchanged_verification_failure_with_retries(self):
-        """Test that unchanged chunk verification failure with retries is handled."""
+    def test_unchanged_nonzero_detected_via_hash_comparison(self):
+        """Test that non-zero unchanged chunks are detected via before-hash comparison (A16 optimization)."""
         with patch('crypto_verification.validate_device_path', return_value=True):
             with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
-                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after
-                        MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 after
-                        Exception("dd read failed"),  # All retries fail for zero check
+                        MagicMock(returncode=0, stdout=b'\x00' * (32*1024*1024)),  # offset 0 after (changed)
+                        MagicMock(returncode=0, stdout=b'\x01' * (32*1024*1024)),  # offset 1 after (unchanged)
+                        # No zero-check dd read — before-hash differs from all-zeros hash, so chunk is non-zero
                     ]
                     from crypto_verification import verify_crypto_hash_comparison
                     before_state = {
@@ -674,7 +674,7 @@ class TestVerifyCryptoHashComparison:
                     }
                     result = verify_crypto_hash_comparison("/dev/sda", before_state, 32*1024*1024)
                     assert result["ok"] is False
-                    assert result["error"] == "crypto_comparison_unchanged_verification_failed"
+                    assert result["error"] == "crypto_comparison_partial_wipe"
 
 
 class TestBlockdevRetryLogic:

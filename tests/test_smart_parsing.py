@@ -176,7 +176,7 @@ class TestSASScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
 
         # With 16,396 grown defects, logarithmic penalty should be severe
         # log10(16396) ≈ 4.2, penalty ≈ 4.2 * 20 = 84, health ≈ 16
@@ -195,7 +195,7 @@ class TestSASScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
 
         # With 6 grown defects, log10(6) ≈ 0.78, penalty ≈ 0.78 * 20 = 15.6
         # 30K POH: (30000-20000)/40000*30 = 7.5 penalty
@@ -220,7 +220,7 @@ class TestSSDScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sata", smart, None)
+        health, _ = calculate_drive_health_score("sata", smart)
 
         # 10% wear, 10K POH (below high threshold), no reallocations
         # Health = 100 - 10 = 90
@@ -239,7 +239,7 @@ class TestSSDScoringWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sata", smart, None)
+        health, _ = calculate_drive_health_score("sata", smart)
 
         # Normalized wear value is 7 (percentage used), so 7% wear, 93% remaining
         # Base health: 100 - 7 = 93
@@ -264,7 +264,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         assert recommendation["status"] == "DESTROY"
@@ -282,7 +282,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         assert recommendation["status"] == "SCRATCH"
@@ -300,7 +300,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Verify errors >= 1 should trigger DESTROY
@@ -319,7 +319,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Sticky LBA should trigger at least SCRATCH
@@ -349,7 +349,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Grown defects >= 10000 should trigger DESTROY
@@ -380,7 +380,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # Grown defects > 0 but < 10000 should trigger SCRATCH
@@ -402,7 +402,7 @@ class TestSASRecommendationWithFixtures:
         mock_run_command.return_value = json.dumps(fixture_data)
 
         smart = get_smart_data("/dev/sda")
-        health, _ = calculate_drive_health_score("sas", smart, None)
+        health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
         # No grown defects should not trigger defect-based DESTROY/SCRATCH

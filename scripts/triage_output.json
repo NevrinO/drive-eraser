@@ -1,7 +1,7 @@
 {
-  "total_issues": 125,
-  "completed": 105,
-  "pending": 20,
+  "total_issues": 9,
+  "completed": 0,
+  "pending": 9,
   "groups": [
     {
       "id": "G1",
@@ -64,16 +64,6 @@
       "fix_shape": "Extract shared helper function and update all call sites to use it",
       "issues": [
         {
-          "id": "A18",
-          "title": "`_discover_drives_enclosure` and `_discover_drives_legacy` ~80% Duplicated",
-          "file": "backend/disk_ops.py",
-          "line": "821-993 vs 996-1147",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Extract shared logic into helpers: `_init_bay_info()`, `_build_path_to_dev()`, `_submit_extended_smart_for_results()`, `_finalize_discovery()`."
-        },
-        {
           "id": "A70",
           "title": "File Size 1148 Lines Exceeds 800-Line Threshold",
           "file": "backend/disk_ops.py",
@@ -82,128 +72,23 @@
           "difficulty": "high",
           "category": "Organization",
           "suggestion": "Split into topic-specific modules:\n  - `os_detection.py` — `get_os_parent_device`, `get_os_by_path`, `_get_os_by_path_cached`, OS cache variables/locks\n  - `device_resolution.py` — `_resolve_device_fr"
-        },
-        {
-          "id": "A53",
-          "title": "`validate_device_path` triplicated across 3 files",
-          "file": "backend/device_discovery.py",
-          "line": "56-72 (this file), `backend/disk_utils.py:43`, `backend/smart_parsing.py:554`",
-          "severity": "advisory",
-          "difficulty": "high",
-          "category": "DRY",
-          "suggestion": "Consolidate into a single location (e.g., `disk_utils.py`) and import from there. Remove the duplicate definitions from `device_discovery.py` and `smart_parsing.py`."
         }
       ],
       "issue_ids": [
-        "A18",
-        "A70",
-        "A53"
+        "A70"
       ],
       "files": [
-        "backend/device_discovery.py",
         "backend/disk_ops.py"
-      ],
-      "weight": 20,
-      "difficulty_breakdown": {
-        "medium": 1,
-        "high": 2
-      },
-      "session_size": "large",
-      "action": "plan",
-      "related_groups": [
-        "G3"
-      ]
-    },
-    {
-      "id": "G3",
-      "pattern": "DRY: duplicated logic across functions/files (batch 2)",
-      "pattern_id": "dry_violation",
-      "fix_shape": "Extract shared helper function and update all call sites to use it",
-      "issues": [
-        {
-          "id": "A83",
-          "title": "`SUPPORTED_TRAVERSALS` and `buildTraversalPositions` duplicated from backend",
-          "file": "frontend/admin/enclosureManagement.js",
-          "line": "394-441",
-          "severity": "advisory",
-          "difficulty": "high",
-          "category": "Architecture",
-          "suggestion": "Expose traversal presets and slot position computation from a backend API endpoint, or include the computed positions in the template API response. The frontend can then use the backend-provided data "
-        }
-      ],
-      "issue_ids": [
-        "A83"
-      ],
-      "files": [
-        "frontend/admin/enclosureManagement.js"
       ],
       "weight": 8,
       "difficulty_breakdown": {
         "high": 1
       },
       "session_size": "small",
-      "action": "plan",
-      "related_groups": [
-        "G2"
-      ]
+      "action": "plan"
     },
     {
-      "id": "G4",
-      "pattern": "Information disclosure: str(e) in API responses",
-      "pattern_id": "info_disclosure",
-      "fix_shape": "Replace str(e) in jsonify error responses with generic messages; log details server-side",
-      "issues": [
-        {
-          "id": "A97",
-          "title": "[DOCUMENTED] [Advisory] `str(e)` in error responses — information disclosure",
-          "file": "backend/smart_parsing.py",
-          "line": "654, 656 (`run_smart_test`), 918, 920 (`get_smart_test_status`)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Security",
-          "suggestion": "Return generic error messages to clients; log detailed errors server-side."
-        },
-        {
-          "id": "A34",
-          "title": "[DOCUMENTED] [Advisory] `str(e)` in API responses throughout (information disclosure)",
-          "file": "backend/routes/admin_routes.py",
-          "line": "178, 212, 263, 428, 446, 509, 577, 1008, 1049, 1353, 1558, 1582, 1644, 1694, 1720, 1780, 1812, 1871, 1914, 1941, 1967, 2027, 2051, 2345, 2494, 2587",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Return generic error messages to clients; log detailed errors server-side."
-        },
-        {
-          "id": "A40",
-          "title": "[DOCUMENTED] [Advisory] `str(e)` in error responses",
-          "file": "backend/routes/drive_routes.py",
-          "line": "131, 205, 218",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Security",
-          "suggestion": "Return generic error messages; log details server-side."
-        }
-      ],
-      "issue_ids": [
-        "A97",
-        "A34",
-        "A40"
-      ],
-      "files": [
-        "backend/routes/admin_routes.py",
-        "backend/routes/drive_routes.py",
-        "backend/smart_parsing.py"
-      ],
-      "weight": 10,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 2
-      },
-      "session_size": "medium",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G5",
+      "id": "G3",
       "pattern": "File organization: domain mixing / god modules",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -244,11 +129,11 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G6"
+        "G4"
       ]
     },
     {
-      "id": "G6",
+      "id": "G4",
       "pattern": "File organization: domain mixing / god modules (batch 2)",
       "pattern_id": "file_org",
       "fix_shape": "Extract domains into separate route files; do shared-utils extraction first",
@@ -289,25 +174,15 @@
       "session_size": "medium",
       "action": "plan",
       "related_groups": [
-        "G5"
+        "G3"
       ]
     },
     {
-      "id": "G7",
-      "pattern": "Misc: Architecture",
+      "id": "G5",
+      "pattern": "Ungrouped: backend/app.py",
       "pattern_id": "",
       "fix_shape": "No common pattern detected — review individually",
       "issues": [
-        {
-          "id": "A72",
-          "title": "`run_smart_test` uses `subprocess.run` directly while `get_smart_data` uses `run_command` — inconsistent subprocess pattern",
-          "file": "backend/smart_parsing.py",
-          "line": "630 (`run_smart_test`), 388 (`get_raw_smart_diagnostics`), 167 (`get_smart_data` uses `run_command`)",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Architecture",
-          "suggestion": "Use `run_command` consistently, or document why direct `subprocess.run` is necessary for these specific functions."
-        },
         {
           "id": "A6",
           "title": "Module-Level Side Effects Make Testing Fragile",
@@ -317,97 +192,23 @@
           "difficulty": "medium",
           "category": "Architecture",
           "suggestion": "Consider a `create_app()` factory pattern or guard behind `if __name__ == \"__main__\"` with a separate WSGI entry point."
-        },
-        {
-          "id": "A23",
-          "title": "Cache Key Construction Differs Between Enclosure and Legacy Modes",
-          "file": "backend/disk_ops.py",
-          "line": "950 vs 1103",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Document that cache keys are schema-specific, or unify on `(dev_node, dev_node)` for both modes."
-        },
-        {
-          "id": "A75",
-          "title": "`get_smart_test_status` cache key construction assumes disk_ops internal format",
-          "file": "backend/smart_parsing.py",
-          "line": "775",
-          "severity": "advisory",
-          "difficulty": "medium",
-          "category": "Architecture",
-          "suggestion": "Expose a `get_cached_smart_data(device)` function from `disk_ops` that encapsulates the cache key construction, and call that from `smart_parsing.py` instead."
         }
       ],
       "issue_ids": [
-        "A72",
-        "A6",
-        "A23",
-        "A75"
+        "A6"
       ],
       "files": [
-        "backend/app.py",
-        "backend/disk_ops.py",
-        "backend/smart_parsing.py"
-      ],
-      "weight": 14,
-      "difficulty_breakdown": {
-        "low": 1,
-        "medium": 3
-      },
-      "session_size": "medium",
-      "action": "batch_fix"
-    },
-    {
-      "id": "G8",
-      "pattern": "Misc: Performance",
-      "pattern_id": "",
-      "fix_shape": "No common pattern detected — review individually",
-      "issues": [
-        {
-          "id": "A16",
-          "title": "`verify_crypto_hash_comparison` Re-reads Unchanged Chunks Unnecessarily",
-          "file": "backend/crypto_verification.py",
-          "line": "736-769",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "Pre-compute all-zeros hash once, skip re-reading chunks whose before-hash differs from it."
-        },
-        {
-          "id": "A76",
-          "title": "`get_smart_data` re-parses raw JSON in `calculate_drive_health_score`",
-          "file": "backend/smart_parsing.py",
-          "line": "530",
-          "severity": "advisory",
-          "difficulty": "low",
-          "category": "Performance",
-          "suggestion": "Pass the parsed `data` dict to `calculate_drive_health_score` instead of the raw string, or extract the needed fields (media_errors, exit_status) in `get_smart_data` and include them in the smart_data"
-        }
-      ],
-      "issue_ids": [
-        "A16",
-        "A76"
-      ],
-      "files": [
-        "backend/crypto_verification.py",
-        "backend/smart_parsing.py"
+        "backend/app.py"
       ],
       "weight": 4,
       "difficulty_breakdown": {
-        "low": 2
+        "medium": 1
       },
       "session_size": "small",
       "action": "batch_fix"
     }
   ],
   "dependency_chains": [
-    {
-      "must_do_first": "A34",
-      "unblocks": "A97",
-      "reason": "A97 is related to A34 (soft dependency)",
-      "soft": true
-    },
     {
       "must_do_first": "A52",
       "unblocks": "A78",

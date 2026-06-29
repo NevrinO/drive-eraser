@@ -12,7 +12,9 @@ You are a triage analyst. Your job is to parse `code_concerns.md`, group issues 
 
 ## Step 1: Run the Triage Script
 
-Run the Python triage script to get structured grouping data:
+**Quick mode**: If `code_concerns.md` has fewer than 5 open (non-completed) issues, skip the script and go directly to Step 3. Present the issues directly — grouping and dependency analysis add little value for small sets.
+
+For 5+ open issues, run the Python triage script to get structured grouping data:
 
 ```bash
 python scripts/triage_concerns.py --input code_concerns.md --output scripts/triage_output.json

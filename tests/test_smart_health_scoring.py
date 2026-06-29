@@ -23,7 +23,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data)
 
         # For NVMe, health = 100 - wear_level = 89
         assert health == 89, f"Expected health 89, got {health}"
@@ -43,7 +43,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data)
 
         # Base health 89, penalty for POH > threshold: max 20% = 69 minimum
         assert health >= 69, f"Expected health >= 69, got {health}"
@@ -64,7 +64,7 @@ class TestSSDWearBaseline:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data)
 
         # Base health 89, quadratic penalty at 50% position = 5 points = 84
         assert health >= 83, f"Expected health >= 83, got {health}"
@@ -85,7 +85,7 @@ class TestHDDMechanicalAging:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data)
 
         # POH penalty: (30000-20000)/40000*30 = 7.5, FDW penalty: (5/200)*30 = 0.75
         # Base: 100 - 7.5 - 0.75 = 91.75, min 40
@@ -102,7 +102,7 @@ class TestHDDMechanicalAging:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data)
 
         # POH penalty: 7.5, FDW penalty: (200/200)*30 = 30
         # Base: 100 - 7.5 - 30 = 62.5
@@ -121,7 +121,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data)
 
         # HDD penalty: 10 for 1 sector
         assert health <= 90, f"Expected health <= 90 (10% penalty), got {health}"
@@ -135,7 +135,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sata", smart_data, None)
+        health, _ = calculate_drive_health_score("sata", smart_data)
 
         # HDD penalty: 10 + (6-1)*5 = 35 for 6 sectors
         assert health <= 65, f"Expected health <= 65 (35% penalty), got {health}"
@@ -150,7 +150,7 @@ class TestReallocatedSectors:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("nvme", smart_data, None)
+        health, _ = calculate_drive_health_score("nvme", smart_data)
 
         # SSD with 100% spare has no penalty
         assert health >= 90, f"Expected health >= 90 (no penalty), got {health}"
@@ -183,7 +183,7 @@ class TestSASGListIntegrity:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sas", smart_data, None)
+        health, _ = calculate_drive_health_score("sas", smart_data)
 
         # Interface errors no longer penalized
         assert health >= 95, f"Expected health >= 95, got {health}"
@@ -198,7 +198,7 @@ class TestSASGListIntegrity:
             "status": "PASSED"
         }
 
-        health, _ = calculate_drive_health_score("sas", smart_data, None)
+        health, _ = calculate_drive_health_score("sas", smart_data)
 
         # No reallocated sectors, interface errors no longer penalized
         assert health >= 95, f"Expected health >= 95, got {health}"

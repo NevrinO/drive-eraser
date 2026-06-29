@@ -21,10 +21,14 @@ Before reviewing, gather context in parallel:
 
 1. **Read the target file** completely.
 2. **Read `docs/SECURITY_DEVIATIONS.md`** — check for documented deliberate deviations that explain non-standard patterns. Do not flag documented deviations as flaws.
-3. **Read `.devin/rules/lessons-learned.md`** — check against known guardrails (SQL injection, TOCTOU, concurrency, regex anchors, etc.).
+3. **Read `.devin/rules/lessons-quick-ref.md`** — check against known guardrails (SQL injection, TOCTOU, concurrency, regex anchors, etc.). This is the always-loaded quick reference. For full guardrail details on a specific rule, read `.devin/rules/lessons-learned.md`.
 4. **Read `code_concerns.md`** — check for existing findings on this file to avoid duplicates and maintain sequential ID numbering.
 5. **Grep for callers** of key functions in the file — determine which functions are actively used vs dead code.
 6. **Grep for related patterns** — e.g., if the file uses `get_device_lock`, check if all similar functions use it consistently.
+
+## Quick Mode (files < 400 lines)
+
+If the target file is under 400 lines, run **Part 1 only** (Code Review). Skip Part 2 (YAGNI Review) and Part 3 (File Size & Organization Review). Small files rarely have organizational issues or speculative abstractions, and skipping these parts saves significant context. Note in the output: "Quick mode: YAGNI and File Organization skipped (file under 400 lines)."
 
 ## Part 1: Code Review
 
@@ -268,7 +272,7 @@ After all findings are written to `code_concerns.md` and the format check passes
 1. **Cite line numbers** for every finding using the `@file:line` format.
 2. **Verify before reporting** — read the actual lines referenced. Do not report speculative or low-confidence findings.
 3. **Check `SECURITY_DEVIATIONS.md`** before flagging anything as a security flaw. Documented deviations are acknowledged, not flagged.
-4. **Check `lessons-learned.md`** for applicable guardrails. Reference the lesson number when applicable.
+4. **Check `lessons-quick-ref.md`** for applicable guardrails. Reference the lesson number when applicable. For full details on a specific rule, read `lessons-learned.md`.
 5. **Grep for callers** before flagging dead code. A function with zero grep hits outside its own file and tests is dead.
 6. **Don't duplicate** existing findings in `code_concerns.md`. Read it first.
 7. **Fix nothing** — this is analysis only. The user decides what to fix and when.

@@ -380,7 +380,10 @@ def get_smart_data(device, diagnostics=None):
         "sas_grown_defect_list": sas_grown_defect_list, "sas_scan_status": sas_scan_status, "sas_non_medium_errors": sas_non_medium_errors,
         "sas_uncorrectable_read_errors": sas_uncorrectable_read_errors, "sas_uncorrectable_write_errors": sas_uncorrectable_write_errors, "sas_uncorrectable_verify_errors": sas_uncorrectable_verify_errors,
         "sas_scan_event_count": sas_scan_event_count, "sas_scan_unique_lbas": sas_scan_unique_lbas, "sas_sticky_lba_detected": sas_sticky_lba_detected,
-        "model_profile": model_profile, "interface_type": interface_type
+        "model_profile": model_profile, "interface_type": interface_type,
+        "_nvme_media_errors": safe_int(nvme_log.get("media_errors"), 0),
+        "_smartctl_exit_status": safe_int(data.get("smartctl", {}).get("exit_status"), 0),
+        "_nvme_critical_warning": safe_int(nvme_log.get("critical_warning"), 0)
     }
 
 def get_raw_smart_diagnostics(device):
@@ -390,6 +393,9 @@ def get_raw_smart_diagnostics(device):
     if not smartctl_cmd or not device:
         return "SMARTCTL command not resolved or invalid device target.\n"
     try:
+        # Uses subprocess.run directly instead of run_command because:
+        # run_command only returns stdout; this function needs stdout, stderr, and exit code
+        # in a combined diagnostic string for troubleshooting
         result = subprocess.run(["sudo", smartctl_cmd, "-a", device], capture_output=True, text=True, timeout=15, shell=False)
         output = result.stdout or ""
         stderr = result.stderr or ""
@@ -425,7 +431,7 @@ def detect_interface_type(by_path_value, device, configured_type=None, smart_out
 
     return "sata" if dev.startswith("/dev/sd") else "unknown"
 
-def calculate_drive_health_score(interface_type, smart_data, raw_json, thresholds=None):
+def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
     iface = str(interface_type or "unknown").lower()
     is_ssd = is_drive_ssd(interface_type, smart_data)
     wear = smart_data.get("wear_level")
@@ -522,25 +528,18 @@ def calculate_drive_health_score(interface_type, smart_data, raw_json, threshold
     penalty_breakdown["nme_penalty"] = nme_penalty
     
     nvme_media_penalty = 0
-    if iface == "nvme" and raw_json:
-        try:
-            nvme_log = json.loads(raw_json).get("nvme_smart_health_information_log", {})
-            nvme_media_penalty = min(80, safe_int(nvme_log.get("media_errors"), 0) * 20)
-        except Exception: pass
+    if iface == "nvme":
+        nvme_media_penalty = min(80, safe_int(smart_data.get("_nvme_media_errors"), 0) * 20)
 
     penalty_breakdown["nvme_media_penalty"] = nvme_media_penalty
 
     score = max(0, base_score - realloc_penalty - pending_penalty - nme_penalty - nvme_media_penalty)
     failed_override = str(smart_data.get("status") or "UNKNOWN").upper() == "FAILED"
-    if raw_json:
-        try:
-            data = json.loads(raw_json)
-            exit_status_val = safe_int(data.get("smartctl", {}).get("exit_status"), 0)
-            if (exit_status_val & 8 != 0) or (exit_status_val & 16 != 0): failed_override = True
-            if iface == "nvme":
-                crit_warn_val = safe_int(data.get("nvme_smart_health_information_log", {}).get("critical_warning"), 0)
-                if (crit_warn_val & 0x04 != 0) or (crit_warn_val & 0x08 != 0): failed_override = True
-        except Exception: pass
+    exit_status_val = safe_int(smart_data.get("_smartctl_exit_status"), 0)
+    if (exit_status_val & 8 != 0) or (exit_status_val & 16 != 0): failed_override = True
+    if iface == "nvme":
+        crit_warn_val = safe_int(smart_data.get("_nvme_critical_warning"), 0)
+        if (crit_warn_val & 0x04 != 0) or (crit_warn_val & 0x08 != 0): failed_override = True
 
     penalty_breakdown["failed_override"] = failed_override
     final_score = min(int(round(score)), 5) if failed_override else int(round(score))
@@ -626,8 +625,10 @@ def run_smart_test(device, test_type, diagnostics=None):
     timeout_seconds = 30
 
     try:
-        # Run smartctl -t to start the test with appropriate timeout
-        # Note: check=False is used to handle non-zero exit codes manually with custom error messages
+        # Uses subprocess.run directly instead of run_command because:
+        # 1. run_command uses check=True (raises on non-zero exit), but smartctl -t returns
+        #    non-zero for recoverable errors (e.g. test already in progress) that need custom handling
+        # 2. run_command only returns stdout; we need result.returncode and result.stderr for diagnostics
         result = subprocess.run(
             ["sudo", smartctl_cmd, "-t", test_type, device_path],
             capture_output=True,
@@ -1096,7 +1097,7 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
 
     # Calculate health score and recommendation
     thresholds = get_triage_thresholds()
-    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, smart.get("raw"), thresholds=thresholds)
+    health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, thresholds=thresholds)
     recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
     smart_status = smart.get("status", "UNKNOWN")
 
@@ -1182,16 +1183,9 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
         if nvme_available_spare is not None and nvme_available_spare < 10:
             block_reason = "nvme_available_spare_low"
 
-        nvme_critical_warning = None
-        try:
-            if smart.get("raw"):
-                raw_data = json.loads(smart.get("raw"))
-                nvme_log = raw_data.get("nvme_smart_health_information_log", {})
-                nvme_critical_warning = safe_int(nvme_log.get("critical_warning"), 0)
-                if nvme_critical_warning & 0x04 or nvme_critical_warning & 0x08:
-                    block_reason = "nvme_critical_warning"
-        except Exception:
-            pass
+        nvme_critical_warning = safe_int(smart.get("_nvme_critical_warning"), 0)
+        if nvme_critical_warning & 0x04 or nvme_critical_warning & 0x08:
+            block_reason = "nvme_critical_warning"
 
     # 7. SAS-specific checks
     if interface_type == "sas":
