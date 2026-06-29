@@ -230,10 +230,13 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
 
     # Scan /sys/class/block for all block devices
     block_devices = []
-    try:
-        block_device_names = os.listdir('/sys/class/block')
-    except (OSError, IOError):
+    if not os.path.exists('/sys/class/block'):
         block_device_names = []
+    else:
+        try:
+            block_device_names = os.listdir('/sys/class/block')
+        except (OSError, IOError):
+            block_device_names = []
 
     for device_name in block_device_names:
         # Skip partitions, device mapper, and loop devices
