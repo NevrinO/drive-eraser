@@ -158,6 +158,9 @@ async function editEnclosure(enclosureId) {
     modalTitle.textContent = "Edit Enclosure";
   }
 
+  // Load wizard data lazily (templates + master slot map needed for rendering)
+  await ensureWizardDataLoaded();
+
   await renderWizardStep();
   openModal(modal);
 }
@@ -173,11 +176,9 @@ async function initializeEnclosureManagement() {
     return;
   }
 
-  await Promise.all([
-    loadEnclosures(),
-    loadTemplates(),
-    loadMasterSlotMap()
-  ]);
+  // Only load enclosures — templates and master slot map are loaded lazily
+  // when the wizard opens, since they involve a slow sysfs scan
+  await loadEnclosures();
   renderEnclosureList(Object.values(adminEnclosures));
   enclosureManagementInitialized = true;
 }
@@ -197,9 +198,8 @@ function attachEnclosureManagementListeners() {
   }
 }
 
-// Attach listeners immediately if DOM is ready, otherwise wait for DOMContentLoaded
-if (document.readyState === "loading") {
-  document.addEventListener("DOMContentLoaded", attachEnclosureManagementListeners);
-} else {
-  attachEnclosureManagementListeners();
-}
+// Always wait for DOMContentLoaded — with defer scripts, readyState is "interactive"
+// when this file executes, but enclosureWizard.js and enclosureSave.js (which define
+// openNewEnclosureWizard and handleSaveEnclosure) may not have loaded yet.
+// DOMContentLoaded fires after ALL deferred scripts have executed.
+document.addEventListener("DOMContentLoaded", attachEnclosureManagementListeners);
