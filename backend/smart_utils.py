@@ -68,6 +68,8 @@ def detect_interface_type(by_path_value, device, configured_type=None, smart_out
         except (FileNotFoundError, OSError):
             pass
 
+    if configured_type and configured_type in ("sas", "sata", "nvme"):
+        return configured_type
     return "sata" if dev.startswith("/dev/sd") else "unknown"
 
 

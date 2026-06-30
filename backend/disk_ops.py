@@ -30,6 +30,6 @@ from discovery import (
     _collect_pending_parallel, discover_drives, _build_path_to_dev,
     _load_wipe_passphrase, _finalize_discovery,
     _discover_drives_enclosure, _discover_drives_legacy,
-    _DISCOVERY_MAX_WORKERS, _DISCOVERY_OVERALL_TIMEOUT,
+    _DISCOVERY_MAX_WORKERS, _PER_FUTURE_TIMEOUT,
 )
 # --- END OF FILE backend/disk_ops.py ---

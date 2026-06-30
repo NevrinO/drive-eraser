@@ -135,6 +135,15 @@ def _get_cached_drive_payload(cache_key):
             return entry['data']
     return None
 
+def _touch_cached_drive_payload(cache_key):
+    """Get cached payload and refresh its timestamp to keep it alive during wipes."""
+    with _DRIVE_DATA_CACHE_LOCK:
+        entry = _DRIVE_DATA_CACHE.get(cache_key)
+        if entry and (time.time() - entry['timestamp']) < DRIVE_DATA_CACHE_TTL:
+            entry['timestamp'] = time.time()
+            return entry['data']
+    return None
+
 def get_cached_smart_data(device_path):
     """Get cached drive payload for a device, encapsulating cache key construction.
 

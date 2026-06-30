@@ -238,11 +238,15 @@ __marimo__/
 # Keep tracking the certificates folder layout even if empty [5]
 !/data/certs/.gitkeep
 
-# Agent logs and scratchpad
-.devin/archive/
+# Agent tooling, rules, and workflows (local only, not project content)
+.devin/
+.windsurf/
 
 # Cross-session progress tracking (working file, not project content)
 progress.txt
+
+# Code review scratchpad (working file, not project content)
+code_concerns.md
 
 # Triage script output (generated, not project content)
 scripts/triage_output.json

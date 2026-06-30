@@ -567,12 +567,26 @@ function renderBayCard(drive) {
     bannerLabel = "⚠️ UNCONFIGURED BAY";
   }
 
+  // Recommendation tint: override internal card background based on recommendation status.
+  // Applies to ready (healthy) and completed (sanitized) states. Does not change border color.
+  // Checked before the unconfigured string mutation so stateClass is still a clean single value.
+  const recStatus = drive.recommendation ? String(drive.recommendation.status).toUpperCase() : "";
+  const isTintable = stateClass === "healthy" || stateClass === "completed";
+
   if (isUnconfigured) {
     stateClass += " unconfigured";
+  }
+  let recClass = "";
+  if (isTintable && recStatus) {
+    if (recStatus === "DESTROY") recClass = "rec-destroy";
+    else if (recStatus === "SCRATCH") recClass = "rec-scratch";
+    else if (recStatus === "USED_HEAVY") recClass = "rec-used-heavy";
+    else if (recStatus === "USED_GOOD" || recStatus === "NEW_STOCK") recClass = "rec-used-good";
   }
 
   const healthScore = calculateDriveHealthScore(drive);
   const classes = ["bay-card", stateClass];
+  if (recClass) classes.push(recClass);
   if (selectedBays.has(drive.bay)) classes.push("selected");
 
   const ifaceLabel = drive.interface_type ? drive.interface_type.toUpperCase() : "SATA";

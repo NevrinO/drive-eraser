@@ -4,8 +4,9 @@
 
 import os
 import json
+import time
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from common import get_config_dir, load_policy
 from disk_utils import resolve_bay_device
@@ -16,7 +17,7 @@ from os_detection import _get_os_by_path_cached
 from device_resolution import _resolve_device_from_enclosure_slot, _resolve_device_from_hardware_identifier
 from drive_collection import (
     _collect_drive_data, _apply_drive_payload, _apply_collection_failure,
-    _store_drive_payload, _get_cached_drive_payload,
+    _store_drive_payload, _get_cached_drive_payload, _touch_cached_drive_payload,
     _DRIVE_DATA_CACHE, _DRIVE_DATA_CACHE_LOCK,
 )
 from extended_smart import (
@@ -111,7 +112,6 @@ def _auto_enqueue_zero_checks(results):
 
 # Performance: parallel collection settings
 _DISCOVERY_MAX_WORKERS = min(8, os.cpu_count() or 4)
-_DISCOVERY_OVERALL_TIMEOUT = 120  # seconds for the whole parallel collection batch
 
 def get_discovery_max_workers():
     """Get the maximum number of workers for parallel drive discovery from policy."""
@@ -187,8 +187,14 @@ def _collect_pending_serial(pending, passphrase, use_identity_only=False):
             logging.getLogger(__name__).warning(f"Drive data collection failed for {dev_node}: {e}")
             _apply_collection_failure(bay_info, dev_node, f"collection_failed: {e}")
 
+_PER_FUTURE_TIMEOUT = 60  # seconds per drive — one hung drive can't starve the batch
+
 def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
-    """Collect drive data for all pending bays in parallel with bounded workers."""
+    """Collect drive data for all pending bays in parallel with bounded workers.
+
+    Uses per-future deadlines so one hung smartctl call only times out that drive,
+    not the entire batch.
+    """
     max_workers = min(get_discovery_max_workers(), len(pending))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
     futures = {}
@@ -196,11 +202,19 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
         for item in pending:
             bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
             futures[executor.submit(_collect_drive_data, dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)] = item
+
+        start = time.monotonic()
         remaining = set(futures)
-        try:
-            for future in as_completed(futures, timeout=_DISCOVERY_OVERALL_TIMEOUT):
+
+        while remaining:
+            # Poll for completed futures with a short wait
+            done, not_done = wait(remaining, timeout=2.0, return_when=FIRST_COMPLETED)
+            now = time.monotonic()
+
+            for future in done:
                 remaining.discard(future)
-                bay_info, is_os_drive, cache_key, dev_node = futures[future][0], futures[future][1], futures[future][2], futures[future][3]
+                item = futures[future]
+                bay_info, is_os_drive, cache_key, dev_node = item[0], item[1], item[2], item[3]
                 try:
                     payload = future.result()
                 except Exception as e:
@@ -209,12 +223,19 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                     continue
                 _store_drive_payload(cache_key, payload)
                 _apply_drive_payload(bay_info, payload, is_os_drive)
-        except FuturesTimeoutError:
-            for future in remaining:
-                future.cancel()
-                item = futures[future]
-                logging.getLogger(__name__).warning(f"Drive data collection timed out for {item[3]}")
-                _apply_collection_failure(item[0], item[3], "collection_timeout")
+
+            # Check per-future timeouts on remaining futures
+            if not_done:
+                timed_out = set()
+                for future in not_done:
+                    if (now - start) >= _PER_FUTURE_TIMEOUT:
+                        timed_out.add(future)
+                for future in timed_out:
+                    remaining.discard(future)
+                    future.cancel()
+                    item = futures[future]
+                    logging.getLogger(__name__).warning(f"Drive data collection timed out for {item[3]} (per-future limit {_PER_FUTURE_TIMEOUT}s)")
+                    _apply_collection_failure(item[0], item[3], "collection_timeout")
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
@@ -414,9 +435,12 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                     bay_info["locked"] = True
 
                 if running_devices and dev_node in running_devices:
+                    running_cache_key = (dev_node, dev_node)
+                    cached = _touch_cached_drive_payload(running_cache_key)
+                    cached_iface = cached.get("interface_type") if cached else None
                     bay_info.update({
                         "status": "RUNNING",
-                        "interface_type": detect_interface_type(dev_node, dev_node, interface_type, None),
+                        "interface_type": cached_iface or detect_interface_type(dev_node, dev_node, interface_type, None),
                         "capacity_str": "Sanitizing..."
                     })
                     results.append(bay_info)
@@ -533,7 +557,10 @@ def _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=Fals
                 bay_info["locked"] = True
 
             if running_devices and dev_node in running_devices:
-                bay_info.update({"present": True, "device": dev_node, "status": "RUNNING", "interface_type": detect_interface_type(resolved_active_path or configured_active_path, dev_node, config.get('type'), None), "capacity_str": "Sanitizing..."})
+                running_cache_key = (resolved_active_path or configured_active_path, dev_node)
+                cached = _touch_cached_drive_payload(running_cache_key)
+                cached_iface = cached.get("interface_type") if cached else None
+                bay_info.update({"present": True, "device": dev_node, "status": "RUNNING", "interface_type": cached_iface or detect_interface_type(resolved_active_path or configured_active_path, dev_node, config.get('type'), None), "capacity_str": "Sanitizing..."})
                 results.append(bay_info); continue
 
             # Phase 1: expensive data (SMART/capabilities/marker) is cached per device.
