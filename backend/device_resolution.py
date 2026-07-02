@@ -284,8 +284,41 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
 
     sas_expander_base = "/sys/class/sas_expander"
 
+    # Build a port→phy_identifier lookup map by iterating all SAS PHYs once.
+    # The end_device port number in a SCSI device's realpath (e.g. 14:0:133) is
+    # a kernel-internal port number, NOT the expander PHY number. The actual
+    # /sys/class/sas_phy/ entry is named phy-14:0:28 (using the expander PHY
+    # number 28), and its realpath contains port-14:0:133. We map the port
+    # component to the phy_identifier so we can look it up for each SCSI device.
+    port_to_phy_id = {}
+    try:
+        for phy_name in os.listdir(sas_phy_base):
+            if not re.match(r'^phy-\d+:\d+:\d+\Z', phy_name):
+                continue
+            phy_path = os.path.join(sas_phy_base, phy_name)
+            try:
+                phy_real = os.path.realpath(phy_path)
+            except (OSError, IOError):
+                continue
+            # Extract the port component from the PHY's realpath
+            port_match = re.search(r'/port-(\d+:\d+:\d+)/', phy_real)
+            if not port_match:
+                continue
+            port_component = port_match.group(1)
+            # Read phy_identifier
+            phy_id_file = os.path.join(phy_path, "phy_identifier")
+            try:
+                with open(phy_id_file, 'r') as f:
+                    phy_id = int(f.read().strip())
+            except (OSError, IOError, ValueError):
+                continue
+            port_to_phy_id[port_component] = phy_id
+    except (OSError, IOError):
+        pass
+
     _logger.debug("sysfs_scsi Strategy1: looking for pci=%s phy_num=%s expander=%s",
                   pci_controller, phy_num, expander_sas_address)
+    _logger.debug("sysfs_scsi Strategy1: port_to_phy_id map has %d entries", len(port_to_phy_id))
 
     for scsi_dev_name in scsi_dev_entries:
         # SCSI device names are host:channel:target:lun
@@ -356,7 +389,9 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
                 continue
 
         # Extract the LAST end_device port number from the path.
-        # Format: end_device-14:3:132 → port identifier is "14:3:132"
+        # Format: end_device-14:0:133 → port identifier is "14:0:133"
+        # This port number is a kernel-internal identifier, NOT the expander
+        # PHY number. We use it to look up the phy_identifier from the map.
         end_dev_matches = re.findall(r'/end_device-(\d+:\d+:\d+)/', real_path)
         if not end_dev_matches:
             _logger.debug("sysfs_scsi Strategy1: %s skip: no end_device in path",
@@ -365,16 +400,15 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
 
         end_dev_port = end_dev_matches[-1]
 
-        # Read the expander PHY identifier from the corresponding sas_phy entry.
-        # /sys/class/sas_phy/phy-14:3:132/phy_identifier → expander PHY number
-        phy_id_file = os.path.join(sas_phy_base, f"phy-{end_dev_port}", "phy_identifier")
-        try:
-            with open(phy_id_file, 'r') as f:
-                expander_phy_num = int(f.read().strip())
-        except (OSError, IOError, ValueError):
-            _logger.debug("sysfs_scsi Strategy1: %s skip: cannot read phy_identifier from %s",
-                          scsi_dev_name, phy_id_file)
+        # Look up the expander PHY number from the port→phy_identifier map.
+        # The port number (e.g. 14:0:133) maps to the expander PHY number
+        # (e.g. 28) via the PHY's realpath containing the same port component.
+        if end_dev_port not in port_to_phy_id:
+            _logger.debug("sysfs_scsi Strategy1: %s skip: port %s not in phy_id map",
+                          scsi_dev_name, end_dev_port)
             continue
+
+        expander_phy_num = port_to_phy_id[end_dev_port]
 
         if expander_phy_num != phy_num:
             _logger.debug("sysfs_scsi Strategy1: %s skip phy_id=%s != phy_num=%s",
