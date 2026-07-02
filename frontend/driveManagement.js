@@ -133,14 +133,15 @@ function handleZeroCheckUpdate(data) {
   }
 }
 
-async function loadDrives(silent = false) {
+async function loadDrives(silent = false, forceRefresh = false) {
   try {
     if (!silent) apiStatus.textContent = "API Status: Loading...";
 
     // Load enclosures and drives in parallel — they are independent
+    const drivesUrl = forceRefresh ? "/api/drives?force_refresh=true" : "/api/drives";
     const [_, response] = await Promise.all([
       loadEnclosuresForWorkbench(),
-      safeFetch("/api/drives")
+      safeFetch(drivesUrl)
     ]);
 
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -939,7 +940,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
   }
 });
 
-refreshButton.addEventListener("click", () => loadDrives(false));
+refreshButton.addEventListener("click", () => loadDrives(false, true));
 
 // Health gate warning modal handlers
 function showHealthGateWarning(blockReason, isOverrideAvailable, payload) {

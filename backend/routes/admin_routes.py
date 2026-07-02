@@ -417,6 +417,20 @@ def download_support_bundle():
             except FileNotFoundError:
                 pass
 
+            # Include discovery diagnostic log if it exists
+            diag_log_path = os.path.join(logs_dir, "discovery_diag.log")
+            try:
+                shutil.copy(diag_log_path, os.path.join(workspace_dir, "discovery_diag.log"))
+            except FileNotFoundError:
+                pass
+
+            # Also include rotated diagnostic log if it exists
+            diag_log_rotated = os.path.join(logs_dir, "discovery_diag.log.1")
+            try:
+                shutil.copy(diag_log_rotated, os.path.join(workspace_dir, "discovery_diag.log.1"))
+            except FileNotFoundError:
+                pass
+
             failed_logs_dir = get_failed_logs_dir()
             try:
                 shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
@@ -424,7 +438,18 @@ def download_support_bundle():
                 pass
         except Exception:
             pass
-            
+
+        # Capture a point-in-time diagnostic snapshot into the bundle workspace.
+        # This works even when discovery_diag is not enabled in policy, because
+        # capture_snapshot_text() does not check the enabled flag.
+        try:
+            from discovery_diag import capture_snapshot_text
+            snapshot_text = capture_snapshot_text("support_bundle")
+            with open(os.path.join(workspace_dir, "diagnostic_snapshot.txt"), "w", encoding="utf-8") as f:
+                f.write(snapshot_text)
+        except Exception:
+            pass
+
         tar_path = f"/tmp/{bundle_name}.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             tar.add(workspace_dir, arcname=bundle_name)

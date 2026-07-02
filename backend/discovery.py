@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from common import get_config_dir, load_policy
 from disk_utils import resolve_bay_device
 from smart_utils import detect_interface_type
-from device_discovery import get_controller_for_device, scan_pci_controllers, generate_master_slot_map
+from device_discovery import get_controller_for_device, scan_pci_controllers
 from zero_check_manager import get_manager as get_zero_check_manager
 from os_detection import _get_os_by_path_cached
 from device_resolution import _resolve_device_from_enclosure_slot, _resolve_device_from_hardware_identifier
@@ -25,6 +25,7 @@ from extended_smart import (
 )
 import discovery_state
 from discovery_state import _discovery_thread_state, _check_discovery_interrupted
+from discovery_diag import capture_snapshot, log_device_resolution_failure
 
 
 def _is_eligible_for_zero_check(drive, manager=None, allow_completed=False):
@@ -188,22 +189,32 @@ def _collect_pending_serial(pending, passphrase, use_identity_only=False):
             _apply_collection_failure(bay_info, dev_node, f"collection_failed: {e}")
 
 _PER_FUTURE_TIMEOUT = 60  # seconds per drive — one hung drive can't starve the batch
+_BATCH_TIMEOUT = 300  # safety net: max seconds for the entire batch (5 min)
 
 def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
     """Collect drive data for all pending bays in parallel with bounded workers.
 
     Uses per-future deadlines so one hung smartctl call only times out that drive,
-    not the entire batch.
+    not the entire batch. Each future's clock starts when it begins executing,
+    not when it is submitted — so queued futures behind a hung worker still get
+    their full timeout budget.
     """
     max_workers = min(get_discovery_max_workers(), len(pending))
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
     futures = {}
+    future_start_times = {}  # dev_node -> monotonic timestamp when worker started executing
+
+    def _timed_collect(item):
+        bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
+        future_start_times[dev_node] = time.monotonic()
+        return _collect_drive_data(dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)
+
     try:
         for item in pending:
             bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
-            futures[executor.submit(_collect_drive_data, dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)] = item
+            futures[executor.submit(_timed_collect, item)] = item
 
-        start = time.monotonic()
+        batch_start = time.monotonic()
         remaining = set(futures)
 
         while remaining:
@@ -224,18 +235,30 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                 _store_drive_payload(cache_key, payload)
                 _apply_drive_payload(bay_info, payload, is_os_drive)
 
-            # Check per-future timeouts on remaining futures
+            # Check per-future timeouts on remaining (not-yet-done) futures
             if not_done:
                 timed_out = set()
                 for future in not_done:
-                    if (now - start) >= _PER_FUTURE_TIMEOUT:
+                    item = futures[future]
+                    dev_node = item[3]
+                    fut_start = future_start_times.get(dev_node)
+                    if fut_start is not None and (now - fut_start) >= _PER_FUTURE_TIMEOUT:
+                        timed_out.add(future)
+                    elif fut_start is None and (now - batch_start) >= _BATCH_TIMEOUT:
+                        # Safety net: future never started (stuck behind hung workers) and
+                        # the entire batch has been running too long. Abandon it.
                         timed_out.add(future)
                 for future in timed_out:
                     remaining.discard(future)
-                    future.cancel()
+                    future.cancel()  # Only effective for queued futures; running futures continue but are abandoned
                     item = futures[future]
-                    logging.getLogger(__name__).warning(f"Drive data collection timed out for {item[3]} (per-future limit {_PER_FUTURE_TIMEOUT}s)")
-                    _apply_collection_failure(item[0], item[3], "collection_timeout")
+                    dev_node = item[3]
+                    fut_start = future_start_times.get(dev_node)
+                    elapsed = f"{now - fut_start:.0f}s" if fut_start else "never started"
+                    logging.getLogger(__name__).warning(
+                        f"Drive data collection timed out for {dev_node} (elapsed {elapsed}, per-future limit {_PER_FUTURE_TIMEOUT}s)"
+                    )
+                    _apply_collection_failure(item[0], dev_node, "collection_timeout")
     finally:
         executor.shutdown(wait=False, cancel_futures=True)
 
@@ -261,14 +284,29 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     # Detect if using new enclosure-based schema or legacy by-path schema
     is_enclosure_schema = isinstance(bay_map_doc, dict) and "enclosures" in bay_map_doc
 
+    capture_snapshot("pre_discovery", extra_info={
+        "bay_map_schema": "enclosure" if is_enclosure_schema else "legacy",
+        "running_devices": list(running_devices) if running_devices else [],
+        "bay_map_path": bay_map_path,
+    })
+
     if is_enclosure_schema:
-        return _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
+        results = _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
     else:
-        return _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
+        results = _discover_drives_legacy(bay_map_doc, running_devices, skip_auto_enqueue=skip_auto_enqueue)
+
+    capture_snapshot("post_discovery", discovery_results=results)
+    return results
 
 
 def _build_path_to_dev():
-    """Build a mapping from by-path entries to resolved device nodes."""
+    """Build a mapping from by-path entries to resolved device nodes.
+
+    LEGACY: This function is only used by the legacy by-path schema discovery
+    (_discover_drives_legacy). The enclosure schema resolves devices directly
+    from persisted hardware identifiers in bay_map.json. When legacy schema
+    support is removed, this function and its call sites can be deleted.
+    """
     path_to_dev = {}
     by_path_dir = '/dev/disk/by-path/'
     try:
@@ -329,9 +367,6 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
     """Discover drives using new enclosure-based physical slot mapping."""
     enclosures = bay_map_doc.get("enclosures", {})
 
-    # Generate master slot map (cached, 60-second TTL)
-    master_map = generate_master_slot_map(force_refresh=False)
-
     # Build by-path lookup for legacy compatibility
     path_to_dev = _build_path_to_dev()
 
@@ -376,7 +411,7 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
             # Pass expander_sas_address so the by-path lookup is scoped to the correct
             # expander when multiple expanders share the same PCI controller.
             dev_node, interface_type = _resolve_device_from_enclosure_slot(
-                slot_config, pci_controller, master_map,
+                slot_config, pci_controller,
                 expander_sas_address=expander_sas_address
             )
 
@@ -458,6 +493,14 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                     pending.append((bay_info, is_os_drive, cache_key, dev_node, dev_node, dev_node, interface_type))
             else:
                 bay_info["diagnostics"]["mapping"] = {"ok": False, "reason": "no_device_in_slot"}
+                mappings = slot_config.get("mappings", {})
+                first_mapping = list(mappings.values())[0] if mappings else {}
+                slot_type = first_mapping.get("slot_type", "unknown")
+                log_device_resolution_failure(
+                    bay_id, slot_config, pci_controller, physical_slot,
+                    slot_type,
+                    by_path_checked=f"pci-{pci_controller}...slot={physical_slot}",
+                )
 
             results.append(bay_info)
 

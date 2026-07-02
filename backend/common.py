@@ -79,6 +79,7 @@ DEFAULT_POLICY = {
     "prewipe_health_gate_max_reallocated_sectors": 5,
     "prewipe_health_gate_max_interface_errors": 100,
     "prewipe_health_gate_max_health_score_drop": 20,
+    "discovery_diag": True,
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -129,6 +130,7 @@ POLICY_SCHEMA = {
         "prewipe_health_gate_max_reallocated_sectors": {"type": "integer", "minimum": 0, "maximum": 1000},
         "prewipe_health_gate_max_interface_errors": {"type": "integer", "minimum": 0, "maximum": 100000},
         "prewipe_health_gate_max_health_score_drop": {"type": "integer", "minimum": 0, "maximum": 100},
+        "discovery_diag": {"type": "boolean"},
         "certificate_retention_days": {"type": "integer", "minimum": 1},
         "max_logo_size_mb": {"type": "number", "minimum": 0.1},
         "max_bulk_cert_batch_size": {"type": "integer", "minimum": 1, "maximum": 1000},

@@ -176,6 +176,16 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
             return {"status": "DESTROY", "comment": "SAS drive has excessive uncorrectable read errors. Critical data integrity risk."}
         if sas_grown_defects >= sas_grown_defect_fail_thresh:
             return {"status": "DESTROY", "comment": f"SAS drive has {sas_grown_defects:,} grown defects (exceeds fail threshold). Critical mechanical degradation."}
+
+    # Health-score DESTROY must be checked before SAS SCRATCH fallbacks
+    # so that a critically low health score isn't short-circuited by
+    # the SAS grown-defect SCRATCH check (defects > 0 but < fail threshold).
+    if health_score is not None:
+        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+    else:
+        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+
+    if iface == "sas":
         if sas_read_errors >= 1:
             return {"status": "SCRATCH", "comment": "SAS drive has uncorrectable read errors. Use only for non-critical data."}
         if sas_sticky_lba:
@@ -184,10 +194,8 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
             return {"status": "SCRATCH", "comment": f"SAS drive has {sas_grown_defects:,} grown defects. Mechanical degradation detected. Use only for non-critical data."}
 
     if health_score is not None:
-        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
         if health_score <= health_scratch_thresh: return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
     else:
-        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
         if realloc_norm <= realloc_thresh or (0 < pending <= pending_scratch_thresh): return {"status": "SCRATCH", "comment": "Unstable or threshold-breached sectors detected. Safe only for non-critical use."}
 
     if is_ssd:

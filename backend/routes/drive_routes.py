@@ -15,7 +15,8 @@ from database import load_prior_visit, get_smart_test_history, get_smart_test_st
 from device_discovery import (
     invalidate_sas_expander_cache,
     invalidate_scsi_projections_cache,
-    invalidate_master_slot_cache
+    invalidate_master_slot_cache,
+    rescan_scsi_hosts
 )
 from flask import request
 
@@ -41,7 +42,15 @@ def get_drives():
         force_refresh = request.args.get("force_refresh", "false").lower() == "true"
         
         if force_refresh:
-            # Manual refresh: invalidate all caches including hardware topology
+            # Manual refresh: rescan SCSI bus first to restore devices that
+            # dropped off due to bad drive causing SCSI resets/timeouts.
+            # This re-enumerates devices and recreates /dev/disk/by-path symlinks.
+            try:
+                rescan_scsi_hosts()
+            except Exception as e:
+                logger.warning(f"SCSI rescan failed (non-fatal): {e}")
+
+            # Invalidate all caches including hardware topology
             # Users clicking "Refresh" expect to see current hardware state
             invalidate_sas_expander_cache()
             invalidate_scsi_projections_cache()

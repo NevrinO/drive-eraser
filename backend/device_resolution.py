@@ -3,17 +3,22 @@
 
 import os
 import re
+import glob
 
 from device_discovery import resolve_multipath_parent
 
 
-def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map, expander_sas_address=None):
-    """Resolve active device path from enclosure slot configuration using master map.
+def _resolve_device_from_enclosure_slot(slot_config, pci_controller, expander_sas_address=None):
+    """Resolve active device path from enclosure slot configuration.
+
+    Uses persisted hardware identifiers from bay_map.json (slot_type,
+    hardware_identifier, physical_slot_number) to resolve the active device
+    path. No master slot map scan is needed — the bay_map.json is authoritative
+    once the enclosure is configured.
 
     Args:
         slot_config: Slot configuration dict with mappings
         pci_controller: PCI controller address for the enclosure
-        master_map: Master slot map from generate_master_slot_map()
         expander_sas_address: SAS expander WWN (e.g. '0x500056b3...') or None for direct-attach
 
     Returns:
@@ -38,9 +43,8 @@ def _resolve_device_from_enclosure_slot(slot_config, pci_controller, master_map,
         if not slot_type or not hw_identifier:
             continue
 
-        # Use persisted mappings directly - do not search master map by physical_slot_number
-        # The master map only contains entries for occupied slots, so it fails for empty bays
-        # Persisted identifiers in bay_map.json are authoritative
+        # Use persisted mappings from bay_map.json directly.
+        # The hardware identifiers are authoritative once the enclosure is configured.
         dev_path = _resolve_device_from_hardware_identifier(
             pci_controller, slot_type, hw_identifier, physical_slot,
             expander_sas_address=expander_sas_address
@@ -211,5 +215,186 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
                         return f"/dev/{dev_name}"
         except (OSError, IOError):
             pass
+
+    # Fallback: if by-path resolution failed (symlinks removed by udev after SCSI
+    # bus reset), try to find the device through sysfs using the persisted hardware
+    # identifier. The block device may still exist in the kernel even though the
+    # by-path symlink is gone. The hw_identifier (e.g., 'phy-0:0:0', 'ata1') is
+    # stable and tied to the physical slot, so it works even after expander
+    # re-enumeration changes SCSI target IDs.
+    if slot_type in ('sas_expander', 'sas_direct'):
+        return _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier)
+    elif slot_type == 'motherboard_sata':
+        return _resolve_via_sysfs_ata(pci_controller, physical_slot, hw_identifier)
+
+    return None
+
+
+def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None):
+    """Fallback: resolve SAS device via sysfs when by-path is missing.
+
+    Primary path: use hw_identifier (e.g., 'phy-0:0:0') to follow the SAS PHY's
+    device symlink directly to the SCSI device. This is stable across expander
+    re-enumeration because the PHY name is tied to the physical slot.
+
+    Secondary fallback: if hw_identifier is not available or the PHY symlink is
+    missing, scan SCSI hosts matching the PCI controller and guess the target ID
+    from the physical slot number. This may fail for expander setups where target
+    IDs don't match PHY numbers.
+    """
+    scsi_device_base = "/sys/class/scsi_device"
+
+    # Primary: follow SAS PHY device symlink
+    if hw_identifier and hw_identifier.startswith('phy-'):
+        phy_device_link = f"/sys/class/sas_phy/{hw_identifier}/device"
+        try:
+            scsi_dev_realpath = os.path.realpath(phy_device_link)
+            # The symlink points to the SCSI device directory, e.g.:
+            # /sys/devices/.../host0/port-0:0/target0:0:0/0:0:0:0
+            # From there, check for block device
+            block_dir = os.path.join(scsi_dev_realpath, 'block')
+            block_entries = os.listdir(block_dir)
+            for block_name in block_entries:
+                dev_path = f"/dev/{block_name}"
+                if os.path.exists(dev_path):
+                    return dev_path
+        except (OSError, IOError):
+            pass
+
+    # Secondary fallback: scan SCSI hosts, match PCI controller, guess target ID
+    scsi_host_base = "/sys/class/scsi_host"
+
+    try:
+        host_dirs = os.listdir(scsi_host_base)
+    except (OSError, IOError):
+        return None
+
+    for host_dir in host_dirs:
+        if not host_dir.startswith('host'):
+            continue
+
+        # Get PCI address for this host
+        device_link = os.path.join(scsi_host_base, host_dir, 'device')
+        try:
+            real_path = os.path.realpath(device_link)
+        except (OSError, IOError):
+            continue
+
+        # Extract PCI address from sysfs path
+        pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])', real_path)
+        if not pci_matches:
+            continue
+
+        host_pci = pci_matches[-1]
+        if host_pci != pci_controller:
+            continue
+
+        # Extract host number
+        try:
+            host_num = int(host_dir[4:])
+        except (ValueError, IndexError):
+            continue
+
+        # Check if SCSI device exists for this slot (assumes target ID = slot number)
+        scsi_dev_path = os.path.join(scsi_device_base, f"{host_num}:0:{physical_slot}:0")
+        block_dir = os.path.join(scsi_dev_path, 'device', 'block')
+        try:
+            block_entries = os.listdir(block_dir)
+            for block_name in block_entries:
+                dev_path = f"/dev/{block_name}"
+                if os.path.exists(dev_path):
+                    return dev_path
+        except (OSError, IOError):
+            continue
+
+    return None
+
+
+def _resolve_via_sysfs_ata(pci_controller, ata_num, hw_identifier=None):
+    """Fallback: resolve SATA device via sysfs when by-path is missing.
+
+    Primary path: use hw_identifier (e.g., 'ata1') to go directly to the ATA
+    port and traverse to the block device.
+
+    Secondary fallback: if hw_identifier is not available, scan all ATA ports
+    matching the PCI controller and port number.
+    """
+    ata_port_base = "/sys/class/ata_port"
+    scsi_device_base = "/sys/class/scsi_device"
+
+    # Primary: use hw_identifier for direct ATA port lookup
+    if hw_identifier and hw_identifier.startswith('ata'):
+        port_path = os.path.join(ata_port_base, hw_identifier)
+        if os.path.isdir(port_path):
+            return _find_block_device_from_ata_port(port_path, scsi_device_base)
+
+    # Secondary fallback: scan all ATA ports
+    try:
+        port_dirs = os.listdir(ata_port_base)
+    except (OSError, IOError):
+        return None
+
+    for port_name in port_dirs:
+        if not port_name.startswith('ata'):
+            continue
+
+        port_path = os.path.join(ata_port_base, port_name)
+        try:
+            real_path = os.path.realpath(port_path)
+        except (OSError, IOError):
+            continue
+
+        # Extract PCI address from sysfs path
+        pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])', real_path)
+        if not pci_matches:
+            continue
+
+        port_pci = pci_matches[-1]
+        if port_pci != pci_controller:
+            continue
+
+        # Check if this is the right ATA port number
+        port_match = re.search(r'ata(\d+)$', port_name)
+        if not port_match:
+            continue
+        if int(port_match.group(1)) != ata_num:
+            continue
+
+        return _find_block_device_from_ata_port(port_path, scsi_device_base)
+
+    return None
+
+
+def _find_block_device_from_ata_port(port_path, scsi_device_base):
+    """Find block device associated with an ATA port via its SCSI host."""
+    host_dir_glob = os.path.join(port_path, 'host*')
+    try:
+        scsi_dev_dirs = os.listdir(scsi_device_base)
+    except (OSError, IOError):
+        return None
+
+    try:
+        host_dirs = glob.glob(host_dir_glob)
+        for hdir in host_dirs:
+            # Extract host number from path
+            host_match = re.search(r'host(\d+)$', hdir)
+            if not host_match:
+                continue
+            host_num = host_match.group(1)
+
+            # Find SCSI device for this host
+            for scsi_dev in scsi_dev_dirs:
+                if scsi_dev.startswith(f"{host_num}:0:"):
+                    block_dir = os.path.join(scsi_device_base, scsi_dev, 'device', 'block')
+                    try:
+                        block_entries = os.listdir(block_dir)
+                        for block_name in block_entries:
+                            dev_path = f"/dev/{block_name}"
+                            if os.path.exists(dev_path):
+                                return dev_path
+                    except (OSError, IOError):
+                        continue
+    except (OSError, IOError):
+        pass
 
     return None
