@@ -941,52 +941,40 @@ class TestResolveViaSysfsScsiPhySearch:
         """Should find a PHY named phy-14:0:3 when hw_identifier is phy-0:0:3."""
         from device_resolution import _resolve_via_sysfs_scsi
 
-        # Simulate /sys/class/sas_phy containing phy-14:0:3 (real host=14)
+        # Use same hardcoded base paths as the code (forward slashes)
+        phy_base = "/sys/class/sas_phy"
+        scsi_dev_base = "/sys/class/scsi_device"
+        scsi_device_path = (
+            "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/"
+            "port-14:0/expander-0x500304800145493f/port-14:0:0/"
+            "end_device-14:0:3/target14:0:267/14:0:267:0"
+        )
+
         def mock_listdir(path):
-            if path == "/sys/class/sas_phy":
+            if path == phy_base:
                 return ["phy-14:0:3", "phy-14:0:5", "phy-15:0:0"]
-            if path == "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:0/phy-14:0:3/..":
+            if path == scsi_dev_base:
                 return []
+            if "block" in path:
+                return ["sdk"]
             raise OSError("mock")
 
         def mock_realpath(path):
-            if "/sys/class/sas_phy/phy-14:0:3" in path:
+            if path == os.path.join(phy_base, "phy-14:0:3"):
                 return "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:0/phy-14:0:3"
-            if "/sys/class/sas_phy/phy-14:0:5" in path:
+            if path == os.path.join(phy_base, "phy-14:0:5"):
                 return "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:2/phy-14:0:5"
-            if "/sys/class/sas_phy/phy-15:0:0" in path:
+            if path == os.path.join(phy_base, "phy-15:0:0"):
                 return "/sys/devices/pci0000:00/0000:00:01.0/0000:af:00.0/host15/port-15:0/phy-15:0:0"
+            if path == os.path.join(phy_base, "phy-14:0:3", "device"):
+                return scsi_device_path
             return path
 
         def mock_exists(path):
             return path == "/dev/sdk"
 
-        def mock_isdir(path):
-            return True
-
-        # Mock the PHY device symlink to point to a SCSI device with block
-        scsi_device_path = "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:0/end_device-14:0:3/target14:0:267/14:0:267:0"
-
-        def mock_listdir_block(path):
-            if path == "/sys/class/sas_phy":
-                return ["phy-14:0:3", "phy-14:0:5", "phy-15:0:0"]
-            if "block" in path:
-                return ["sdk"]
-            raise OSError("mock")
-
-        def mock_realpath_full(path):
-            if path == "/sys/class/sas_phy/phy-14:0:3":
-                return "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:0/phy-14:0:3"
-            if path == "/sys/class/sas_phy/phy-14:0:5":
-                return "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:2/phy-14:0:5"
-            if path == "/sys/class/sas_phy/phy-15:0:0":
-                return "/sys/devices/pci0000:00/0000:00:01.0/0000:af:00.0/host15/port-15:0/phy-15:0:0"
-            if path == "/sys/class/sas_phy/phy-14:0:3/device":
-                return scsi_device_path
-            return path
-
-        with patch('os.listdir', side_effect=mock_listdir_block), \
-             patch('os.path.realpath', side_effect=mock_realpath_full), \
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
              patch('os.path.exists', side_effect=mock_exists):
             result = _resolve_via_sysfs_scsi(
                 "0000:3b:00.0", 3, "phy-0:0:3",
@@ -998,17 +986,22 @@ class TestResolveViaSysfsScsiPhySearch:
         """Should not match a PHY on a different PCI controller."""
         from device_resolution import _resolve_via_sysfs_scsi
 
+        phy_base = "/sys/class/sas_phy"
+        scsi_dev_base = "/sys/class/scsi_device"
+
         def mock_listdir(path):
-            if path == "/sys/class/sas_phy":
+            if path == phy_base:
                 return ["phy-15:0:3"]
+            if path == scsi_dev_base:
+                return []
             if "block" in path:
                 return ["sda"]
             raise OSError("mock")
 
         def mock_realpath(path):
-            if path == "/sys/class/sas_phy/phy-15:0:3":
+            if path == os.path.join(phy_base, "phy-15:0:3"):
                 return "/sys/devices/pci0000:00/0000:00:01.0/0000:af:00.0/host15/port-15:0/phy-15:0:3"
-            if path == "/sys/class/sas_phy/phy-15:0:3/device":
+            if path == os.path.join(phy_base, "phy-15:0:3", "device"):
                 return "/sys/devices/pci0000:af:00.0/host15/target15:0:3/15:0:3:0"
             return path
 
@@ -1028,17 +1021,22 @@ class TestResolveViaSysfsScsiPhySearch:
         """Should not match a PHY on the right controller but wrong expander."""
         from device_resolution import _resolve_via_sysfs_scsi
 
+        phy_base = "/sys/class/sas_phy"
+        scsi_dev_base = "/sys/class/scsi_device"
+
         def mock_listdir(path):
-            if path == "/sys/class/sas_phy":
+            if path == phy_base:
                 return ["phy-14:0:3"]
+            if path == scsi_dev_base:
+                return []
             if "block" in path:
                 return ["sdk"]
             raise OSError("mock")
 
         def mock_realpath(path):
-            if path == "/sys/class/sas_phy/phy-14:0:3":
+            if path == os.path.join(phy_base, "phy-14:0:3"):
                 return "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/port-14:0/expander-0x500304800145493f/port-14:0:0/phy-14:0:3"
-            if path == "/sys/class/sas_phy/phy-14:0:3/device":
+            if path == os.path.join(phy_base, "phy-14:0:3", "device"):
                 return "/sys/devices/pci0000:3b:00.0/host14/target14:0:267/14:0:267:0"
             return path
 
@@ -1059,10 +1057,16 @@ class TestResolveViaSysfsScsiPhySearch:
         """Should return None when no PHY matches the slot number."""
         from device_resolution import _resolve_via_sysfs_scsi
 
+        phy_base = "/sys/class/sas_phy"
+        scsi_dev_base = "/sys/class/scsi_device"
+        scsi_host_base = "/sys/class/scsi_host"
+
         def mock_listdir(path):
-            if path == "/sys/class/sas_phy":
+            if path == phy_base:
                 return ["phy-14:0:0", "phy-14:0:1"]
-            if path == "/sys/class/scsi_host":
+            if path == scsi_dev_base:
+                return []
+            if path == scsi_host_base:
                 return []
             raise OSError("mock")
 
@@ -1075,6 +1079,177 @@ class TestResolveViaSysfsScsiPhySearch:
                 "0000:3b:00.0", 99, "phy-0:0:99"
             )
             assert result is None
+
+    def test_scsi_device_scan_finds_orphaned_device(self):
+        """Strategy 1: Should find a block device via /sys/class/scsi_device/ scan
+        even when both by-path symlinks AND PHY device symlinks are gone.
+
+        This is the actual production scenario: the kernel SCSI error handler
+        removes by-path symlinks and breaks PHY device symlinks, but
+        /sys/class/scsi_device/ entries persist with block devices.
+        """
+        from device_resolution import _resolve_via_sysfs_scsi
+
+        scsi_dev_base = "/sys/class/scsi_device"
+        phy_base = "/sys/class/sas_phy"
+        scsi_host_base = "/sys/class/scsi_host"
+        scsi_sysfs_path = (
+            "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/"
+            "port-14:0/expander-0x500304800145493f/port-14:0:12/"
+            "end_device-14:0:12/target14:0:267/14:0:267:0"
+        )
+
+        def mock_listdir(path):
+            if path == scsi_dev_base:
+                return ["14:0:267:0", "14:0:268:0"]
+            if path == phy_base:
+                return []
+            if path == scsi_host_base:
+                return []
+            if "block" in path:
+                return ["sdk"]
+            raise OSError("mock")
+
+        def mock_realpath(path):
+            if path == os.path.join(scsi_dev_base, "14:0:267:0", "device"):
+                return scsi_sysfs_path
+            return path
+
+        def mock_exists(path):
+            return path == "/dev/sdk"
+
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
+             patch('os.path.exists', side_effect=mock_exists):
+            result = _resolve_via_sysfs_scsi(
+                "0000:3b:00.0", 12, "phy-0:0:12",
+                expander_sas_address="0x500304800145493f"
+            )
+            assert result == "/dev/sdk"
+
+    def test_scsi_device_scan_skips_wrong_phy(self):
+        """Strategy 1: Should skip SCSI devices on the wrong PHY number."""
+        from device_resolution import _resolve_via_sysfs_scsi
+
+        scsi_dev_base = "/sys/class/scsi_device"
+        phy_base = "/sys/class/sas_phy"
+        scsi_host_base = "/sys/class/scsi_host"
+        scsi_sysfs_path = (
+            "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/"
+            "port-14:0/expander-0x500304800145493f/port-14:0:5/"
+            "end_device-14:0:5/target14:0:268/14:0:268:0"
+        )
+
+        def mock_listdir(path):
+            if path == scsi_dev_base:
+                return ["14:0:268:0"]
+            if path == phy_base:
+                return []
+            if path == scsi_host_base:
+                return []
+            if "block" in path:
+                return ["sdac"]
+            raise OSError("mock")
+
+        def mock_realpath(path):
+            if path == os.path.join(scsi_dev_base, "14:0:268:0", "device"):
+                return scsi_sysfs_path
+            return path
+
+        def mock_exists(path):
+            return path == "/dev/sdac"
+
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
+             patch('os.path.exists', side_effect=mock_exists):
+            # Looking for PHY 12 but the SCSI device is on PHY 5
+            result = _resolve_via_sysfs_scsi(
+                "0000:3b:00.0", 12, "phy-0:0:12",
+                expander_sas_address="0x500304800145493f"
+            )
+            assert result is None
+
+    def test_scsi_device_scan_skips_wrong_expander(self):
+        """Strategy 1: Should skip SCSI devices on the wrong expander."""
+        from device_resolution import _resolve_via_sysfs_scsi
+
+        scsi_dev_base = "/sys/class/scsi_device"
+        phy_base = "/sys/class/sas_phy"
+        scsi_host_base = "/sys/class/scsi_host"
+        scsi_sysfs_path = (
+            "/sys/devices/pci0000:00/0000:00:01.0/0000:3b:00.0/host14/"
+            "port-14:0/expander-0x500304800145493f/port-14:0:12/"
+            "end_device-14:0:12/target14:0:267/14:0:267:0"
+        )
+
+        def mock_listdir(path):
+            if path == scsi_dev_base:
+                return ["14:0:267:0"]
+            if path == phy_base:
+                return []
+            if path == scsi_host_base:
+                return []
+            if "block" in path:
+                return ["sdk"]
+            raise OSError("mock")
+
+        def mock_realpath(path):
+            if path == os.path.join(scsi_dev_base, "14:0:267:0", "device"):
+                return scsi_sysfs_path
+            return path
+
+        def mock_exists(path):
+            return path == "/dev/sdk"
+
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
+             patch('os.path.exists', side_effect=mock_exists):
+            # SCSI device is on expander 0x500304800145493f but looking for 0x500056b3059bdcff
+            result = _resolve_via_sysfs_scsi(
+                "0000:3b:00.0", 12, "phy-0:0:12",
+                expander_sas_address="0x500056b3059bdcff"
+            )
+            assert result is None
+
+    def test_scsi_device_scan_direct_attach_no_expander(self):
+        """Strategy 1: Should match direct-attach (non-expander) devices."""
+        from device_resolution import _resolve_via_sysfs_scsi
+
+        scsi_dev_base = "/sys/class/scsi_device"
+        phy_base = "/sys/class/sas_phy"
+        scsi_host_base = "/sys/class/scsi_host"
+        scsi_sysfs_path = (
+            "/sys/devices/pci0000:00/0000:00:01.0/0000:af:00.0/host15/"
+            "port-15:0/end_device-15:0:0/target15:0:0/15:0:0:0"
+        )
+
+        def mock_listdir(path):
+            if path == scsi_dev_base:
+                return ["15:0:0:0"]
+            if path == phy_base:
+                return []
+            if path == scsi_host_base:
+                return []
+            if "block" in path:
+                return ["sda"]
+            raise OSError("mock")
+
+        def mock_realpath(path):
+            if path == os.path.join(scsi_dev_base, "15:0:0:0", "device"):
+                return scsi_sysfs_path
+            return path
+
+        def mock_exists(path):
+            return path == "/dev/sda"
+
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
+             patch('os.path.exists', side_effect=mock_exists):
+            # Direct-attach: no expander_sas_address
+            result = _resolve_via_sysfs_scsi(
+                "0000:af:00.0", 0, "phy-0:0:0"
+            )
+            assert result == "/dev/sda"
 
 
 if __name__ == "__main__":

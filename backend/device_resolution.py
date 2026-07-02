@@ -234,20 +234,22 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
 def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, expander_sas_address=None):
     r"""Fallback: resolve SAS device via sysfs when by-path is missing.
 
-    Primary path: search /sys/class/sas_phy/ for a PHY whose number matches the
-    physical_slot (or the number extracted from hw_identifier), belongs to the
-    correct PCI controller, and optionally the correct expander. Then follow that
-    PHY's ``device`` symlink to the SCSI device and its block device.
+    Uses three strategies in order of robustness:
 
-    The hw_identifier stored in bay_map.json uses a placeholder host number
-    (e.g., ``phy-0:0:3``) because the real SCSI host number is not known at
-    enclosure creation time. The actual sysfs PHY name uses the real host number
-    (e.g., ``phy-14:0:3``). We therefore search by PHY number (last component)
-    instead of using the exact hw_identifier string.
+    1. **SCSI device scan** (most robust): Scan ``/sys/class/scsi_device/`` entries,
+       which persist even when by-path symlinks AND PHY ``device`` symlinks are
+       removed by the kernel SCSI error handler. For each SCSI device that has a
+       block device, parse its sysfs realpath to extract PCI controller, expander
+       SAS address, and PHY number. Match against the bay map's physical_slot.
 
-    Secondary fallback: scan SCSI hosts matching the PCI controller and guess the
-    target ID from the physical slot number. This may fail for expander setups
-    where target IDs don't match PHY numbers.
+    2. **PHY device symlink**: Search ``/sys/class/sas_phy/`` for a PHY whose
+       number matches, then follow its ``device`` symlink to the block device.
+       Fails when the PHY's ``device`` symlink is also gone (broken by SCSI error
+       handler for orphaned devices).
+
+    3. **Host scan with target guess**: Scan SCSI hosts matching the PCI
+       controller and guess the target ID from the physical slot number. Only
+       works for direct-attach (non-expander) setups where target ID = slot.
     """
     scsi_device_base = "/sys/class/scsi_device"
     sas_phy_base = "/sys/class/sas_phy"
@@ -262,14 +264,86 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
             except (ValueError, TypeError):
                 pass
 
-    # Primary: search all PHYs matching the PHY number and PCI controller
+    # --- Strategy 1: SCSI device scan (most robust) ---
+    # /sys/class/scsi_device/ entries persist even when by-path symlinks and
+    # PHY device symlinks are gone. Each entry's device symlink points to its
+    # position in the sysfs tree, which contains expander and PHY info.
+    try:
+        scsi_dev_entries = os.listdir(scsi_device_base)
+    except (OSError, IOError):
+        scsi_dev_entries = []
+
+    for scsi_dev_name in scsi_dev_entries:
+        # SCSI device names are host:channel:target:lun
+        if not re.match(r'^\d+:\d+:\d+:\d+\Z', scsi_dev_name):
+            continue
+
+        scsi_dev_path = os.path.join(scsi_device_base, scsi_dev_name)
+
+        # Check if this SCSI device has a block device
+        block_dir = os.path.join(scsi_dev_path, 'device', 'block')
+        try:
+            block_entries = os.listdir(block_dir)
+        except (OSError, IOError):
+            continue
+
+        if not block_entries:
+            continue
+
+        # Follow the SCSI device's device symlink to get the real sysfs path
+        device_link = os.path.join(scsi_dev_path, 'device')
+        try:
+            real_path = os.path.realpath(device_link)
+        except (OSError, IOError):
+            continue
+
+        # Extract PCI controller from the sysfs path
+        pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+        if not pci_matches or pci_matches[-1] != pci_controller:
+            continue
+
+        # Extract expander SAS address if present
+        exp_match = re.search(r'/expander-(0x[0-9a-fA-F]+)/', real_path)
+        scsi_expander = exp_match.group(1) if exp_match else None
+
+        # Match expander: if bay map specifies an expander, the SCSI device must
+        # be on that expander. If bay map has no expander, skip expander devices.
+        if expander_sas_address:
+            if scsi_expander != expander_sas_address:
+                continue
+        else:
+            # For non-expander slots, skip devices that are behind an expander
+            if scsi_expander is not None:
+                continue
+
+        # Extract PHY number from the sysfs path
+        # Path contains port-XX:Y:Z where Z is the PHY number, or
+        # end_device-XX:Y:Z where Z is the PHY number
+        phy_in_path = None
+        port_match = re.search(r'/port-\d+:\d+:(\d+)/', real_path)
+        if port_match:
+            phy_in_path = int(port_match.group(1))
+        else:
+            end_dev_match = re.search(r'/end_device-\d+:\d+:(\d+)/', real_path)
+            if end_dev_match:
+                phy_in_path = int(end_dev_match.group(1))
+
+        if phy_in_path is None or phy_in_path != phy_num:
+            continue
+
+        # Match found — return the block device
+        for block_name in block_entries:
+            dev_path = f"/dev/{block_name}"
+            if os.path.exists(dev_path):
+                return dev_path
+
+    # --- Strategy 2: PHY device symlink (fails when PHY device symlink is gone) ---
     try:
         phy_names = os.listdir(sas_phy_base)
     except (OSError, IOError):
         phy_names = []
 
     for phy_name in phy_names:
-        # Match PHY names like phy-14:0:3 (host:port:phy_index)
         phy_match = re.match(r'^phy-\d+:\d+:(\d+)\Z', phy_name)
         if not phy_match:
             continue
@@ -282,12 +356,12 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         except (OSError, IOError):
             continue
 
-        # Verify this PHY belongs to the correct PCI controller
+        # Verify PCI controller
         phy_pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
         if not phy_pci_matches or phy_pci_matches[-1] != pci_controller:
             continue
 
-        # If expander_sas_address is known, verify the expander in the sysfs path
+        # Verify expander if specified
         if expander_sas_address:
             exp_match = re.search(r'/(expander-0x[0-9a-fA-F]+)/', real_path)
             if not exp_match or exp_match.group(1) != f"expander-{expander_sas_address}":
@@ -306,7 +380,7 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         except (OSError, IOError):
             continue
 
-    # Secondary fallback: scan SCSI hosts, match PCI controller, guess target ID
+    # --- Strategy 3: Host scan with target=slot guess (last resort) ---
     scsi_host_base = "/sys/class/scsi_host"
 
     try:
@@ -318,14 +392,12 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         if not host_dir.startswith('host'):
             continue
 
-        # Get PCI address for this host
         device_link = os.path.join(scsi_host_base, host_dir, 'device')
         try:
             real_path = os.path.realpath(device_link)
         except (OSError, IOError):
             continue
 
-        # Extract PCI address from sysfs path
         pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])', real_path)
         if not pci_matches:
             continue
@@ -334,13 +406,11 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         if host_pci != pci_controller:
             continue
 
-        # Extract host number
         try:
             host_num = int(host_dir[4:])
         except (ValueError, IndexError):
             continue
 
-        # Check if SCSI device exists for this slot (assumes target ID = slot number)
         scsi_dev_path = os.path.join(scsi_device_base, f"{host_num}:0:{physical_slot}:0")
         block_dir = os.path.join(scsi_dev_path, 'device', 'block')
         try:
