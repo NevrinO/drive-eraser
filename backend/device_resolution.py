@@ -267,14 +267,22 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
             except (ValueError, TypeError):
                 pass
 
-    # --- Strategy 1: SCSI device scan (most robust) ---
+    # --- Strategy 1: SCSI device scan with sysfs attribute reads ---
     # /sys/class/scsi_device/ entries persist even when by-path symlinks and
     # PHY device symlinks are gone. Each entry's device symlink points to its
-    # position in the sysfs tree, which contains expander and PHY info.
+    # position in the sysfs tree. We extract the expander name and end_device
+    # port from the path, then READ sysfs attribute files to get the expander
+    # SAS address and expander PHY number — these are NOT in the path itself.
+    #
+    # The sysfs path uses kernel-internal names like expander-14:3 (not the
+    # SAS address 0x500304800145493f) and port-14:3:132 (not the expander
+    # PHY number 12). We must read attribute files to bridge the gap.
     try:
         scsi_dev_entries = os.listdir(scsi_device_base)
     except (OSError, IOError):
         scsi_dev_entries = []
+
+    sas_expander_base = "/sys/class/sas_expander"
 
     _logger.debug("sysfs_scsi Strategy1: looking for pci=%s phy_num=%s expander=%s",
                   pci_controller, phy_num, expander_sas_address)
@@ -306,44 +314,71 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         _logger.debug("sysfs_scsi Strategy1: %s block=%s realpath=%s",
                       scsi_dev_name, block_entries, real_path)
 
-        # Extract PCI controller from the sysfs path
+        # Extract PCI controller from the sysfs path (this works — PCI
+        # addresses are in the path components)
         pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
         if not pci_matches or pci_matches[-1] != pci_controller:
             _logger.debug("sysfs_scsi Strategy1: %s skip pci %s != %s",
                           scsi_dev_name, pci_matches[-1] if pci_matches else None, pci_controller)
             continue
 
-        # Extract expander SAS address if present
-        exp_match = re.search(r'/expander-(0x[0-9a-fA-F]+)/', real_path)
-        scsi_expander = exp_match.group(1) if exp_match else None
+        # Extract the LAST expander name from the path (cascaded expanders
+        # may have multiple; we need the one closest to the end device).
+        # Path format: .../expander-14:3/port-14:3:132/end_device-14:3:132/...
+        expander_names = re.findall(r'/expander-(\d+:\d+)/', real_path)
+        has_expander = len(expander_names) > 0
 
-        # Match expander: if bay map specifies an expander, the SCSI device must
-        # be on that expander. If bay map has no expander, skip expander devices.
         if expander_sas_address:
-            if scsi_expander != expander_sas_address:
-                _logger.debug("sysfs_scsi Strategy1: %s skip expander %s != %s",
-                              scsi_dev_name, scsi_expander, expander_sas_address)
-                continue
-        else:
-            # For non-expander slots, skip devices that are behind an expander
-            if scsi_expander is not None:
+            # Bay map says this slot is on an expander — device must be too
+            if not has_expander:
+                _logger.debug("sysfs_scsi Strategy1: %s skip: no expander in path, need %s",
+                              scsi_dev_name, expander_sas_address)
                 continue
 
-        # Extract PHY number from the sysfs path
-        # Path contains port-XX:Y:Z where Z is the PHY number, or
-        # end_device-XX:Y:Z where Z is the PHY number
-        phy_in_path = None
-        port_match = re.search(r'/port-\d+:\d+:(\d+)/', real_path)
-        if port_match:
-            phy_in_path = int(port_match.group(1))
-        else:
-            end_dev_match = re.search(r'/end_device-\d+:\d+:(\d+)/', real_path)
-            if end_dev_match:
-                phy_in_path = int(end_dev_match.group(1))
+            # Read the expander's SAS address from sysfs attribute file
+            last_expander = expander_names[-1]
+            expander_sas_file = os.path.join(sas_expander_base, f"expander-{last_expander}", "sas_address")
+            try:
+                with open(expander_sas_file, 'r') as f:
+                    scsi_expander_addr = f.read().strip()
+            except (OSError, IOError):
+                _logger.debug("sysfs_scsi Strategy1: %s skip: cannot read %s",
+                              scsi_dev_name, expander_sas_file)
+                continue
 
-        if phy_in_path is None or phy_in_path != phy_num:
-            _logger.debug("sysfs_scsi Strategy1: %s skip phy_in_path=%s != phy_num=%s",
-                          scsi_dev_name, phy_in_path, phy_num)
+            if scsi_expander_addr != expander_sas_address:
+                _logger.debug("sysfs_scsi Strategy1: %s skip expander addr %s != %s",
+                              scsi_dev_name, scsi_expander_addr, expander_sas_address)
+                continue
+        else:
+            # Bay map says direct-attach (no expander) — skip expander devices
+            if has_expander:
+                continue
+
+        # Extract the LAST end_device port number from the path.
+        # Format: end_device-14:3:132 → port identifier is "14:3:132"
+        end_dev_matches = re.findall(r'/end_device-(\d+:\d+:\d+)/', real_path)
+        if not end_dev_matches:
+            _logger.debug("sysfs_scsi Strategy1: %s skip: no end_device in path",
+                          scsi_dev_name)
+            continue
+
+        end_dev_port = end_dev_matches[-1]
+
+        # Read the expander PHY identifier from the corresponding sas_phy entry.
+        # /sys/class/sas_phy/phy-14:3:132/phy_identifier → expander PHY number
+        phy_id_file = os.path.join(sas_phy_base, f"phy-{end_dev_port}", "phy_identifier")
+        try:
+            with open(phy_id_file, 'r') as f:
+                expander_phy_num = int(f.read().strip())
+        except (OSError, IOError, ValueError):
+            _logger.debug("sysfs_scsi Strategy1: %s skip: cannot read phy_identifier from %s",
+                          scsi_dev_name, phy_id_file)
+            continue
+
+        if expander_phy_num != phy_num:
+            _logger.debug("sysfs_scsi Strategy1: %s skip phy_id=%s != phy_num=%s",
+                          scsi_dev_name, expander_phy_num, phy_num)
             continue
 
         # Match found — return the block device
@@ -360,13 +395,25 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         phy_names = []
 
     for phy_name in phy_names:
-        phy_match = re.match(r'^phy-\d+:\d+:(\d+)\Z', phy_name)
-        if not phy_match:
-            continue
-        if int(phy_match.group(1)) != phy_num:
+        # PHY names are like phy-14:0:0, phy-14:3:132, etc.
+        # The last component is a sysfs port number, NOT the expander PHY number.
+        # We must read phy_identifier attribute to get the expander PHY number.
+        if not re.match(r'^phy-\d+:\d+:\d+\Z', phy_name):
             continue
 
         phy_path = os.path.join(sas_phy_base, phy_name)
+
+        # Read the expander PHY identifier from sysfs attribute
+        phy_id_file = os.path.join(phy_path, "phy_identifier")
+        try:
+            with open(phy_id_file, 'r') as f:
+                expander_phy_num = int(f.read().strip())
+        except (OSError, IOError, ValueError):
+            continue
+
+        if expander_phy_num != phy_num:
+            continue
+
         try:
             real_path = os.path.realpath(phy_path)
         except (OSError, IOError):
@@ -377,10 +424,19 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         if not phy_pci_matches or phy_pci_matches[-1] != pci_controller:
             continue
 
-        # Verify expander if specified
+        # Verify expander if specified — read SAS address from attribute file
         if expander_sas_address:
-            exp_match = re.search(r'/(expander-0x[0-9a-fA-F]+)/', real_path)
-            if not exp_match or exp_match.group(1) != f"expander-{expander_sas_address}":
+            expander_names = re.findall(r'/expander-(\d+:\d+)/', real_path)
+            if not expander_names:
+                continue
+            last_expander = expander_names[-1]
+            expander_sas_file = os.path.join(sas_expander_base, f"expander-{last_expander}", "sas_address")
+            try:
+                with open(expander_sas_file, 'r') as f:
+                    scsi_expander_addr = f.read().strip()
+            except (OSError, IOError):
+                continue
+            if scsi_expander_addr != expander_sas_address:
                 continue
 
         # Follow the PHY's device symlink to find the block device
