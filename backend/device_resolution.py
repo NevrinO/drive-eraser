@@ -223,35 +223,80 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
     # stable and tied to the physical slot, so it works even after expander
     # re-enumeration changes SCSI target IDs.
     if slot_type in ('sas_expander', 'sas_direct'):
-        return _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier)
+        return _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier,
+                                       expander_sas_address=expander_sas_address)
     elif slot_type == 'motherboard_sata':
         return _resolve_via_sysfs_ata(pci_controller, physical_slot, hw_identifier)
 
     return None
 
 
-def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None):
-    """Fallback: resolve SAS device via sysfs when by-path is missing.
+def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, expander_sas_address=None):
+    r"""Fallback: resolve SAS device via sysfs when by-path is missing.
 
-    Primary path: use hw_identifier (e.g., 'phy-0:0:0') to follow the SAS PHY's
-    device symlink directly to the SCSI device. This is stable across expander
-    re-enumeration because the PHY name is tied to the physical slot.
+    Primary path: search /sys/class/sas_phy/ for a PHY whose number matches the
+    physical_slot (or the number extracted from hw_identifier), belongs to the
+    correct PCI controller, and optionally the correct expander. Then follow that
+    PHY's ``device`` symlink to the SCSI device and its block device.
 
-    Secondary fallback: if hw_identifier is not available or the PHY symlink is
-    missing, scan SCSI hosts matching the PCI controller and guess the target ID
-    from the physical slot number. This may fail for expander setups where target
-    IDs don't match PHY numbers.
+    The hw_identifier stored in bay_map.json uses a placeholder host number
+    (e.g., ``phy-0:0:3``) because the real SCSI host number is not known at
+    enclosure creation time. The actual sysfs PHY name uses the real host number
+    (e.g., ``phy-14:0:3``). We therefore search by PHY number (last component)
+    instead of using the exact hw_identifier string.
+
+    Secondary fallback: scan SCSI hosts matching the PCI controller and guess the
+    target ID from the physical slot number. This may fail for expander setups
+    where target IDs don't match PHY numbers.
     """
     scsi_device_base = "/sys/class/scsi_device"
+    sas_phy_base = "/sys/class/sas_phy"
 
-    # Primary: follow SAS PHY device symlink
+    # Extract PHY number from hw_identifier or use physical_slot directly
+    phy_num = physical_slot
     if hw_identifier and hw_identifier.startswith('phy-'):
-        phy_device_link = f"/sys/class/sas_phy/{hw_identifier}/device"
+        parts = hw_identifier.split(':')
+        if len(parts) >= 3:
+            try:
+                phy_num = int(parts[-1])
+            except (ValueError, TypeError):
+                pass
+
+    # Primary: search all PHYs matching the PHY number and PCI controller
+    try:
+        phy_names = os.listdir(sas_phy_base)
+    except (OSError, IOError):
+        phy_names = []
+
+    for phy_name in phy_names:
+        # Match PHY names like phy-14:0:3 (host:port:phy_index)
+        phy_match = re.match(r'^phy-\d+:\d+:(\d+)\Z', phy_name)
+        if not phy_match:
+            continue
+        if int(phy_match.group(1)) != phy_num:
+            continue
+
+        phy_path = os.path.join(sas_phy_base, phy_name)
+        try:
+            real_path = os.path.realpath(phy_path)
+        except (OSError, IOError):
+            continue
+
+        # Verify this PHY belongs to the correct PCI controller
+        phy_pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
+        if not phy_pci_matches or phy_pci_matches[-1] != pci_controller:
+            continue
+
+        # If expander_sas_address is known, verify the expander in the sysfs path
+        if expander_sas_address:
+            exp_match = re.search(r'/(expander-0x[0-9a-fA-F]+)/', real_path)
+            if not exp_match or exp_match.group(1) != f"expander-{expander_sas_address}":
+                continue
+
+        # Follow the PHY's device symlink to find the block device
+        phy_device_link = os.path.join(phy_path, "device")
         try:
             scsi_dev_realpath = os.path.realpath(phy_device_link)
-            # The symlink points to the SCSI device directory, e.g.:
-            # /sys/devices/.../host0/port-0:0/target0:0:0/0:0:0:0
-            # From there, check for block device
             block_dir = os.path.join(scsi_dev_realpath, 'block')
             block_entries = os.listdir(block_dir)
             for block_name in block_entries:
@@ -259,7 +304,7 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None):
                 if os.path.exists(dev_path):
                     return dev_path
         except (OSError, IOError):
-            pass
+            continue
 
     # Secondary fallback: scan SCSI hosts, match PCI controller, guess target ID
     scsi_host_base = "/sys/class/scsi_host"
