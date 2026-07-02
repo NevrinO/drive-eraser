@@ -137,6 +137,32 @@ def _capture_scsi_devices():
     return "\n".join(lines)
 
 
+def _capture_scsi_device_realpaths():
+    """Capture realpaths of SCSI device 'device' symlinks for debugging Strategy 1.
+
+    Shows the actual sysfs tree path for each SCSI device that has a block device.
+    This reveals whether the path contains expander/port/end_device info that
+    _resolve_via_sysfs_scsi can parse for PCI/expander/PHY matching.
+    """
+    entries = _list_dir_safe("/sys/class/scsi_device/")
+    lines = ["  scsi device realpaths (for sysfs fallback debugging):"]
+    for entry in sorted(entries):
+        scsi_dev_path = os.path.join("/sys/class/scsi_device", entry)
+        block_dir = os.path.join(scsi_dev_path, "device", "block")
+        block_devs = _list_dir_safe(block_dir)
+        if not block_devs:
+            continue
+        device_link = os.path.join(scsi_dev_path, "device")
+        try:
+            real_path = os.path.realpath(device_link)
+        except (OSError, IOError):
+            real_path = "(error reading realpath)"
+        block_str = ", ".join(block_devs)
+        lines.append(f"    {entry} block={block_str}")
+        lines.append(f"      realpath={real_path}")
+    return "\n".join(lines)
+
+
 def _capture_sas_phy_state():
     """Capture SAS PHY error counters and enable state."""
     phy_base = "/sys/class/sas_phy"
@@ -283,6 +309,7 @@ def capture_snapshot(label, discovery_results=None, extra_info=None):
         _capture_by_path(),
         _capture_block_devices(),
         _capture_scsi_devices(),
+        _capture_scsi_device_realpaths(),
         _capture_sas_phy_state(),
         _capture_orphaned_block_devices(),
         _capture_kernel_scsi_logs(),
@@ -320,6 +347,7 @@ def capture_snapshot_text(label="point-in-time"):
         _capture_by_path(),
         _capture_block_devices(),
         _capture_scsi_devices(),
+        _capture_scsi_device_realpaths(),
         _capture_sas_phy_state(),
         _capture_orphaned_block_devices(),
         _capture_kernel_scsi_logs(),

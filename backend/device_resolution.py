@@ -4,8 +4,11 @@
 import os
 import re
 import glob
+import logging
 
 from device_discovery import resolve_multipath_parent
+
+_logger = logging.getLogger(__name__)
 
 
 def _resolve_device_from_enclosure_slot(slot_config, pci_controller, expander_sas_address=None):
@@ -273,6 +276,9 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
     except (OSError, IOError):
         scsi_dev_entries = []
 
+    _logger.debug("sysfs_scsi Strategy1: looking for pci=%s phy_num=%s expander=%s",
+                  pci_controller, phy_num, expander_sas_address)
+
     for scsi_dev_name in scsi_dev_entries:
         # SCSI device names are host:channel:target:lun
         if not re.match(r'^\d+:\d+:\d+:\d+\Z', scsi_dev_name):
@@ -297,9 +303,14 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         except (OSError, IOError):
             continue
 
+        _logger.debug("sysfs_scsi Strategy1: %s block=%s realpath=%s",
+                      scsi_dev_name, block_entries, real_path)
+
         # Extract PCI controller from the sysfs path
         pci_matches = re.findall(r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]', real_path)
         if not pci_matches or pci_matches[-1] != pci_controller:
+            _logger.debug("sysfs_scsi Strategy1: %s skip pci %s != %s",
+                          scsi_dev_name, pci_matches[-1] if pci_matches else None, pci_controller)
             continue
 
         # Extract expander SAS address if present
@@ -310,6 +321,8 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
         # be on that expander. If bay map has no expander, skip expander devices.
         if expander_sas_address:
             if scsi_expander != expander_sas_address:
+                _logger.debug("sysfs_scsi Strategy1: %s skip expander %s != %s",
+                              scsi_dev_name, scsi_expander, expander_sas_address)
                 continue
         else:
             # For non-expander slots, skip devices that are behind an expander
@@ -329,12 +342,15 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
                 phy_in_path = int(end_dev_match.group(1))
 
         if phy_in_path is None or phy_in_path != phy_num:
+            _logger.debug("sysfs_scsi Strategy1: %s skip phy_in_path=%s != phy_num=%s",
+                          scsi_dev_name, phy_in_path, phy_num)
             continue
 
         # Match found — return the block device
         for block_name in block_entries:
             dev_path = f"/dev/{block_name}"
             if os.path.exists(dev_path):
+                _logger.debug("sysfs_scsi Strategy1: %s MATCHED -> %s", scsi_dev_name, dev_path)
                 return dev_path
 
     # --- Strategy 2: PHY device symlink (fails when PHY device symlink is gone) ---
