@@ -75,7 +75,7 @@
 .bay-card.zero_check_zeroed .bay-banner { background: var(--color-teal); color: var(--color-white); }
 .bay-card.zero_check_data_present .bay-banner { background: var(--color-warning); color: var(--color-black); }
 .bay-card.zero_check_inconclusive .bay-banner,
-.bay-card.zero_check_failed .bay-banner { background: var(--color-border); color: var(--color-text-muted); }
+.bay-card.zero_check_failed .bay-banner { background: var(--color-border); color: var(--color-text-card-muted); }
 .bay-card.zero_check_running .bay-banner { background: var(--color-primary); color: var(--color-white); }
 
 .zero-check-controls {
@@ -145,7 +145,7 @@
   padding: 4px 12px;
   text-transform: uppercase;
   background: var(--color-border);
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
 }
 
 .bay-card.completed .bay-banner { background: var(--color-success); color: var(--color-white); }
@@ -170,7 +170,7 @@
 .bay-sub-banner.sub-banner-warning { background: var(--color-warning); color: var(--color-black); }
 .bay-sub-banner.sub-banner-success { background: var(--color-success); color: var(--color-white); }
 .bay-sub-banner.sub-banner-info { background: var(--color-primary); color: var(--color-white); }
-.bay-sub-banner.sub-banner-neutral { background: var(--color-border); color: var(--color-text-muted); }
+.bay-sub-banner.sub-banner-neutral { background: var(--color-border); color: var(--color-text-card-muted); }
 
 .bay-card.has-sub-banner { padding-top: 42px; }
 
@@ -228,7 +228,7 @@
 
 .drive-serial {
   font-size: 0.7rem;
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
   font-family: monospace;
   margin-bottom: 12px;
 }
@@ -238,7 +238,7 @@
   justify-content: space-between;
   font-size: 11px;
   margin-bottom: 4px;
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
 }
 
 .health-bar-track {
@@ -260,7 +260,7 @@
   display: flex;
   justify-content: space-between;
   font-size: 0.75rem;
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
   border-top: 1px solid var(--color-border);
   padding-top: 10px;
 }
@@ -268,7 +268,7 @@
 .empty-label {
   padding: 32px 0;
   text-align: center;
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
   font-size: 0.8rem;
   font-style: italic;
 }
@@ -286,7 +286,7 @@
 
 .bay-card.skeleton .bay-banner {
   background: var(--color-surface-3);
-  color: var(--color-text-muted);
+  color: var(--color-text-card-muted);
 }
 
 .skeleton-line {

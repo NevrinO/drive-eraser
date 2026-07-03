@@ -919,16 +919,16 @@ function renderBayCard(drive) {
           </div>
         ` : drive.health_score === null && drive.smart && String(drive.smart.status).toUpperCase() === "UNKNOWN" ? `
           <div class="health-label">
-            <span style="color: var(--color-text-muted);">Life Expectancy</span>
-            <span style="color: var(--color-text-muted);">N/A</span>
+            <span style="color: var(--color-text-card-muted);">Life Expectancy</span>
+            <span style="color: var(--color-text-card-muted);">N/A</span>
           </div>
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray" style="width: 100%"></div>
           </div>
         ` : healthScore === null ? `
           <div class="health-label">
-            <span style="color: var(--color-text-muted);">Life Expectancy</span>
-            <span style="color: var(--color-text-muted);">Calculating...</span>
+            <span style="color: var(--color-text-card-muted);">Life Expectancy</span>
+            <span style="color: var(--color-text-card-muted);">Calculating...</span>
           </div>
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray" style="width: 100%"></div>
