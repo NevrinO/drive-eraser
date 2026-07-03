@@ -598,14 +598,24 @@ function renderBayCard(drive) {
   const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
   const phaseLabel = drive.current_phase || "Sanitizing...";
 
-  // Bay label: just bay number for workbench (enclosure name removed due to length)
+  // ──────────────────────────────────────────────────────────────────────
+  // REGRESSION GUARD: Workbench cards must show EITHER the label OR the
+  // bay number — NEVER both concatenated. The label (e.g. "BAY 5") is the
+  // primary display text. If no label exists, fall back to "BAY {n}" or
+  // the raw bay id. Past agents have repeatedly added ` - ${drive.label}`
+  // alongside the bay number, causing cards to display "BAY 17 - BAY 5".
+  // This is documented in lessons-learned.md Rule 108 and will fail code
+  // audit. Do NOT concatenate label with bay number using " - " or any
+  // other separator.
+  // ──────────────────────────────────────────────────────────────────────
   let bayPrimaryText;
-  if (drive.display_number != null) {
+  if (drive.label && String(drive.label).trim()) {
+    bayPrimaryText = String(drive.label).trim();
+  } else if (drive.display_number != null) {
     bayPrimaryText = `BAY ${drive.display_number}`;
   } else {
     bayPrimaryText = (drive.bay && drive.bay.toLowerCase().startsWith('bay') ? drive.bay.toUpperCase() : 'Bay');
   }
-  const displayLabel = drive.label ? ` - ${drive.label}` : "";
 
   // Display MPIO device path if available
   const devicePath = drive.mpio_device || drive.device || "-";
@@ -616,7 +626,7 @@ function renderBayCard(drive) {
       <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
       <div class="bay-header-row">
         <div class="bay-number">
-          ${escapeHtml(bayPrimaryText)}${escapeHtml(displayLabel)}
+          ${escapeHtml(bayPrimaryText)}
         </div>
         ${isEmpty ? "" : `
           <div style="display: flex; gap: 4px; align-items: center;">
