@@ -149,6 +149,7 @@
 }
 
 .bay-card.completed .bay-banner { background: var(--color-success); color: var(--color-white); }
+.bay-card.written-since-wipe .bay-banner { background: var(--color-warning); color: var(--color-black); }
 .bay-card.failed .bay-banner { background: var(--color-danger); color: var(--color-white); }
 .bay-card.running .bay-banner { background: var(--color-primary); color: var(--color-white); }
 .bay-card.locked .bay-banner { background: var(--color-purple); color: var(--color-white); }
@@ -168,6 +169,8 @@
 .bay-sub-banner.sub-banner-danger { background: var(--color-danger); color: var(--color-white); }
 .bay-sub-banner.sub-banner-warning { background: var(--color-warning); color: var(--color-black); }
 .bay-sub-banner.sub-banner-success { background: var(--color-success); color: var(--color-white); }
+.bay-sub-banner.sub-banner-info { background: var(--color-primary); color: var(--color-white); }
+.bay-sub-banner.sub-banner-neutral { background: var(--color-border); color: var(--color-text-muted); }
 
 .bay-card.has-sub-banner { padding-top: 42px; }
 
@@ -251,6 +254,7 @@
 .fill-red { background: var(--color-danger); }
 .fill-blue { background: var(--color-primary); }
 .fill-yellow { background: var(--color-warning); }
+.fill-gray { background: var(--color-gray); }
 
 .drive-meta {
   display: flex;

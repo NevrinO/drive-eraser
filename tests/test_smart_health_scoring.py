@@ -462,6 +462,43 @@ class TestDriveRecommendation:
         result = get_drive_recommendation("nvme", smart, health_score=80)
         assert result["status"] == "USED_HEAVY"
 
+    def test_recommendation_unknown_status_returns_unknown(self):
+        """Test that UNKNOWN SMART status returns UNKNOWN recommendation, not NEW_STOCK.
+
+        Regression: failed SMART reads produce empty_template with status UNKNOWN and
+        all fields None/0. Without the early return, these would match the NEW_STOCK
+        condition (low POH, zero reallocations, 100% remaining life).
+        """
+        from smart_parsing import get_drive_recommendation
+
+        smart = {
+            "status": "UNKNOWN",
+            "power_on_hours": 0,
+            "reallocated_sectors": 0,
+            "wear_level": None,
+            "capacity_bytes": None,
+        }
+        result = get_drive_recommendation("sata", smart, health_score=100)
+        assert result["status"] == "UNKNOWN"
+
+    def test_health_score_unknown_status_returns_none(self):
+        """Test that UNKNOWN SMART status returns None health score, not a misleading 100.
+
+        Regression: calculate_drive_health_score with all None/0 fields would compute
+        a score of 100 (no penalties), making a failed SMART read look pristine.
+        """
+        from smart_parsing import calculate_drive_health_score
+
+        smart = {
+            "status": "UNKNOWN",
+            "power_on_hours": 0,
+            "reallocated_sectors": 0,
+            "wear_level": None,
+        }
+        score, breakdown = calculate_drive_health_score("sata", smart)
+        assert score is None
+        assert breakdown is None
+
 
 
 class TestIsDriveSSD:

@@ -18,6 +18,13 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
     poh = safe_int(smart_data.get("power_on_hours"), 0)
     if thresholds is None:
         thresholds = get_triage_thresholds()
+
+    # If SMART data collection failed (status UNKNOWN), return None so
+    # callers don't get a misleading numeric score from empty fields.
+    # This centralizes the guard and prevents per-caller omissions.
+    smart_status = str(smart_data.get("status") or "UNKNOWN").upper()
+    if smart_status == "UNKNOWN":
+        return None, None
     
     # Initialize penalty breakdown
     penalty_breakdown = {
@@ -139,6 +146,13 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
     realloc_raw = safe_int(smart.get("reallocated_sectors"), 0)
     realloc_norm = safe_int(smart.get("reallocated_normalized"), 100)
     realloc_thresh = safe_int(smart.get("reallocated_threshold"), 10)
+
+    # If SMART data collection failed (status UNKNOWN, not polling),
+    # do not score the drive — return UNKNOWN so the operator knows
+    # manual inspection is required. This prevents failed SMART reads
+    # (all fields None/0) from matching the NEW_STOCK condition.
+    if status == "UNKNOWN":
+        return {"status": "UNKNOWN", "comment": "SMART data unavailable — manual inspection required."}
 
     written_bytes = smart.get("data_written_bytes")
     if written_bytes is None:

@@ -737,11 +737,12 @@ function renderBayCard(drive) {
   const isEmpty = !drive.present;
   const isCritical = String(drive.status).toUpperCase() === "FAILED";
   const isRunning = String(drive.status).toUpperCase() === "RUNNING";
-  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted" && drive.marker.status !== "written_since_wipe";
+  const isWrittenSinceWipe = drive.marker && drive.marker.status === "written_since_wipe";
   const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
   const isUnconfigured = isBayUnconfigured(drive);
   const isSmartTestRunning = drive.smart_test_status === "running" || drive.smart_test_status === "in_progress";
-  const zeroCheckClass = (!isEmpty && !isRunning && !isSmartTestRunning && !isCompleted && !isMarkerDisabled && !drive.locked && drive.role !== "os" && drive.role !== "reserved") ? getZeroCheckStateClass(drive) : null;
+  const zeroCheckClass = (!isEmpty && !isRunning && !isSmartTestRunning && !isCompleted && !isWrittenSinceWipe && !isMarkerDisabled && !drive.locked && drive.role !== "os" && drive.role !== "reserved") ? getZeroCheckStateClass(drive) : null;
   const zeroCheckLabel = zeroCheckClass ? getZeroCheckBannerLabel(drive) : null;
 
   let stateClass = "healthy";
@@ -768,9 +769,12 @@ function renderBayCard(drive) {
   } else if (isMarkerDisabled) {
     stateClass = "completed";
     bannerLabel = "SANITIZED (NO MARKER)";
+  } else if (isWrittenSinceWipe) {
+    stateClass = "written-since-wipe";
+    bannerLabel = "⚠️ POST-WIPE WRITES";
   } else if (isCompleted) {
     stateClass = "completed";
-    bannerLabel = "SANITIZED";
+    bannerLabel = "SANITIZED (PRISTINE)";
   } else if (zeroCheckClass) {
     stateClass = zeroCheckClass;
     bannerLabel = zeroCheckLabel;
@@ -783,7 +787,7 @@ function renderBayCard(drive) {
   // Applies to ready (healthy) and completed (sanitized) states. Does not change border color.
   // Checked before the unconfigured string mutation so stateClass is still a clean single value.
   const recStatus = drive.recommendation ? String(drive.recommendation.status).toUpperCase() : "";
-  const isTintable = stateClass === "healthy" || stateClass === "completed";
+  const isTintable = stateClass === "healthy" || stateClass === "completed" || stateClass === "written-since-wipe";
 
   if (isUnconfigured) {
     stateClass += " unconfigured";
@@ -812,10 +816,13 @@ function renderBayCard(drive) {
     let subClass = "";
     if (smartPolling) {
       subLabel = "⏳ SMART LOADING...";
-      subClass = "sub-banner-warning";
+      subClass = "sub-banner-info";
     } else if (smartFailed) {
       subLabel = "⚠️ SMART FAILED";
       subClass = "sub-banner-danger";
+    } else if (recStatus === "UNKNOWN") {
+      subLabel = "⚠️ SMART UNAVAILABLE";
+      subClass = "sub-banner-neutral";
     } else if (recStatus === "DESTROY") {
       subLabel = "⚠️ DESTROY RECOMMENDED";
       subClass = "sub-banner-danger";
@@ -906,6 +913,14 @@ function renderBayCard(drive) {
           <div class="health-label">
             <span style="color: var(--color-warning);">Loading SMART...</span>
             <span style="color: var(--color-warning);">⏳</span>
+          </div>
+          <div class="health-bar-track">
+            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
+          </div>
+        ` : drive.health_score === null && drive.smart && String(drive.smart.status).toUpperCase() === "UNKNOWN" ? `
+          <div class="health-label">
+            <span style="color: var(--color-text-muted);">Life Expectancy</span>
+            <span style="color: var(--color-text-muted);">N/A</span>
           </div>
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray" style="width: 100%"></div>
