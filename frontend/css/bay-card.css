@@ -227,7 +227,7 @@
 }
 
 .drive-serial {
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   color: var(--color-text-card-muted);
   font-family: monospace;
   margin-bottom: 12px;
