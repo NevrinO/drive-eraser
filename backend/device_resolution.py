@@ -253,6 +253,9 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
     3. **Host scan with target guess**: Scan SCSI hosts matching the PCI
        controller and guess the target ID from the physical slot number. Only
        works for direct-attach (non-expander) setups where target ID = slot.
+       **Skipped entirely when ``expander_sas_address`` is set** — on expander
+       setups, kernel-assigned target IDs have no relation to PHY numbers, so
+       the guess would match unrelated secondary SAS paths to wrong/empty slots.
     """
     scsi_device_base = "/sys/class/scsi_device"
     sas_phy_base = "/sys/class/sas_phy"
@@ -487,6 +490,14 @@ def _resolve_via_sysfs_scsi(pci_controller, physical_slot, hw_identifier=None, e
             continue
 
     # --- Strategy 3: Host scan with target=slot guess (last resort) ---
+    # Only applicable for direct-attach (non-expander) setups where target ID = slot.
+    # When an expander is used, target IDs are assigned by the kernel and have no
+    # relation to PHY numbers, so this guess would match unrelated secondary paths
+    # to wrong slots (e.g., a dual-ported drive's secondary path at target 15
+    # getting assigned to an empty slot mapped to PHY 15).
+    if expander_sas_address:
+        return None
+
     scsi_host_base = "/sys/class/scsi_host"
 
     try:
