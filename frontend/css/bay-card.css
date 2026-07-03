@@ -217,20 +217,20 @@
 }
 
 .drive-model {
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: var(--color-white);
-  margin-bottom: 4px;
+  font-size: 0.8rem;
+  color: var(--color-text-card-muted);
+  font-family: monospace;
+  margin-bottom: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .drive-serial {
-  font-size: 0.8rem;
-  color: var(--color-text-card-muted);
-  font-family: monospace;
-  margin-bottom: 12px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--color-white);
+  margin-bottom: 4px;
 }
 
 .health-label {

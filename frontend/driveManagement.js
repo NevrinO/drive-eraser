@@ -898,8 +898,8 @@ function renderBayCard(drive) {
         `}
       </div>
       ${isEmpty ? `<div class="empty-label">${isUnconfigured ? "— UNCONFIGURED —" : "— Empty slot —"}</div>` : `
-        <div class="drive-model">${escapeHtml(drive.model || "Generic Drive")}</div>
         <div class="drive-serial">S/N: ${escapeHtml(drive.serial || "-")}</div>
+        <div class="drive-model">${escapeHtml(drive.model || "Generic Drive")}</div>
 
         ${isRunning ? `
           <div class="health-label">
