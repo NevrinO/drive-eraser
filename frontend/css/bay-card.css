@@ -124,8 +124,8 @@
 
 /* Recommendation tints: override internal background only, not border or banner */
 .bay-card.rec-destroy { background: #2a0a0a; }
-.bay-card.rec-scratch { background: var(--color-bay-failed); }
-.bay-card.rec-used-heavy { background: var(--color-bay-warning); }
+.bay-card.rec-scratch { background: #3c270f; }
+.bay-card.rec-used-heavy { background: #63520D; }
 .bay-card.rec-used-good { background: var(--color-bay-completed); }
 
 @keyframes pulsing-running {
@@ -152,6 +152,24 @@
 .bay-card.failed .bay-banner { background: var(--color-danger); color: var(--color-white); }
 .bay-card.running .bay-banner { background: var(--color-primary); color: var(--color-white); }
 .bay-card.locked .bay-banner { background: var(--color-purple); color: var(--color-white); }
+
+.bay-sub-banner {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  right: 0;
+  font-size: 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  padding: 2px 12px;
+  text-transform: uppercase;
+  text-align: center;
+}
+.bay-sub-banner.sub-banner-danger { background: var(--color-danger); color: var(--color-white); }
+.bay-sub-banner.sub-banner-warning { background: var(--color-warning); color: var(--color-black); }
+.bay-sub-banner.sub-banner-success { background: var(--color-success); color: var(--color-white); }
+
+.bay-card.has-sub-banner { padding-top: 42px; }
 
 .bay-header-row {
   display: flex;

@@ -770,7 +770,7 @@ function renderBayCard(drive) {
     bannerLabel = "SANITIZED (NO MARKER)";
   } else if (isCompleted) {
     stateClass = "completed";
-    bannerLabel = "SANITIZED & VERIFIED";
+    bannerLabel = "SANITIZED";
   } else if (zeroCheckClass) {
     stateClass = zeroCheckClass;
     bannerLabel = zeroCheckLabel;
@@ -796,9 +796,51 @@ function renderBayCard(drive) {
     else if (recStatus === "USED_GOOD" || recStatus === "NEW_STOCK") recClass = "rec-used-good";
   }
 
+  // Sub-banner: shows recommendation or SMART status below the main banner.
+  // Shown on all states with drive health data, except mid-operation states
+  // (running, smart test, zero check running) and states with no drive data
+  // (empty, OS, locked, unconfigured).
+  const isZeroCheckRunning = zeroCheckClass === "zero_check_running";
+  const showSubBanner = !isEmpty && drive.role !== "os" && !drive.locked &&
+    !isRunning && !isSmartTestRunning && !isUnconfigured && !isZeroCheckRunning;
+
+  let subBannerHtml = "";
+  if (showSubBanner) {
+    const smartPolling = drive.smart && drive.smart.smart_polling;
+    const smartFailed = drive.smart && String(drive.smart.status).toUpperCase() === "FAILED";
+    let subLabel = "";
+    let subClass = "";
+    if (smartPolling) {
+      subLabel = "⏳ SMART LOADING...";
+      subClass = "sub-banner-warning";
+    } else if (smartFailed) {
+      subLabel = "⚠️ SMART FAILED";
+      subClass = "sub-banner-danger";
+    } else if (recStatus === "DESTROY") {
+      subLabel = "⚠️ DESTROY RECOMMENDED";
+      subClass = "sub-banner-danger";
+    } else if (recStatus === "SCRATCH") {
+      subLabel = "⚠️ SCRATCH RECOMMENDED";
+      subClass = "sub-banner-warning";
+    } else if (recStatus === "USED_HEAVY") {
+      subLabel = "USED HEAVY";
+      subClass = "sub-banner-warning";
+    } else if (recStatus === "USED_GOOD") {
+      subLabel = "USED GOOD";
+      subClass = "sub-banner-success";
+    } else if (recStatus === "NEW_STOCK") {
+      subLabel = "NEW STOCK";
+      subClass = "sub-banner-success";
+    }
+    if (subLabel) {
+      subBannerHtml = `<div class="bay-sub-banner ${subClass}">${escapeHtml(subLabel)}</div>`;
+    }
+  }
+
   const healthScore = calculateDriveHealthScore(drive);
   const classes = ["bay-card", stateClass];
   if (recClass) classes.push(recClass);
+  if (subBannerHtml) classes.push("has-sub-banner");
   if (selectedBays.has(drive.bay)) classes.push("selected");
 
   const ifaceLabel = drive.interface_type ? drive.interface_type.toUpperCase() : "SATA";
@@ -835,6 +877,7 @@ function renderBayCard(drive) {
     <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
       <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
       <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
+      ${subBannerHtml}
       <div class="bay-header-row">
         <div class="bay-number">
           ${escapeHtml(bayPrimaryText)}
