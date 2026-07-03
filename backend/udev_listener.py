@@ -23,6 +23,7 @@ from device_discovery import (
 from disk_ops import invalidate_drive_cache
 from routes.bay_mapping_routes import invalidate_unmapped_drive_cache
 from common import get_config_dir, load_policy, _bay_map_cache_lock, _bay_map_cache
+from discovery_diag import log_udev_event
 from zero_check_manager import get_manager as get_zero_check_manager
 
 # Runtime slot state: (enclosure_id, slot_number) -> device_info
@@ -241,6 +242,7 @@ def udev_event_listener_thread():
                 continue
             
             if action == 'add':
+                log_udev_event("add", dev_node, sys_path)
                 # Device added - extract coordinates and resolve slot
                 coords = extract_coordinates_from_sysfs(sys_path)
                 if coords:
@@ -296,6 +298,9 @@ def udev_event_listener_thread():
                 # Device removed - clear from runtime state
                 # Resolve multipath parent before comparison to match the stored logical_device
                 final_dev_node = resolve_multipath_parent(os.path.basename(dev_node))
+                log_udev_event("remove", dev_node, sys_path, extra_info={
+                    "resolved_dev": final_dev_node,
+                })
 
                 # Invalidate drive cache to ensure next /api/drives call returns fresh data
                 # Hardware topology caches (SAS expander, SCSI projections, master slot map) are NOT

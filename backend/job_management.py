@@ -8,6 +8,7 @@ import threading
 import logging
 import json
 import sqlite3
+from collections import deque
 from contextlib import closing
 from datetime import datetime, timezone
 
@@ -490,6 +491,7 @@ def run_erase_job(job_id):
     initial_sectors = None
     last_sectors = None
     last_progress_time = None
+    speed_samples = deque(maxlen=10)  # Rolling speed samples for ETA smoothing
     logical_block_size = 512
     if method == "overwrite":
         initial_sectors = get_device_sectors_written(device)
@@ -566,14 +568,20 @@ def run_erase_job(job_id):
                     wrote_bytes = delta_sectors * logical_block_size
                     progress = min(99.9, (wrote_bytes / capacity_bytes) * 100)
                     
-                    # Calculate ETA based on write speed
+                    # Calculate ETA based on write speed (rolling average for stability)
                     eta_text = ""
                     if last_sectors is not None and last_progress_time is not None and elapsed > 5:
                         time_since_last = elapsed - (last_progress_time - start_time).total_seconds()
                         if time_since_last > 0:
                             sectors_since_last = max(0, current_sectors - last_sectors)
                             bytes_since_last = sectors_since_last * logical_block_size
-                            write_speed = bytes_since_last / time_since_last  # bytes per second
+                            interval_speed = bytes_since_last / time_since_last  # bytes per second
+                            speed_samples.append(interval_speed)
+                            # Blend rolling average with overall average for stability
+                            rolling_avg = sum(speed_samples) / len(speed_samples)
+                            overall_avg = wrote_bytes / elapsed if elapsed > 0 else 0
+                            # Weight: 70% rolling average (adapts to trend), 30% overall average (anchors to reality)
+                            write_speed = (rolling_avg * 0.7) + (overall_avg * 0.3)
                             # Minimum write speed threshold to prevent extremely large ETA estimates
                             min_write_speed = 1024 * 1024  # 1 MB/s minimum
                             if write_speed > min_write_speed:

@@ -371,6 +371,47 @@ class TestDriveRecommendation:
         result = get_drive_recommendation("sata", smart, health_score=15)
         assert result["status"] == "DESTROY"
 
+    def test_recommendation_destroy_sas_low_health_with_grown_defects(self):
+        """Test DESTROY for SAS drive with grown defects below fail threshold but critically low health score.
+
+        Regression: SAS grown-defect SCRATCH check (defects > 0) was short-circuiting
+        the health-score DESTROY check. Drive with 1891 grown defects and health
+        score of 5 should be DESTROY, not SCRATCH.
+        """
+        from smart_parsing import get_drive_recommendation
+
+        smart = {
+            "status": "PASSED",
+            "power_on_hours": 8920,
+            "sas_grown_defect_list": 1891,
+            "sas_uncorrectable_read_errors": 0,
+            "sas_uncorrectable_write_errors": 0,
+            "sas_uncorrectable_verify_errors": 0,
+            "capacity_bytes": 4000787030016,
+            "data_written_bytes": 589915841000000,
+            "reallocated_sectors": 1891,
+        }
+        result = get_drive_recommendation("sas", smart, health_score=5)
+        assert result["status"] == "DESTROY", f"Expected DESTROY, got {result['status']}"
+
+    def test_recommendation_scratch_sas_grown_defects_moderate_health(self):
+        """Test SCRATCH for SAS drive with grown defects but moderate health score (above destroy threshold)."""
+        from smart_parsing import get_drive_recommendation
+
+        smart = {
+            "status": "PASSED",
+            "power_on_hours": 8920,
+            "sas_grown_defect_list": 50,
+            "sas_uncorrectable_read_errors": 0,
+            "sas_uncorrectable_write_errors": 0,
+            "sas_uncorrectable_verify_errors": 0,
+            "capacity_bytes": 4000787030016,
+            "data_written_bytes": 1000000000000,
+            "reallocated_sectors": 50,
+        }
+        result = get_drive_recommendation("sas", smart, health_score=65)
+        assert result["status"] == "SCRATCH", f"Expected SCRATCH, got {result['status']}"
+
     def test_recommendation_scratch_ssd_low_life(self):
         """Test SCRATCH recommendation for SSD with low remaining life."""
         from smart_parsing import get_drive_recommendation
@@ -420,6 +461,43 @@ class TestDriveRecommendation:
         }
         result = get_drive_recommendation("nvme", smart, health_score=80)
         assert result["status"] == "USED_HEAVY"
+
+    def test_recommendation_unknown_status_returns_unknown(self):
+        """Test that UNKNOWN SMART status returns UNKNOWN recommendation, not NEW_STOCK.
+
+        Regression: failed SMART reads produce empty_template with status UNKNOWN and
+        all fields None/0. Without the early return, these would match the NEW_STOCK
+        condition (low POH, zero reallocations, 100% remaining life).
+        """
+        from smart_parsing import get_drive_recommendation
+
+        smart = {
+            "status": "UNKNOWN",
+            "power_on_hours": 0,
+            "reallocated_sectors": 0,
+            "wear_level": None,
+            "capacity_bytes": None,
+        }
+        result = get_drive_recommendation("sata", smart, health_score=100)
+        assert result["status"] == "UNKNOWN"
+
+    def test_health_score_unknown_status_returns_none(self):
+        """Test that UNKNOWN SMART status returns None health score, not a misleading 100.
+
+        Regression: calculate_drive_health_score with all None/0 fields would compute
+        a score of 100 (no penalties), making a failed SMART read look pristine.
+        """
+        from smart_parsing import calculate_drive_health_score
+
+        smart = {
+            "status": "UNKNOWN",
+            "power_on_hours": 0,
+            "reallocated_sectors": 0,
+            "wear_level": None,
+        }
+        score, breakdown = calculate_drive_health_score("sata", smart)
+        assert score is None
+        assert breakdown is None
 
 
 

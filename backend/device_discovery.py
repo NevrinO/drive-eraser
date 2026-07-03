@@ -46,6 +46,7 @@ from slot_mapping import (
     resolve_multipath_parent,
     invalidate_master_slot_cache,
     invalidate_scsi_projections_cache,
+    rescan_scsi_hosts,
     _MASTER_SLOT_CACHE,
     _MASTER_SLOT_CACHE_TTL,
     _MASTER_SLOT_CACHE_LOCK,

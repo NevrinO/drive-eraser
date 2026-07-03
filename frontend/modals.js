@@ -71,7 +71,7 @@ function renderLiveDetails(drive) {
   
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
-  const hasValidMarker = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted";
+  const hasValidMarker = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted" && drive.marker.status !== "written_since_wipe";
   const isCompleted = hasValidMarker;
   
   let displayStatus = "IDLE / READY";
@@ -89,6 +89,9 @@ function renderLiveDetails(drive) {
   } else if (isCompleted) {
     displayStatus = "SANITIZED";
     statusClass = "status-complete";
+  } else if (drive.marker?.status === "written_since_wipe") {
+    displayStatus = "POST-WIPE WRITES";
+    statusClass = "status-warning";
   }
   
   let markerStatusText = "NO PRIOR SANITIZATION MARKER DETECTED";

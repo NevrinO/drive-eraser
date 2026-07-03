@@ -339,6 +339,68 @@ def invalidate_scsi_projections_cache():
     logging.info("SCSI projections cache invalidated")
 
 
+def rescan_scsi_hosts():
+    """Trigger SCSI host rescan to re-enumerate devices that dropped off the bus.
+
+    Writes "- - -" to /sys/class/scsi_host/host*/scan, causing the kernel to
+    rescan all SCSI buses. This is necessary when a bad drive causes SCSI bus
+    resets that cause the kernel to remove other (good) devices from the bus.
+    The good drives' block devices may still exist in /sys/class/block/ but
+    their /dev/disk/by-path/ symlinks are gone, so discovery can't map them
+    to physical bays.
+
+    Also triggers udev to reprocess block device events, which recreates
+    by-path symlinks for devices that are still in the kernel but lost their
+    udev-managed symlinks.
+
+    Returns:
+        Number of SCSI hosts rescanned.
+    """
+    import subprocess
+
+    scsi_host_base = "/sys/class/scsi_host"
+    count = 0
+    try:
+        host_dirs = os.listdir(scsi_host_base)
+    except (OSError, IOError):
+        logging.warning(f"Cannot read {scsi_host_base}")
+        return 0
+
+    for host_dir in host_dirs:
+        if not host_dir.startswith('host'):
+            continue
+        scan_path = os.path.join(scsi_host_base, host_dir, 'scan')
+        try:
+            with open(scan_path, 'w') as f:
+                f.write("- - -\n")
+            count += 1
+            logging.info(f"Triggered SCSI rescan on {host_dir}")
+        except (OSError, IOError) as e:
+            logging.warning(f"Failed to rescan {host_dir}: {e}")
+
+    if count > 0:
+        # Give the kernel time to re-enumerate devices
+        time.sleep(1.0)
+
+        # Trigger udev to recreate by-path symlinks for re-discovered devices.
+        # This handles the case where the block device still exists but the
+        # by-path symlink was removed by udev when the SCSI device was dropped.
+        try:
+            subprocess.run(
+                ['udevadm', 'trigger', '--subsystem-match=block', '--action=add'],
+                timeout=10,
+                capture_output=True
+            )
+            logging.info("Triggered udev reprocessing for block devices")
+            # Give udev time to process events and create symlinks
+            time.sleep(1.0)
+        except Exception as e:
+            logging.warning(f"udevadm trigger failed: {e}")
+
+    logging.info(f"SCSI rescan complete: {count} hosts rescanned")
+    return count
+
+
 def resolve_multipath_parent(dev_name: str) -> str:
     """Check if a raw device is a slave of a multipath device and return the DM node.
 

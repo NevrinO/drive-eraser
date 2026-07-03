@@ -286,91 +286,98 @@ def download_support_bundle():
         workspace_dir = os.path.join("/tmp", bundle_name)
         os.makedirs(workspace_dir, exist_ok=True)
         
+        lsblk_proc = None
         try:
             lsblk_proc = subprocess.run(["sudo", "lsblk", "-J"], capture_output=True, text=True, timeout=10, shell=False)
             with open(os.path.join(workspace_dir, "hardware_environment.txt"), "w") as f:
                 f.write("=== LSBLK -J OUTPUT ===\n")
                 f.write(lsblk_proc.stdout or "")
                 f.write("\n\n=== LSHW STORAGE DETAILS ===\n")
-                lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15, shell=False)
-                f.write(lshw_proc.stdout or "")
-
-            # Parse lsblk JSON to get disk devices and run smartctl -x on each
-            lsblk_data = json.loads(lsblk_proc.stdout) if lsblk_proc.stdout else {}
-            blockdevices = lsblk_data.get("blockdevices", [])
-            
-            # Create dedicated folder for smartctl output
-            smartctl_dir = os.path.join(workspace_dir, "smartctl")
-            os.makedirs(smartctl_dir, exist_ok=True)
-            
-            # Collect valid disk devices with validation and count limit
-            valid_devices = []
-            for device in blockdevices:
-                device_name = device.get("name", "")
-                # Skip loop devices (virtual block devices, not physical drives)
-                if device_name.startswith("loop"):
-                    continue
-                # Validate device name against whitelist (lesson #9)
-                if not device_name or not is_valid_device_name(device_name):
-                    logger.warning(f"Skipping invalid device name: {device_name}")
-                    continue
-                # Rule #5: enforce size limits for DoS prevention
-                if len(valid_devices) >= MAX_DEVICES_FOR_BUNDLE:
-                    logger.warning(f"Reached device limit ({MAX_DEVICES_FOR_BUNDLE}), skipping remaining devices")
-                    break
-                device_path = f"/dev/{device_name}"
-                valid_devices.append((device_name, device_path))
-            
-            # Collect smartctl data in parallel using ThreadPoolExecutor
-            def _collect_smartctl_for_device(device_name, device_path):
-                """Collect smartctl -x output for a single device."""
                 try:
-                    smartctl_proc = subprocess.run(
-                        ["sudo", "smartctl", "-x", device_path],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                        shell=False
-                    )
-                    # Improved filename sanitization with regex
-                    safe_name = re.sub(r'[^\w\-]', '_', device_name)
-                    smartctl_file = os.path.join(smartctl_dir, f"{safe_name}.txt")
-                    with open(smartctl_file, "w") as f:
-                        f.write(f"=== SMARTCTL -X OUTPUT FOR {device_path} ===\n")
-                        f.write(smartctl_proc.stdout or "")
-                        if smartctl_proc.stderr:
-                            f.write(f"\n=== STDERR ===\n")
-                            f.write(smartctl_proc.stderr)
-                    return (device_name, None)
+                    lshw_proc = subprocess.run(["sudo", "lshw", "-class", "storage", "-class", "disk"], capture_output=True, text=True, timeout=15, shell=False)
+                    f.write(lshw_proc.stdout or "")
                 except subprocess.TimeoutExpired:
-                    logger.warning(f"smartctl -x timed out for {device_path}")
-                    return (device_name, "timeout")
-                except Exception as e:
-                    logger.warning(f"smartctl -x failed for {device_path}: {e}")
-                    return (device_name, str(e))
-            
-            # Use ThreadPoolExecutor for parallel collection (similar to disk_ops.py pattern)
-            max_workers = min(8, len(valid_devices))
-            if valid_devices:
-                executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="smartctl-bundle")
-                futures = {}
-                try:
-                    for device_name, device_path in valid_devices:
-                        futures[executor.submit(_collect_smartctl_for_device, device_name, device_path)] = device_name
-                    # Overall timeout for the entire batch (120 seconds)
-                    for future in as_completed(futures, timeout=120):
-                        device_name = futures[future]
-                        try:
-                            future.result()
-                        except FuturesTimeoutError:
-                            logger.warning(f"smartctl collection timed out for {device_name}")
-                        except Exception as e:
-                            logger.warning(f"smartctl collection failed for {device_name}: {e}")
-                finally:
-                    executor.shutdown(wait=False)
+                    f.write("lshw timed out after 15 seconds\n")
+                except Exception as lshw_err:
+                    f.write(f"lshw failed: {lshw_err}\n")
         except Exception as e:
             with open(os.path.join(workspace_dir, "hardware_environment_error.txt"), "w") as f:
-                f.write(f"Failed to gather hardware details: {str(e)}")
+                f.write(f"Failed to gather lsblk details: {str(e)}")
+
+        # Parse lsblk JSON to get disk devices and run smartctl -x on each
+        # This section is independent of lshw — lshw timeout must not prevent smartctl collection
+        lsblk_data = json.loads(lsblk_proc.stdout) if (lsblk_proc and lsblk_proc.stdout) else {}
+        blockdevices = lsblk_data.get("blockdevices", [])
+
+        # Create dedicated folder for smartctl output
+        smartctl_dir = os.path.join(workspace_dir, "smartctl")
+        os.makedirs(smartctl_dir, exist_ok=True)
+
+        # Collect valid disk devices with validation and count limit
+        valid_devices = []
+        for device in blockdevices:
+            device_name = device.get("name", "")
+            # Skip loop devices (virtual block devices, not physical drives)
+            if device_name.startswith("loop"):
+                continue
+            # Validate device name against whitelist (lesson #9)
+            if not device_name or not is_valid_device_name(device_name):
+                logger.warning(f"Skipping invalid device name: {device_name}")
+                continue
+            # Rule #5: enforce size limits for DoS prevention
+            if len(valid_devices) >= MAX_DEVICES_FOR_BUNDLE:
+                logger.warning(f"Reached device limit ({MAX_DEVICES_FOR_BUNDLE}), skipping remaining devices")
+                break
+            device_path = f"/dev/{device_name}"
+            valid_devices.append((device_name, device_path))
+
+        # Collect smartctl data in parallel using ThreadPoolExecutor
+        def _collect_smartctl_for_device(device_name, device_path):
+            """Collect smartctl -x output for a single device."""
+            try:
+                smartctl_proc = subprocess.run(
+                    ["sudo", "smartctl", "-x", device_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                    shell=False
+                )
+                # Improved filename sanitization with regex
+                safe_name = re.sub(r'[^\w\-]', '_', device_name)
+                smartctl_file = os.path.join(smartctl_dir, f"{safe_name}.txt")
+                with open(smartctl_file, "w") as f:
+                    f.write(f"=== SMARTCTL -X OUTPUT FOR {device_path} ===\n")
+                    f.write(smartctl_proc.stdout or "")
+                    if smartctl_proc.stderr:
+                        f.write(f"\n=== STDERR ===\n")
+                        f.write(smartctl_proc.stderr)
+                return (device_name, None)
+            except subprocess.TimeoutExpired:
+                logger.warning(f"smartctl -x timed out for {device_path}")
+                return (device_name, "timeout")
+            except Exception as e:
+                logger.warning(f"smartctl -x failed for {device_path}: {e}")
+                return (device_name, str(e))
+
+        # Use ThreadPoolExecutor for parallel collection (similar to disk_ops.py pattern)
+        max_workers = min(8, len(valid_devices))
+        if valid_devices:
+            executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="smartctl-bundle")
+            futures = {}
+            try:
+                for device_name, device_path in valid_devices:
+                    futures[executor.submit(_collect_smartctl_for_device, device_name, device_path)] = device_name
+                # Overall timeout for the entire batch (120 seconds)
+                for future in as_completed(futures, timeout=120):
+                    device_name = futures[future]
+                    try:
+                        future.result()
+                    except FuturesTimeoutError:
+                        logger.warning(f"smartctl collection timed out for {device_name}")
+                    except Exception as e:
+                        logger.warning(f"smartctl collection failed for {device_name}: {e}")
+            finally:
+                executor.shutdown(wait=False)
                 
         try:
             total, used, free = shutil.disk_usage(get_data_dir())
@@ -410,6 +417,20 @@ def download_support_bundle():
             except FileNotFoundError:
                 pass
 
+            # Include discovery diagnostic log if it exists
+            diag_log_path = os.path.join(logs_dir, "discovery_diag.log")
+            try:
+                shutil.copy(diag_log_path, os.path.join(workspace_dir, "discovery_diag.log"))
+            except FileNotFoundError:
+                pass
+
+            # Also include rotated diagnostic log if it exists
+            diag_log_rotated = os.path.join(logs_dir, "discovery_diag.log.1")
+            try:
+                shutil.copy(diag_log_rotated, os.path.join(workspace_dir, "discovery_diag.log.1"))
+            except FileNotFoundError:
+                pass
+
             failed_logs_dir = get_failed_logs_dir()
             try:
                 shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
@@ -417,7 +438,18 @@ def download_support_bundle():
                 pass
         except Exception:
             pass
-            
+
+        # Capture a point-in-time diagnostic snapshot into the bundle workspace.
+        # This works even when discovery_diag is not enabled in policy, because
+        # capture_snapshot_text() does not check the enabled flag.
+        try:
+            from discovery_diag import capture_snapshot_text
+            snapshot_text = capture_snapshot_text("support_bundle")
+            with open(os.path.join(workspace_dir, "diagnostic_snapshot.txt"), "w", encoding="utf-8") as f:
+                f.write(snapshot_text)
+        except Exception:
+            pass
+
         tar_path = f"/tmp/{bundle_name}.tar.gz"
         with tarfile.open(tar_path, "w:gz") as tar:
             tar.add(workspace_dir, arcname=bundle_name)

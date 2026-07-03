@@ -18,6 +18,13 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
     poh = safe_int(smart_data.get("power_on_hours"), 0)
     if thresholds is None:
         thresholds = get_triage_thresholds()
+
+    # If SMART data collection failed (status UNKNOWN), return None so
+    # callers don't get a misleading numeric score from empty fields.
+    # This centralizes the guard and prevents per-caller omissions.
+    smart_status = str(smart_data.get("status") or "UNKNOWN").upper()
+    if smart_status == "UNKNOWN":
+        return None, None
     
     # Initialize penalty breakdown
     penalty_breakdown = {
@@ -140,6 +147,13 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
     realloc_norm = safe_int(smart.get("reallocated_normalized"), 100)
     realloc_thresh = safe_int(smart.get("reallocated_threshold"), 10)
 
+    # If SMART data collection failed (status UNKNOWN, not polling),
+    # do not score the drive — return UNKNOWN so the operator knows
+    # manual inspection is required. This prevents failed SMART reads
+    # (all fields None/0) from matching the NEW_STOCK condition.
+    if status == "UNKNOWN":
+        return {"status": "UNKNOWN", "comment": "SMART data unavailable — manual inspection required."}
+
     written_bytes = smart.get("data_written_bytes")
     if written_bytes is None:
         raw_written = smart.get("data_written_raw")
@@ -176,6 +190,16 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
             return {"status": "DESTROY", "comment": "SAS drive has excessive uncorrectable read errors. Critical data integrity risk."}
         if sas_grown_defects >= sas_grown_defect_fail_thresh:
             return {"status": "DESTROY", "comment": f"SAS drive has {sas_grown_defects:,} grown defects (exceeds fail threshold). Critical mechanical degradation."}
+
+    # Health-score DESTROY must be checked before SAS SCRATCH fallbacks
+    # so that a critically low health score isn't short-circuited by
+    # the SAS grown-defect SCRATCH check (defects > 0 but < fail threshold).
+    if health_score is not None:
+        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+    else:
+        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+
+    if iface == "sas":
         if sas_read_errors >= 1:
             return {"status": "SCRATCH", "comment": "SAS drive has uncorrectable read errors. Use only for non-critical data."}
         if sas_sticky_lba:
@@ -184,10 +208,8 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
             return {"status": "SCRATCH", "comment": f"SAS drive has {sas_grown_defects:,} grown defects. Mechanical degradation detected. Use only for non-critical data."}
 
     if health_score is not None:
-        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
         if health_score <= health_scratch_thresh: return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
     else:
-        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
         if realloc_norm <= realloc_thresh or (0 < pending <= pending_scratch_thresh): return {"status": "SCRATCH", "comment": "Unstable or threshold-breached sectors detected. Safe only for non-critical use."}
 
     if is_ssd:

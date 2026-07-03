@@ -410,6 +410,7 @@ data = {
     'sata': ['crypto', 'block', 'overwrite']
   },
   'crypto_fail_retry_block': True,
+  'discovery_diag': True,
   'strict_audit_mode': os.environ.get('STRICT_AUDIT_MODE', 'true').lower() == 'true',
   'secondary_verification_mode': os.environ.get('SECONDARY_VERIFICATION_MODE', 'conservative_probe'),
   'health_soft_stop': True,
