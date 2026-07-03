@@ -137,7 +137,7 @@ function renderLiveDetails(drive) {
   if (smart.smart_polling) {
     smartHealthText = "SMART: POLLING";
     smartHealthClass = "status-view-only";
-  } else if (drive.health_score <= 30) {
+  } else if (drive.health_score !== null && drive.health_score <= 25) {
     smartHealthText = "SMART: FAILING";
     smartHealthClass = "status-failed";
   }

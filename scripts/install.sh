@@ -422,21 +422,20 @@ data = {
   'lan_passphrase': os.environ.get('LAN_PASSPHRASE', 'eraser123'),
   'allowed_cors_origins': ['http://localhost:5000', 'http://127.0.0.1:5000', cors_origin],
   'triage_thresholds': {
-    'ssd_new_poh_threshold': 500,
-    'ssd_high_poh_threshold': 40000,
-    'hdd_new_poh_threshold': 500,
-    'hdd_high_poh_threshold': 40000,
-    'health_score_destroy_threshold': 20,
-    'health_score_scratch_threshold': 60,
-    'ssd_remaining_life_destroy_threshold': 10,
-    'ssd_remaining_life_scratch_threshold': 60,
-    'ssd_remaining_life_good_threshold': 80,
+    'ssd_new_poh_threshold': 720,
+    'ssd_high_poh_threshold': 43800,
+    'hdd_new_poh_threshold': 720,
+    'health_score_destroy_threshold': 25,
+    'health_score_scratch_threshold': 50,
+    'health_score_good_threshold': 75,
     'ssd_new_fdw_threshold': 0.06,
-    'hdd_new_fdw_threshold': 1.0,
-    'hdd_heavy_fdw_threshold': 150,
+    'hdd_new_fdw_threshold': 2.0,
     'realloc_raw_new_threshold': 0,
-    'pending_sectors_destroy_threshold': 10,
-    'pending_sectors_scratch_threshold': 10
+    'sas_grown_defect_fail_threshold': 10000,
+    'sas_nme_advisory_threshold': 1000000,
+    'sas_nme_penalty_threshold': 100000000,
+    'sas_sticky_lba_threshold': 3,
+    'sas_high_poh_threshold': 50000
   }
 }
 with open(path, 'w', encoding='utf-8') as f:

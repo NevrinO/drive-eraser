@@ -150,7 +150,7 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
         block_reason = "smart_status_failed"
 
     # 2. Health score below DESTROY threshold
-    destroy_threshold = thresholds.get("health_score_destroy_threshold", 30)
+    destroy_threshold = thresholds.get("health_score_destroy_threshold", 25)
     if block_destroy and health_score <= destroy_threshold:
         block_reason = "health_score_below_destroy_threshold"
 

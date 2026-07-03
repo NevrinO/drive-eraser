@@ -925,6 +925,14 @@ function renderBayCard(drive) {
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray" style="width: 100%"></div>
           </div>
+        ` : healthScore === null ? `
+          <div class="health-label">
+            <span style="color: var(--color-text-muted);">Life Expectancy</span>
+            <span style="color: var(--color-text-muted);">Calculating...</span>
+          </div>
+          <div class="health-bar-track">
+            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
+          </div>
         ` : `
           <div class="health-label">
             <span>Life Expectancy</span>
