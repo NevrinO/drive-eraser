@@ -122,10 +122,24 @@ function handleSmartDataUpdate(data) {
 (async () => {
   setupKeyboardNavigation();
   initWebSocket();
-  await loadSecurityStatus();
-  await loadLayoutTemplates();
-  await loadBayMappingConfig();
-  await loadDrives(false);
+  loadSecurityStatus(); // fire-and-forget — updates badge only, no downstream dependency
+
+  // Start drives fetch in background — overlaps with bay map config + enclosure loading
+  const drivesPromise = loadDrives(false);
+
+  // loadBayMappingConfig internally calls loadLayoutTemplates, so no need to call it separately
+  // loadEnclosuresForWorkbench is needed for skeleton grouping — run in parallel
+  await Promise.all([
+    loadBayMappingConfig(),
+    loadEnclosuresForWorkbench()
+  ]);
+
+  // Render skeleton cards from bay map config if drives haven't arrived yet
+  if (currentDrives.length === 0) {
+    renderSkeletonBays();
+  }
+
+  await drivesPromise;
   pollActiveWipes();
 })();
 

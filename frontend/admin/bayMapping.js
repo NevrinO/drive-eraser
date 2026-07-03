@@ -114,7 +114,8 @@ async function loadBayMappingConfig() {
         by_path: conf.by_path || "",
         by_path_nvme: conf.by_path_nvme || "",
         display_number: conf.display_number || "",
-        physical_position: conf.physical_position || null
+        physical_position: conf.physical_position || null,
+        enclosure_id: conf.enclosure_id || null
       };
     });
 
