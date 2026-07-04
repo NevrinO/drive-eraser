@@ -300,6 +300,8 @@ def get_device_sectors_written(device):
     try:
         dev_name = os.path.basename(device)
         stat_path = f"/sys/block/{dev_name}/stat"
+        if not os.path.exists(stat_path):
+            return None
         with open(stat_path, "r") as f:
             content = f.read().strip()
         parts = content.split()
