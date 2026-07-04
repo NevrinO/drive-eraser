@@ -10,6 +10,9 @@ const helpClose = document.getElementById("helpClose");
 const legendButton = document.getElementById("legendButton");
 const legendModal = document.getElementById("legendModal");
 const legendClose = document.getElementById("legendClose");
+const docViewerModal = document.getElementById("docViewerModal");
+const docViewerContent = document.getElementById("docViewerContent");
+const docViewerTitle = document.getElementById("docViewerTitle");
 
 // State variables
 let currentDrives = [];
@@ -101,6 +104,35 @@ if (legendClose && legendModal) {
     closeModal(legendModal);
   });
 }
+
+// Doc viewer modal — fetch and render markdown in-app
+document.addEventListener("click", async (event) => {
+  const btn = event.target.closest(".doc-link-btn");
+  if (!btn) return;
+  const docFile = btn.dataset.doc;
+  if (!docFile) return;
+
+  const docTitle = btn.textContent.trim();
+  docViewerTitle.textContent = docTitle;
+  docViewerContent.innerHTML = '<p>Loading...</p>';
+  openModal(docViewerModal);
+
+  try {
+    const resp = await fetch(`/docs/${docFile}`);
+    if (!resp.ok) {
+      docViewerContent.innerHTML = `<p>Failed to load document: ${resp.status} ${resp.statusText}</p>`;
+      return;
+    }
+    const md = await resp.text();
+    if (typeof marked !== "undefined" && marked.parse) {
+      docViewerContent.innerHTML = `<div class="markdown-body">${marked.parse(md)}</div>`;
+    } else {
+      docViewerContent.innerHTML = `<pre class="terminal-pre">${escapeHtml(md)}</pre>`;
+    }
+  } catch (err) {
+    docViewerContent.innerHTML = `<p>Error loading document: ${escapeHtml(err.message)}</p>`;
+  }
+});
 
 // Initialize WebSocket connection
 function initWebSocket() {

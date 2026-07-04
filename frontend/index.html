@@ -447,11 +447,11 @@
 
         <h4 class="modal-section-header">Detailed Documentation</h4>
         <ul>
-          <li><a href="/docs/SOP_technician_guide.md" target="_blank" rel="noopener noreferrer">Technician SOP</a> - Step-by-step workflow for health checking and erasing drives</li>
-          <li><a href="/docs/operations.md" target="_blank" rel="noopener noreferrer">Operations Guide</a> - Service operations, common tasks, and troubleshooting</li>
-          <li><a href="/docs/admin-guide.md" target="_blank" rel="noopener noreferrer">Admin Guide</a> - System Administration panel features</li>
-          <li><a href="/docs/enclosure-mapping-guide.md" target="_blank" rel="noopener noreferrer">Enclosure Mapping Guide</a> - Physical slot mapping setup and configuration</li>
-          <li><a href="/docs/deployment.md" target="_blank" rel="noopener noreferrer">Deployment Guide</a> - Installation, releases, validation, and rollback</li>
+          <li><button type="button" class="doc-link-btn" data-doc="SOP_technician_guide.md">Technician SOP</button> - Step-by-step workflow for health checking and erasing drives</li>
+          <li><button type="button" class="doc-link-btn" data-doc="operations.md">Operations Guide</button> - Service operations, common tasks, and troubleshooting</li>
+          <li><button type="button" class="doc-link-btn" data-doc="admin-guide.md">Admin Guide</button> - System Administration panel features</li>
+          <li><button type="button" class="doc-link-btn" data-doc="enclosure-mapping-guide.md">Enclosure Mapping Guide</button> - Physical slot mapping setup and configuration</li>
+          <li><button type="button" class="doc-link-btn" data-doc="deployment.md">Deployment Guide</button> - Installation, releases, validation, and rollback</li>
         </ul>
 
         <h4 class="modal-section-header">Common Tasks</h4>
@@ -460,6 +460,20 @@
           <li><strong>View Logs:</strong> <code>sudo journalctl -u drive-eraser -f</code></li>
           <li><strong>Restart Service:</strong> <code>sudo systemctl restart drive-eraser</code></li>
         </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- DOC VIEWER MODAL -->
+  <div id="docViewerModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog modal-dialog--wide" role="dialog" aria-modal="true" aria-labelledby="docViewerTitle">
+      <header class="modal-header">
+        <h3 id="docViewerTitle">Documentation</h3>
+        <button type="button" id="docViewerClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content" id="docViewerContent">
+        <p>Loading...</p>
       </div>
     </div>
   </div>
@@ -1355,6 +1369,7 @@
   </div>
 
   <script src="/socket.io.min.js" defer></script>
+  <script src="/marked.min.js" defer></script>
   <script src="/utils.js" defer></script>
   <script src="/auth.js" defer></script>
   <script src="/driveRendering.js" defer></script>

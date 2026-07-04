@@ -250,3 +250,130 @@ input:focus, select:focus {
   line-height: 1.6;
   color: var(--color-primary-light);
 }
+
+/* Doc viewer link buttons in help modal */
+.doc-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.doc-link-btn:hover {
+  color: var(--color-primary-light);
+}
+
+/* Rendered markdown inside doc viewer modal */
+#docViewerContent {
+  max-height: 75vh;
+  overflow-y: auto;
+}
+
+#docViewerContent .markdown-body h1,
+#docViewerContent .markdown-body h2,
+#docViewerContent .markdown-body h3,
+#docViewerContent .markdown-body h4 {
+  color: var(--color-text);
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+}
+
+#docViewerContent .markdown-body h1 {
+  font-size: 1.4rem;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 0.3em;
+}
+
+#docViewerContent .markdown-body h2 {
+  font-size: 1.2rem;
+}
+
+#docViewerContent .markdown-body h3 {
+  font-size: 1.05rem;
+}
+
+#docViewerContent .markdown-body h4 {
+  font-size: 0.9rem;
+}
+
+#docViewerContent .markdown-body p {
+  line-height: 1.6;
+  margin-bottom: 0.8em;
+}
+
+#docViewerContent .markdown-body ul,
+#docViewerContent .markdown-body ol {
+  margin-bottom: 0.8em;
+  padding-left: 1.5em;
+}
+
+#docViewerContent .markdown-body li {
+  margin-bottom: 0.3em;
+  line-height: 1.5;
+}
+
+#docViewerContent .markdown-body code {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+}
+
+#docViewerContent .markdown-body pre {
+  background: var(--color-bg-dark);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+#docViewerContent .markdown-body pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+#docViewerContent .markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1em;
+}
+
+#docViewerContent .markdown-body th,
+#docViewerContent .markdown-body td {
+  border: 1px solid var(--color-border);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+#docViewerContent .markdown-body th {
+  background: var(--color-surface-2);
+  font-weight: bold;
+}
+
+#docViewerContent .markdown-body a {
+  color: var(--color-primary);
+  text-decoration: underline;
+}
+
+#docViewerContent .markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: 1.5em 0;
+}
+
+#docViewerContent .markdown-body blockquote {
+  border-left: 3px solid var(--color-primary);
+  padding-left: 1em;
+  margin-left: 0;
+  color: var(--color-text-muted);
+}
