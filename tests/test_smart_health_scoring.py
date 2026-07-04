@@ -29,7 +29,7 @@ class TestSSDWearBaseline:
         assert health == 89, f"Expected health 89, got {health}"
 
     def test_ssd_health_with_extreme_poh_penalty(self):
-        """Test that extreme POH applies quadratic penalty (max 20% at 2x threshold)."""
+        """Test that extreme POH applies quadratic penalty (max 25% at 2x threshold)."""
         from smart_parsing import calculate_drive_health_score, get_triage_thresholds
 
         thresholds = get_triage_thresholds()
@@ -45,8 +45,8 @@ class TestSSDWearBaseline:
 
         health, _ = calculate_drive_health_score("nvme", smart_data)
 
-        # Base health 89, penalty for POH > threshold: max 20% = 69 minimum
-        assert health >= 69, f"Expected health >= 69, got {health}"
+        # Base health 89, penalty for POH > threshold: max 25% = 64 minimum
+        assert health >= 64, f"Expected health >= 64, got {health}"
         assert health <= 89, f"Expected health <= 89, got {health}"
 
     def test_ssd_health_quadratic_poh_at_midpoint(self):
@@ -66,8 +66,8 @@ class TestSSDWearBaseline:
 
         health, _ = calculate_drive_health_score("nvme", smart_data)
 
-        # Base health 89, quadratic penalty at 50% position = 5 points = 84
-        assert health >= 83, f"Expected health >= 83, got {health}"
+        # Base health 89, quadratic penalty at 50% position = 6.25 points = ~83
+        assert health >= 82, f"Expected health >= 82, got {health}"
         assert health <= 89, f"Expected health <= 89, got {health}"
 
 
@@ -88,7 +88,7 @@ class TestHDDMechanicalAging:
         health, _ = calculate_drive_health_score("sata", smart_data)
 
         # POH penalty: (30000-20000)/40000*30 = 7.5, FDW penalty: (5/200)*30 = 0.75
-        # Base: 100 - 7.5 - 0.75 = 91.75, min 40
+        # Base: 100 - 7.5 - 0.75 = 91.75, min 30
         assert health >= 90, f"Expected health >= 90, got {health}"
 
     def test_hdd_health_low_poh_high_fdw(self):
@@ -374,7 +374,7 @@ class TestDriveRecommendation:
     def test_recommendation_destroy_sas_low_health_with_grown_defects(self):
         """Test DESTROY for SAS drive with grown defects below fail threshold but critically low health score.
 
-        Regression: SAS grown-defect SCRATCH check (defects > 0) was short-circuiting
+        Regression: SAS grown-defect SCRATCH check was short-circuiting
         the health-score DESTROY check. Drive with 1891 grown defects and health
         score of 5 should be DESTROY, not SCRATCH.
         """
@@ -395,22 +395,48 @@ class TestDriveRecommendation:
         assert result["status"] == "DESTROY", f"Expected DESTROY, got {result['status']}"
 
     def test_recommendation_scratch_sas_grown_defects_moderate_health(self):
-        """Test SCRATCH for SAS drive with grown defects but moderate health score (above destroy threshold)."""
+        """Test SCRATCH for SAS drive with many grown defects pushing score below scratch threshold."""
         from smart_parsing import get_drive_recommendation
 
         smart = {
             "status": "PASSED",
             "power_on_hours": 8920,
-            "sas_grown_defect_list": 50,
+            "sas_grown_defect_list": 150,
             "sas_uncorrectable_read_errors": 0,
             "sas_uncorrectable_write_errors": 0,
             "sas_uncorrectable_verify_errors": 0,
             "capacity_bytes": 4000787030016,
             "data_written_bytes": 1000000000000,
-            "reallocated_sectors": 50,
+            "reallocated_sectors": 150,
         }
-        result = get_drive_recommendation("sas", smart, health_score=65)
+        # With 150 grown defects, score penalty = 20 * log10(150) ~= 43.5
+        # A base score of 65 - 43.5 = 21.5 would be DESTROY, so use a score of 45
+        # to test that the unified scratch threshold catches it
+        result = get_drive_recommendation("sas", smart, health_score=45)
         assert result["status"] == "SCRATCH", f"Expected SCRATCH, got {result['status']}"
+
+    def test_recommendation_used_good_sas_few_grown_defects_high_health(self):
+        """Test USED_GOOD for SAS drive with grown defects below scratch threshold and high health score.
+
+        Regression: SAS grown-defect SCRATCH check used `> 0` instead of the
+        sas_grown_defect_scratch_threshold (default 100). A drive with 1 grown
+        defect and 89% health was incorrectly marked SCRATCH instead of USED_GOOD.
+        """
+        from smart_parsing import get_drive_recommendation
+
+        smart = {
+            "status": "PASSED",
+            "power_on_hours": 25598,
+            "sas_grown_defect_list": 1,
+            "sas_uncorrectable_read_errors": 0,
+            "sas_uncorrectable_write_errors": 0,
+            "sas_uncorrectable_verify_errors": 0,
+            "capacity_bytes": 4000787030016,
+            "data_written_bytes": 126501145000000,
+            "reallocated_sectors": 1,
+        }
+        result = get_drive_recommendation("sas", smart, health_score=89)
+        assert result["status"] == "USED_GOOD", f"Expected USED_GOOD, got {result['status']}"
 
     def test_recommendation_scratch_ssd_low_life(self):
         """Test SCRATCH recommendation for SSD with low remaining life."""
@@ -451,15 +477,16 @@ class TestDriveRecommendation:
         assert result["status"] == "USED_GOOD"
 
     def test_recommendation_used_heavy_ssd(self):
-        """Test USED_HEAVY recommendation for high-POH SSD."""
+        """Test USED_HEAVY recommendation for SSD with moderate wear."""
         from smart_parsing import get_drive_recommendation
 
         smart = {
-            "wear_level": 20,
+            "wear_level": 30,
             "power_on_hours": 50000,
             "status": "PASSED"
         }
-        result = get_drive_recommendation("nvme", smart, health_score=80)
+        # Score 70 is below good threshold (75) but above scratch (50)
+        result = get_drive_recommendation("nvme", smart, health_score=70)
         assert result["status"] == "USED_HEAVY"
 
     def test_recommendation_unknown_status_returns_unknown(self):
@@ -579,17 +606,33 @@ class TestTriageThresholds:
 
         thresholds = get_triage_thresholds()
         assert "sas_grown_defect_fail_threshold" in thresholds
-        assert "sas_grown_defect_scratch_threshold" in thresholds
         assert "sas_nme_advisory_threshold" in thresholds
         assert "sas_nme_penalty_threshold" in thresholds
         assert "sas_sticky_lba_threshold" in thresholds
         assert "sas_high_poh_threshold" in thresholds
         assert thresholds["sas_grown_defect_fail_threshold"] == 10000
-        assert thresholds["sas_grown_defect_scratch_threshold"] == 100
         assert thresholds["sas_nme_advisory_threshold"] == 1000000
         assert thresholds["sas_nme_penalty_threshold"] == 100000000
         assert thresholds["sas_sticky_lba_threshold"] == 3
         assert thresholds["sas_high_poh_threshold"] == 50000
+
+    def test_unified_health_score_thresholds_in_defaults(self):
+        """Test that unified health score thresholds are present in defaults."""
+        from smart_parsing import get_triage_thresholds
+
+        thresholds = get_triage_thresholds()
+        assert "health_score_destroy_threshold" in thresholds
+        assert "health_score_scratch_threshold" in thresholds
+        assert "health_score_good_threshold" in thresholds
+        assert thresholds["health_score_destroy_threshold"] == 25
+        assert thresholds["health_score_scratch_threshold"] == 50
+        assert thresholds["health_score_good_threshold"] == 75
+        assert "ssd_remaining_life_destroy_threshold" not in thresholds
+        assert "ssd_remaining_life_scratch_threshold" not in thresholds
+        assert "ssd_remaining_life_good_threshold" not in thresholds
+        assert "pending_sectors_destroy_threshold" not in thresholds
+        assert "pending_sectors_scratch_threshold" not in thresholds
+        assert "sas_grown_defect_scratch_threshold" not in thresholds
 
 
 class TestSASFields:

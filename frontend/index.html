@@ -891,11 +891,6 @@
               <input type="number" id="hdd_new_poh_threshold" name="hdd_new_poh_threshold" min="0" max="100000" step="100">
               <small class="text-muted-xs">Below this = "new stock"</small>
             </label>
-            <label>
-              HDD High POH (hours)
-              <input type="number" id="hdd_high_poh_threshold" name="hdd_high_poh_threshold" min="0" max="200000" step="1000">
-              <small class="text-muted-xs">Above this = "heavily used"</small>
-            </label>
           </div>
 
           <div class="modal-section-header">Health Score Thresholds</div>
@@ -910,24 +905,10 @@
               <input type="number" id="health_score_scratch_threshold" name="health_score_scratch_threshold" min="0" max="100" step="1">
               <small class="text-muted-xs">At or below = scratch only</small>
             </label>
-          </div>
-
-          <div class="modal-section-header">SSD Remaining Life (%)</div>
-          <div class="form-fields-stack">
-            <label>
-              Destroy Threshold
-              <input type="number" id="ssd_remaining_life_destroy_threshold" name="ssd_remaining_life_destroy_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">Below this = destroy</small>
-            </label>
-            <label>
-              Scratch Threshold
-              <input type="number" id="ssd_remaining_life_scratch_threshold" name="ssd_remaining_life_scratch_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">Below this = scratch</small>
-            </label>
             <label>
               Good Threshold
-              <input type="number" id="ssd_remaining_life_good_threshold" name="ssd_remaining_life_good_threshold" min="0" max="100" step="1">
-              <small class="text-muted-xs">At or above = "good"</small>
+              <input type="number" id="health_score_good_threshold" name="health_score_good_threshold" min="0" max="100" step="1">
+              <small class="text-muted-xs">At or above = used good</small>
             </label>
           </div>
 
@@ -943,11 +924,6 @@
               <input type="number" id="hdd_new_fdw_threshold" name="hdd_new_fdw_threshold" min="0" max="100" step="0.1">
               <small class="text-muted-xs">Below this = "new stock"</small>
             </label>
-            <label>
-              HDD Heavy FDW
-              <input type="number" id="hdd_heavy_fdw_threshold" name="hdd_heavy_fdw_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Above this = "heavily used"</small>
-            </label>
           </div>
 
           <div class="modal-section-header">Sector Thresholds</div>
@@ -957,16 +933,6 @@
               <input type="number" id="realloc_raw_new_threshold" name="realloc_raw_new_threshold" min="0" max="1000" step="1">
               <small class="text-muted-xs">This many = still "new"</small>
             </label>
-            <label>
-              Pending Destroy
-              <input type="number" id="pending_sectors_destroy_threshold" name="pending_sectors_destroy_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Above = destroy</small>
-            </label>
-            <label>
-              Pending Scratch
-              <input type="number" id="pending_sectors_scratch_threshold" name="pending_sectors_scratch_threshold" min="0" max="1000" step="1">
-              <small class="text-muted-xs">Above = scratch</small>
-            </label>
           </div>
 
           <div class="modal-section-header">SAS-Specific Thresholds</div>
@@ -975,11 +941,6 @@
               Grown Defect Destroy
               <input type="number" id="sas_grown_defect_fail_threshold" name="sas_grown_defect_fail_threshold" min="0" max="100000" step="100">
               <small class="text-muted-xs">Above = destroy</small>
-            </label>
-            <label>
-              Grown Defect Scratch
-              <input type="number" id="sas_grown_defect_scratch_threshold" name="sas_grown_defect_scratch_threshold" min="0" max="10000" step="10">
-              <small class="text-muted-xs">Above = scratch</small>
             </label>
             <label>
               NME Advisory

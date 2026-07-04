@@ -182,8 +182,7 @@ A technician acting on the current score would physically destroy a functional 4
 - These overrides must apply in both `get_smart_data` (set `status = "FAILED"`) and as guards in `calculate_drive_health_score`
 
 **Policy config additions**:
-- `sas_grown_defect_fail_threshold` (default: `1000`) — grown defect count that forces a FAILED override
-- `sas_grown_defect_scratch_threshold` (default: `100`) — grown defect count that forces at minimum SCRATCH
+- `sas_grown_defect_fail_threshold` (default: `10000`) — grown defect count that forces a FAILED override
 
 ---
 

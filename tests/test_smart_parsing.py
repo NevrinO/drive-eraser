@@ -334,10 +334,15 @@ class TestSASRecommendationWithFixtures:
 
         mock_get_triage_thresholds.return_value = {
             "sas_grown_defect_fail_threshold": 10000,
-            "health_score_destroy_threshold": 30,
+            "health_score_destroy_threshold": 25,
             "health_score_scratch_threshold": 50,
-            "pending_sectors_destroy_threshold": 10,
-            "pending_sectors_scratch_threshold": 5
+            "health_score_good_threshold": 75,
+            "ssd_high_poh_threshold": 43800,
+            "ssd_new_poh_threshold": 720,
+            "ssd_new_fdw_threshold": 0.06,
+            "hdd_new_poh_threshold": 720,
+            "hdd_new_fdw_threshold": 2.0,
+            "realloc_raw_new_threshold": 0
         }
 
         with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
@@ -365,10 +370,15 @@ class TestSASRecommendationWithFixtures:
 
         mock_get_triage_thresholds.return_value = {
             "sas_grown_defect_fail_threshold": 10000,
-            "health_score_destroy_threshold": 30,
+            "health_score_destroy_threshold": 25,
             "health_score_scratch_threshold": 50,
-            "pending_sectors_destroy_threshold": 10,
-            "pending_sectors_scratch_threshold": 5
+            "health_score_good_threshold": 75,
+            "ssd_high_poh_threshold": 43800,
+            "ssd_new_poh_threshold": 720,
+            "ssd_new_fdw_threshold": 0.06,
+            "hdd_new_poh_threshold": 720,
+            "hdd_new_fdw_threshold": 2.0,
+            "realloc_raw_new_threshold": 0
         }
 
         with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
@@ -383,9 +393,8 @@ class TestSASRecommendationWithFixtures:
         health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
-        # Grown defects > 0 but < 10000 should trigger SCRATCH
+        # 500 grown defects → log penalty ~54, score drops below scratch threshold
         assert recommendation["status"] == "SCRATCH"
-        assert "grown defects" in recommendation["comment"].lower()
 
     @patch('smart_data_parsing.run_command')
     @patch('smart_data_parsing.get_command_path')

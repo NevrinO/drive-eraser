@@ -35,6 +35,8 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
         "pending_penalty": 0,
         "nme_penalty": 0,
         "nvme_media_penalty": 0,
+        "sas_read_error_penalty": 0,
+        "sas_sticky_lba_penalty": 0,
         "failed_override": False,
         "final_score": 100
     }
@@ -44,7 +46,7 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
         base_score = max(0, 100 - wear_val)
         ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
         if poh > ssd_high_poh_thresh:
-            poh_penalty = min(20, 20 * ((poh - ssd_high_poh_thresh) / ssd_high_poh_thresh) ** 2)
+            poh_penalty = min(25, 25 * ((poh - ssd_high_poh_thresh) / ssd_high_poh_thresh) ** 2)
             base_score = max(10, base_score - poh_penalty)
             penalty_breakdown["poh_penalty"] = poh_penalty
     else:
@@ -58,7 +60,7 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
         capacity = safe_int(smart_data.get("capacity_bytes"), 0)
         fdw = (written_bytes / capacity) if capacity > 0 else 0.0
         fdw_penalty = min(30, max(0, (fdw / 150.0) * 30))
-        base_score = max(40, 100 - poh_penalty - fdw_penalty)
+        base_score = max(30, 100 - poh_penalty - fdw_penalty)
         penalty_breakdown["poh_penalty"] = poh_penalty
         penalty_breakdown["fdw_penalty"] = fdw_penalty
 
@@ -98,9 +100,9 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
     pending_penalty = min(60, pending * 15)
     penalty_breakdown["pending_penalty"] = pending_penalty
     
-    # SAS NME (Non-Medium Errors) penalty
+    # SAS NME (Non-Medium Errors) penalty — only for SAS HDDs, not SAS SSDs
     nme_penalty = 0
-    if iface == "sas":
+    if iface == "sas" and not is_ssd:
         sas_nme = safe_int(smart_data.get("sas_non_medium_errors"), 0)
         if sas_nme > 0:
             nme_advisory_thresh = thresholds.get("sas_nme_advisory_threshold", 1000000)
@@ -119,7 +121,21 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
 
     penalty_breakdown["nvme_media_penalty"] = nvme_media_penalty
 
-    score = max(0, base_score - realloc_penalty - pending_penalty - nme_penalty - nvme_media_penalty)
+    # SAS uncorrectable read errors (1-9) penalty — ≥10 forces FAILED status which triggers failed_override
+    sas_read_error_penalty = 0
+    if iface == "sas":
+        sas_read_errors = safe_int(smart_data.get("sas_uncorrectable_read_errors"), 0)
+        if 0 < sas_read_errors < 10:
+            sas_read_error_penalty = min(45, sas_read_errors * 5)
+    penalty_breakdown["sas_read_error_penalty"] = sas_read_error_penalty
+
+    # SAS sticky LBA penalty — recurring errors at same physical location
+    sas_sticky_lba_penalty = 0
+    if iface == "sas" and smart_data.get("sas_sticky_lba_detected"):
+        sas_sticky_lba_penalty = 15
+    penalty_breakdown["sas_sticky_lba_penalty"] = sas_sticky_lba_penalty
+
+    score = max(0, base_score - realloc_penalty - pending_penalty - nme_penalty - nvme_media_penalty - sas_read_error_penalty - sas_sticky_lba_penalty)
     failed_override = str(smart_data.get("status") or "UNKNOWN").upper() == "FAILED"
     exit_status_val = safe_int(smart_data.get("_smartctl_exit_status"), 0)
     if (exit_status_val & 8 != 0) or (exit_status_val & 16 != 0): failed_override = True
@@ -144,13 +160,7 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
     status = str(smart.get("status") or "UNKNOWN").upper()
     pending = safe_int(smart.get("pending_sectors"), 0)
     realloc_raw = safe_int(smart.get("reallocated_sectors"), 0)
-    realloc_norm = safe_int(smart.get("reallocated_normalized"), 100)
-    realloc_thresh = safe_int(smart.get("reallocated_threshold"), 10)
 
-    # If SMART data collection failed (status UNKNOWN, not polling),
-    # do not score the drive — return UNKNOWN so the operator knows
-    # manual inspection is required. This prevents failed SMART reads
-    # (all fields None/0) from matching the NEW_STOCK condition.
     if status == "UNKNOWN":
         return {"status": "UNKNOWN", "comment": "SMART data unavailable — manual inspection required."}
 
@@ -172,18 +182,16 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
 
     health_destroy_thresh = thresholds["health_score_destroy_threshold"]
     health_scratch_thresh = thresholds["health_score_scratch_threshold"]
-    pending_destroy_thresh = thresholds["pending_sectors_destroy_threshold"]
-    pending_scratch_thresh = thresholds["pending_sectors_scratch_threshold"]
-    
-    # SAS uncorrectable error recommendations (critical indicators)
+    health_good_thresh = thresholds["health_score_good_threshold"]
+
+    # --- Hard stops: critical data integrity risks (bypass score) ---
     if iface == "sas":
         sas_verify_errors = safe_int(smart.get("sas_uncorrectable_verify_errors"), 0)
         sas_write_errors = safe_int(smart.get("sas_uncorrectable_write_errors"), 0)
         sas_read_errors = safe_int(smart.get("sas_uncorrectable_read_errors"), 0)
-        sas_sticky_lba = smart.get("sas_sticky_lba_detected")
         sas_grown_defects = safe_int(smart.get("sas_grown_defect_list"), 0)
         sas_grown_defect_fail_thresh = thresholds.get("sas_grown_defect_fail_threshold", 10000)
-        
+
         if sas_verify_errors >= 1 or sas_write_errors >= 1:
             return {"status": "DESTROY", "comment": "SAS drive has uncorrectable verify or write errors. Critical data integrity risk."}
         if sas_read_errors >= 10:
@@ -191,53 +199,33 @@ def get_drive_recommendation(interface_type, smart, health_score=None, threshold
         if sas_grown_defects >= sas_grown_defect_fail_thresh:
             return {"status": "DESTROY", "comment": f"SAS drive has {sas_grown_defects:,} grown defects (exceeds fail threshold). Critical mechanical degradation."}
 
-    # Health-score DESTROY must be checked before SAS SCRATCH fallbacks
-    # so that a critically low health score isn't short-circuited by
-    # the SAS grown-defect SCRATCH check (defects > 0 but < fail threshold).
+    # --- Unified health-score thresholds ---
     if health_score is not None:
-        if status == "FAILED" or health_score <= health_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+        if status == "FAILED" or health_score <= health_destroy_thresh:
+            return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+        if health_score <= health_scratch_thresh:
+            return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
     else:
-        if status == "FAILED" or realloc_norm < 50 or pending > pending_destroy_thresh: return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
+        if status == "FAILED":
+            return {"status": "DESTROY", "comment": "Drive shows critical physical degradation or SMART health failure."}
 
-    if iface == "sas":
-        if sas_read_errors >= 1:
-            return {"status": "SCRATCH", "comment": "SAS drive has uncorrectable read errors. Use only for non-critical data."}
-        if sas_sticky_lba:
-            return {"status": "SCRATCH", "comment": "SAS drive has sticky LBA detected (recurring errors at same location). Use only for non-critical data."}
-        if sas_grown_defects > 0:
-            return {"status": "SCRATCH", "comment": f"SAS drive has {sas_grown_defects:,} grown defects. Mechanical degradation detected. Use only for non-critical data."}
-
-    if health_score is not None:
-        if health_score <= health_scratch_thresh: return {"status": "SCRATCH", "comment": "Unstable or significantly aged drive. Safe only for non-critical use."}
-    else:
-        if realloc_norm <= realloc_thresh or (0 < pending <= pending_scratch_thresh): return {"status": "SCRATCH", "comment": "Unstable or threshold-breached sectors detected. Safe only for non-critical use."}
-
+    # --- NEW_STOCK: practically unused drive (separate from score) ---
+    realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
     if is_ssd:
-        ssd_life_destroy_thresh = thresholds["ssd_remaining_life_destroy_threshold"]
-        ssd_life_scratch_thresh = thresholds["ssd_remaining_life_scratch_threshold"]
-        ssd_life_good_thresh = thresholds["ssd_remaining_life_good_threshold"]
         ssd_new_poh_thresh = thresholds["ssd_new_poh_threshold"]
-        ssd_high_poh_thresh = thresholds["ssd_high_poh_threshold"]
         ssd_new_fdw_thresh = thresholds["ssd_new_fdw_threshold"]
-        realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
-        
-        if remaining_life < ssd_life_destroy_thresh: return {"status": "DESTROY", "comment": "SSD wear is fully depleted (remaining life below threshold)."}
-        if remaining_life < ssd_life_scratch_thresh: return {"status": "SCRATCH", "comment": "SSD remaining life is heavily worn (under 60%). Relegate to scratch."}
-        if poh < ssd_new_poh_thresh and fdw < ssd_new_fdw_thresh and remaining_life == 100 and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "This drive is practically new (low runtime, pristine life and sectors)."}
-        if remaining_life >= ssd_life_good_thresh:
-            if poh >= ssd_high_poh_thresh:
-                return {"status": "USED_HEAVY", "comment": f"Excellent health, but high runtime (exceeds {ssd_high_poh_thresh:,} hours)."}
-            return {"status": "USED_GOOD", "comment": "This drive is used but still has excellent remaining life."}
-        return {"status": "USED_HEAVY", "comment": "This drive is heavily used but still has life."}
+        if poh < ssd_new_poh_thresh and fdw < ssd_new_fdw_thresh and remaining_life == 100 and realloc_raw == realloc_new_thresh:
+            return {"status": "NEW_STOCK", "comment": "This drive is practically new (low runtime, pristine life and sectors)."}
     else:
-        hdd_high_poh_thresh = thresholds["hdd_high_poh_threshold"]
         hdd_new_poh_thresh = thresholds["hdd_new_poh_threshold"]
         hdd_new_fdw_thresh = thresholds["hdd_new_fdw_threshold"]
-        hdd_heavy_fdw_thresh = thresholds["hdd_heavy_fdw_threshold"]
-        realloc_new_thresh = thresholds["realloc_raw_new_threshold"]
-        
-        if poh >= hdd_high_poh_thresh: return {"status": "USED_HEAVY", "comment": f"High Power-On Hours (exceeds {hdd_high_poh_thresh:,} server hours)."}
-        if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh: return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
-        if fdw >= hdd_heavy_fdw_thresh:
-            return {"status": "USED_HEAVY", "comment": "High workload or raw sector writes history. Monitor closely."}
-        return {"status": "USED_GOOD", "comment": "Used but has clean write history and moderate runtime."}
+        if poh < hdd_new_poh_thresh and fdw < hdd_new_fdw_thresh and realloc_raw == realloc_new_thresh:
+            return {"status": "NEW_STOCK", "comment": "Practically new (extremely low runtime and zero sector reallocations)."}
+
+    # --- USED_GOOD vs USED_HEAVY: based on unified health score ---
+    if health_score is not None:
+        if health_score >= health_good_thresh:
+            return {"status": "USED_GOOD", "comment": "Drive is in good condition with sufficient remaining life."}
+        return {"status": "USED_HEAVY", "comment": "Drive is heavily used but still functional."}
+    else:
+        return {"status": "USED_HEAVY", "comment": "Drive is heavily used but still functional."}

@@ -82,8 +82,8 @@ function renderTriageTable() {
     
     // Health score class
     let healthClass = "health-score-good";
-    if (drive.health_score <= 30) healthClass = "health-score-fail";
-    else if (drive.health_score <= 50) healthClass = "health-score-warning";
+    if (drive.health_score !== null && drive.health_score <= 25) healthClass = "health-score-fail";
+    else if (drive.health_score !== null && drive.health_score <= 50) healthClass = "health-score-warning";
     
     // Bay label: enclosure name + bay name, or just bay name if no enclosure
     let bayLabel;
@@ -110,7 +110,7 @@ function renderTriageTable() {
         <td>${escapeHtml((drive.interface_type || "-").toUpperCase())}</td>
         <td>${escapeHtml(drive.capacity_str || "-")}</td>
         <td>${escapeHtml(poh)}</td>
-        <td class="${healthClass}">${drive.health_score || 0}</td>
+        <td class="${healthClass}">${drive.health_score ?? '—'}</td>
         <td>${escapeHtml(rec.status.replace(/_/g, " ").toUpperCase())}</td>
       </tr>
     `;
