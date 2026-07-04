@@ -6,9 +6,8 @@ This document outlines planned future enhancements and features for the Drive Er
 
 ## Live Testing Fixes & Post-Wipe Verification Resilience
 
-**Status**: In Progress
+**Status**: Completed
 **Priority**: High
-**Related Plan**: `c:\Users\BStra\.windsurf\plans\live-testing-fixes-53d81a.md`
 
 ### Summary
 A coordinated set of fixes and improvements driven by live testing observations. The work covers UX confusion (secure-mode badge, confirmation labels, sanitize button visibility), post-wipe reliability (blockdev retry after transient bus resets, marker write tolerance), and operational policy exposure (admin UI for system configuration).
@@ -21,7 +20,7 @@ A coordinated set of fixes and improvements driven by live testing observations.
 - Improved overwrite marker diagnostics and deep-dive process review
 
 ### Documentation
-- `api-contract.md`, `lifecycle.md`, `test-plan.md`, `troubleshooting.md`, `SOP_technician_guide.md`, `change-log.md`, `CODE_MAP.md`
+- `api-contract.md`, `lifecycle.md`, `test-plan.md`, `operations.md`, `SOP_technician_guide.md`, `change-log.md`, `CODE_MAP.md`
 
 ---
 
@@ -72,9 +71,17 @@ In air-gapped environments (e.g., secure facilities, SCADA systems, isolated net
 
 ## SMART Tracking & Health Assessment Improvements
 
-**Status**: Planned
+**Status**: Implemented
 **Priority**: High
 **Source**: Analysis of live support bundle `support-bundle-kill-a-ssd-20260619-132119` containing 18 unique SAS HDDs across 37 dual-port device nodes, including one drive with 16,396 grown defects that the system currently reports as healthy.
+
+**Implementation**: The following policy keys have been added to `policy.json` under `triage_thresholds`:
+- `sas_grown_defect_fail_threshold` (Item 1 — SAS status override)
+- `sas_nme_advisory_threshold`, `sas_nme_penalty_threshold` (Item 4 — NME mis-threshold fix)
+- `sas_sticky_lba_threshold` (Item 8 — Sticky LBA detection)
+- `sas_high_poh_threshold` (Item 7 — POH threshold for SAS drives)
+
+Case studies and detailed implementation notes are preserved in the appendix below for reference.
 
 ### Background
 
@@ -341,6 +348,8 @@ A technician acting on the current score would physically destroy a functional 4
 
 ### Feature B — Batch Intake Triage Report
 
+**Status**: Implemented
+
 **What**: A single-page view (printable/exportable) showing all currently connected drives ranked by health score, with a summary table: serial, model, manufacture year, POH, grown defects, recommendation, and a flag column for any anomalous signals (halted scan, uncorrectable errors, sticky LBA).
 
 **Why**: During bulk intake — the primary use case for this system — a technician should not need to open 18 individual drive detail modals to sort good from bad. The triage report is the first thing needed at the start of a session: identify the dead drives, identify the marginals, route them, then start wipes on the rest.
@@ -387,7 +396,11 @@ A technician acting on the current score would physically destroy a functional 4
 
 ### Feature E — Per-Drive Raw SMART Export
 
+**Status**: Implemented
+
 **What**: A "Download SMART data" button in the drive detail modal that downloads the raw `smartctl -j -x` JSON output for that specific drive, without generating a full support bundle.
+
+**Implementation**: `GET /api/admin/drives/<device>/smart-export` endpoint in `backend/routes/smart_routes.py`.
 
 **Why**: The support bundle captures raw SMART for all drives and is the right tool for full system diagnostics. But when a technician encounters one anomalous drive mid-batch and needs to escalate or document it, generating a full bundle is heavyweight and captures unrelated data. A per-drive download is faster and more targeted for single-drive escalation or documentation.
 
@@ -401,10 +414,14 @@ A technician acting on the current score would physically destroy a functional 4
 
 ### Feature F — Model Risk Profile (Static Lookup)
 
+**Status**: Implemented
+
 **What**: A built-in read-only lookup table of known drive model/firmware quirks that adjusts how the health parser interprets certain metrics. Example entries:
 - `ST4000NM0023 Rev 0003`: trip temperature 40°C (not 60°C), high NME counts normal for age
 - `ST4000NM0023 Rev D007`: trip temperature 60°C, NME in tens of millions normal
 - `ST4000NM0025 Rev N004`: newer generation, background scan may show 0 scans if recently installed
+
+**Implementation**: `config/drive_models.json` with per-model thresholds. Loaded by `backend/smart_data_parsing.py` via `_load_drive_models()`. Admin UI at `frontend/admin/driveModels.js`. API at `GET /api/admin/drive-models`.
 
 **Why**: The support bundle showed two hardware revisions of the same model family with completely different normal operating envelopes. The 40°C trip drives were running at 34–37°C in the bundle — near their limit — while the 60°C trip drives at the same temperature are well within spec. Treating them identically produces misleading temperature assessments. A static lookup requires no user maintenance and prevents model-specific false positives/negatives.
 

@@ -132,6 +132,26 @@ input:focus, select:focus {
   max-width: 94vw !important;
 }
 
+.modal-dialog--sm {
+  max-width: 600px !important;
+}
+
+.modal-dialog--md {
+  max-width: 700px !important;
+}
+
+.modal-dialog--lg {
+  max-width: 800px !important;
+}
+
+.modal-dialog--xl {
+  max-width: 900px !important;
+}
+
+.modal-dialog--xxl {
+  max-width: 1200px !important;
+}
+
 .modal-dialog--wide .modal-content {
   width: 100%;
   box-sizing: border-box;

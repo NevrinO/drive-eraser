@@ -31,10 +31,10 @@ async function loadLogoStatus() {
     if (data.has_logo && data.base64) {
       logoPreview.src = `data:image/png;base64,${data.base64}`;
       logoPreview.classList.remove("hidden");
-      noLogoText.style.display = "none";
+      noLogoText.classList.add("hidden");
     } else {
       logoPreview.classList.add("hidden");
-      noLogoText.style.display = "block";
+      noLogoText.classList.remove("hidden");
     }
   } catch (err) {
     console.error("Failed to load logo status:", err);

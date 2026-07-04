@@ -28,6 +28,7 @@ This guide covers the standard process for health checking and securely erasing 
 - Click the drive tile to view the detailed health panel.
 - Review the SMART metrics (Temperature, Sector counts, Wear level).
 - **If the status is Yellow/Rejected:** The station recommends against software wiping. Pull the drive for physical destruction unless you have a specific reason to override.
+- **Batch Intake Triage (Tab 2):** For bulk drive intake, use the "Batch Intake Triage" tab to view a summary report of all connected drives. The triage system evaluates each drive's health score, power-on hours, and SMART attributes to recommend an action (Wipe, Scratch, or Destroy). Use this to quickly sort large batches before individual wipe configuration.
 
 ### 3. Setup the Wipe
 - **Single Drive:** Click the drive tile to view details and configure wipe settings.
@@ -38,7 +39,7 @@ This guide covers the standard process for health checking and securely erasing 
 ### 4. Confirmation
 - Enter your **Technician Name**.
 - Enter the **Ticket Number**.
-- Type the confirmation text shown (e.g., "erase 1 drive" or "erase 3 drives") into the confirmation box.
+- Type the confirmation text shown (e.g., "erase BAY 2" for a single drive, or "erase 3 drives" for multiple) into the confirmation box.
 - Click **Validate & Execute Sanitization**.
 
 ### 5. Erasing & Monitoring
@@ -55,7 +56,7 @@ This guide covers the standard process for health checking and securely erasing 
 ### 7. Marking & Completion
 - After verification passes, a small supplemental **Erase Marker** is written to the start of the disk. This allows future technicians to see that *this* station wiped the drive safely.
 - The status will turn **GREEN** when finished.
-- Download or print the **Data Destruction Certificate** from the "Compliance Audit Vault" tab (Tab 2).
+- Download or print the **Data Destruction Certificate** from the "Compliance Audit Vault" tab (Tab 3).
 
 ---
 
@@ -68,7 +69,7 @@ This guide covers the standard process for health checking and securely erasing 
 ## 📚 Getting Help
 
 - **In-App Help:** Click the **Help** button in the header for quick access to documentation and common tasks.
-- **Bay Mapping & Operational Policies:** Use the **System Administration** tab (Tab 3) to:
+- **Bay Mapping & Operational Policies:** Use the **System Administration** tab (Tab 4) to:
   - Configure physical bay mappings via "Auto-Detect" or manual assignment.
   - Adjust operational policies such as station ID, Slack webhook, verification mode, concurrent wipe limit, and post-wipe blockdev retry settings.
 - **Full Documentation:** Access detailed guides via the Help modal or directly in the `/docs/` folder.

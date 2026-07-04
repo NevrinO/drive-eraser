@@ -1,0 +1,18 @@
+{
+  "attributes": [
+    {"id": 5, "name": "Reallocated_Sector_Ct", "value": 100, "worst": 100, "thresh": 10, "raw": 0, "flags": "POSR-K-"},
+    {"id": 9, "name": "Power_On_Hours", "value": 99, "worst": 99, "thresh": 0, "raw": 5000, "flags": "POSR-K-"},
+    {"id": 194, "name": "Temperature_Celsius", "value": 5, "worst": 5, "thresh": 50, "raw": 45, "flags": "POSR-K-"}
+  ],
+  "self_test_logs": [
+    {"type": "Short offline", "status": "Completed without error", "passed": true, "remaining": 0, "lba": null, "hours": 4900, "corrected_hours": 4900, "rollover_corrected": false, "ambiguous": false, "log_index": 0},
+    {"type": "Extended offline", "status": "Completed without error", "passed": true, "remaining": 0, "lba": null, "hours": 4800, "corrected_hours": 4800, "rollover_corrected": false, "ambiguous": false, "log_index": 1}
+  ],
+  "current_power_on_hours": 5000,
+  "error_logs": null,
+  "device_statistics": [],
+  "sas_specific": null,
+  "nvme_specific": null,
+  "truncated": false,
+  "audit_history": []
+}

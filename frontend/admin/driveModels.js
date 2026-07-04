@@ -30,7 +30,7 @@ function renderDriveModels(data) {
   
   if (modelKeys.length === 0) {
     driveModelsList.innerHTML = `
-      <div style="padding: 20px; text-align: center; color: var(--color-text-muted);">
+      <div class="drive-models-empty">
         No drive models configured. Edit <code>config/drive_models.json</code> to add entries.
       </div>
     `;
@@ -42,8 +42,8 @@ function renderDriveModels(data) {
     const [vendor, product, revision] = key.split(",");
     
     return `
-      <div style="padding: 12px; margin-bottom: 8px; background: var(--color-surface-2); border: 1px solid var(--color-border); border-radius: 4px;">
-        <div style="font-weight: bold; color: var(--color-primary); margin-bottom: 8px; font-size: 0.85rem;">
+      <div class="drive-model-entry">
+        <div class="drive-model-entry-title">
           ${escapeHtml(vendor)} ${escapeHtml(product)} (Rev: ${escapeHtml(revision)})
         </div>
         <div class="kv"><span>Vendor:</span><span>${escapeHtml(model.vendor || "-")}</span></div>
@@ -51,7 +51,7 @@ function renderDriveModels(data) {
         <div class="kv"><span>Revision:</span><span>${escapeHtml(model.revision || "-")}</span></div>
         ${model.trip_temperature !== undefined ? `<div class="kv"><span>Trip Temperature:</span><span>${model.trip_temperature}°C</span></div>` : ""}
         ${model.nme_normal_range_max !== undefined ? `<div class="kv"><span>NME Normal Range Max:</span><span>${model.nme_normal_range_max.toLocaleString()}</span></div>` : ""}
-        ${model.notes ? `<div style="margin-top: 8px; font-size: 0.75rem; color: var(--color-text-muted); padding: 8px; background: var(--color-surface-3); border-radius: 4px;">${escapeHtml(model.notes)}</div>` : ""}
+        ${model.notes ? `<div class="drive-model-entry-notes">${escapeHtml(model.notes)}</div>` : ""}
       </div>
     `;
   }).join("");

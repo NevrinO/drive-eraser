@@ -3,7 +3,6 @@ import os
 import re
 import subprocess
 import time
-import uuid
 import threading
 import logging
 import json
@@ -13,7 +12,17 @@ from contextlib import closing
 from datetime import datetime, timezone
 
 # Constants
-ESTIMATED_ERASE_TIMEOUT_SECONDS = 600  # Default estimated timeout for erase operations (10 minutes)
+DEFAULT_SATA_ERASE_ESTIMATE_SECONDS = 600  # Default estimated seconds for SATA erase progress calculation
+
+# C-JM2: Per-method erase timeouts (in seconds) to prevent stuck drives from blocking bays forever.
+# Overridable via policy.json "erase_timeouts" key (e.g. {"overwrite_seconds": 172800}).
+DEFAULT_ERASE_TIMEOUTS = {
+    "overwrite": 172800,            # 48 hours (large HDDs can take 24h+)
+    "secure_erase": 7200,           # 2 hours
+    "enhanced_secure_erase": 7200,  # 2 hours
+    "crypto": 7200,                 # 2 hours
+    "block": 7200,                  # 2 hours
+}
 
 # High #14: Global generation counter for job interruption.
 # Uses a monotonically increasing counter instead of a boolean flag to avoid
@@ -40,6 +49,22 @@ def _check_job_interrupted(generation):
     with _job_interrupt_lock:
         return _job_interrupt_generation != generation
 
+def _get_erase_timeout(method):
+    """Get erase timeout for the given method, with policy.json override support."""
+    key = f"{method}_seconds"
+    try:
+        policy = load_policy()
+        timeouts = policy.get("erase_timeouts", {})
+        if key in timeouts:
+            val = int(timeouts[key])
+            if val <= 0:
+                logger.warning(f"Invalid erase_timeout value for {key}: {val} (must be positive), using default")
+                return DEFAULT_ERASE_TIMEOUTS.get(method, 7200)
+            return val
+    except Exception as e:
+        logger.warning(f"Invalid erase_timeout value for {key}: {e}")
+    return DEFAULT_ERASE_TIMEOUTS.get(method, 7200)
+
 from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
     purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy, get_db_path
@@ -59,296 +84,68 @@ from verification import (
 )
 from certificates import build_certificate
 from notifier import send_slack_notification
-from disk_ops import get_os_by_path, invalidate_drive_cache
-from disk_utils import validate_device_path
+from disk_ops import invalidate_drive_cache
 from zero_check_manager import get_manager as get_zero_check_manager
 from smart_parsing import get_raw_smart_diagnostics, get_smart_data
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
-
-def build_recommended_method(drive, policy):
-    interface_type = (drive.get("interface_type") or "unknown").lower()
-    supported_methods = drive.get("supported_methods") or []
-    method_priority = policy.get("method_priority") or {}
-    prioritized = method_priority.get(interface_type, [])
-    for method in prioritized:
-        if method in supported_methods:
-            return method
-    if "overwrite" in supported_methods:
-        return "overwrite"
-    return supported_methods[0] if supported_methods else None
-
-def validate_single_bay(technician, ticket_number, bay, method_override, drives, policy):
-    selected_drive = None
-    for drive in drives:
-        if str(drive.get("bay") or "").strip().lower() == bay:
-            selected_drive = drive
-            break
-
-    if not selected_drive:
-        return None, {"error": f"bay not found: {bay}"}, 404
-    if selected_drive.get("locked"):
-        return None, {"error": f"bay is protected and cannot be erased: {bay}"}, 403
-    if selected_drive.get("role") in {"os", "reserved"}:
-        return None, {"error": f"bay role is not erasable: {bay}"}, 403
-    if not selected_drive.get("present"):
-        return None, {"error": f"no drive present in bay: {bay}"}, 409
-    if selected_drive.get("sas_secondary_path"):
-        return None, {"error": f"Cannot wipe secondary path of dual-port SAS drive: {bay}"}, 403
-
-    # Validate secure mode requirements before proceeding
-    strict_audit = policy.get("strict_audit_mode", False)
-    if strict_audit:
-        if not technician or technician.strip() == "" or technician == "System Operator":
-            return None, {"error": "Strict audit mode requires a valid technician name (cannot be empty or 'System Operator')"}, 400
-        if not ticket_number or ticket_number.strip() == "" or ticket_number == "INTERNAL":
-            return None, {"error": "Strict audit mode requires a valid ticket number (cannot be empty or 'INTERNAL')"}, 400
-
-    device = selected_drive.get("device")
-    if not device:
-        return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
-
-    # Absolute dynamic hard-stop backend safety locks
-    os_path_result = get_os_by_path()
-    if os_path_result is None:
-        os_dev_node, os_by_path = None, None
-    else:
-        os_dev_node, os_by_path = os_path_result
-    configured_path = selected_drive.get("configured_by_path")
-    resolved_path = selected_drive.get("resolved_by_path")
-    configured_path_nvme = selected_drive.get("configured_by_path_nvme")
-    resolved_path_nvme = selected_drive.get("resolved_by_path_nvme")
-
-    if os_dev_node and device and os.path.realpath(device) == os.path.realpath(os_dev_node):
-        return None, {"error": f"Device {device} is the active host OS drive and cannot be erased!"}, 403
-
-    for path in [configured_path, resolved_path, configured_path_nvme, resolved_path_nvme]:
-        if path and os_by_path and (path == os_by_path or os.path.basename(path) == os.path.basename(os_by_path)):
-            return None, {"error": f"Device path {path} is the active host OS drive and cannot be erased!"}, 403
-
-    supported_methods = selected_drive.get("supported_methods") or []
-    recommended_method = build_recommended_method(selected_drive, policy)
-    chosen_method = str(method_override).strip().lower() if method_override else None
-
-    if chosen_method:
-        if chosen_method not in supported_methods:
-            return None, {"error": f"method not supported by drive in {bay}: {chosen_method}"}, 400
-        if not policy.get("allow_method_override", True) and recommended_method and chosen_method != recommended_method:
-            return None, {"error": "method override is disabled by policy"}, 403
-    else:
-        chosen_method = recommended_method
-
-    if not chosen_method:
-        return None, {"error": f"no supported erase method available for bay: {bay}"}, 409
-
-    return {
-        "technician": technician,
-        "ticket_number": ticket_number,
-        "bay": bay,
-        "device": device,
-        "method": chosen_method,
-        "recommended_method": recommended_method,
-        "supported_methods": supported_methods,
-        "drive": selected_drive,
-    }, None, None
-
-def create_erase_job(validated):
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": str(uuid.uuid4()),
-        "friendly_id": None,
-        "status": "queued",
-        "created_at": now,
-        "started_at": None,
-        "finished_at": None,
-        "error": None,
-        "result": None,
-        "verification": None,
-        "marker": None,
-        "certificate": None,
-        "progress_percent": 0.0,
-        "current_phase": "Queued in Line",
-        "job_type": "erase",
-        "request": {
-            "technician": validated["technician"],
-            "ticket_number": validated["ticket_number"],
-            "bay": validated["bay"],
-            "device": validated["device"],
-            "method": validated["method"],
-            "recommended_method": validated["recommended_method"],
-            "supported_methods": validated["supported_methods"],
-            "interface_type": validated["drive"].get("interface_type"),
-            "serial": validated["drive"].get("serial"),
-            "model": validated["drive"].get("model"),
-            "capacity_bytes": validated["drive"].get("smart", {}).get("capacity_bytes") or (100 * 1024 * 1024 * 1024),
-            "data_written_at_wipe": None,
-        },
-    }
-
-def get_device_logical_block_size(device):
-    """Read logical block size from sysfs. Falls back to 512 if unavailable."""
-    try:
-        dev_name = os.path.basename(device)
-        bs_path = f"/sys/block/{dev_name}/queue/logical_block_size"
-        with open(bs_path, "r") as f:
-            return int(f.read().strip())
-    except Exception:
-        return 512
-
-def get_device_sectors_written(device):
-    try:
-        dev_name = os.path.basename(device)
-        stat_path = f"/sys/block/{dev_name}/stat"
-        if not os.path.exists(stat_path):
-            return None
-        with open(stat_path, "r") as f:
-            content = f.read().strip()
-        parts = content.split()
-        if len(parts) >= 7:
-            return int(parts[6])
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for sectors written on {device}: {e}")
-    return None
-
-def poll_nvme_sanitize_progress(device):
-    try:
-        nvme_path = resolve_verify_command_path("nvme")
-        if nvme_path:
-            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "sprog" in line.lower():
-                        match = re.search(r"sprog\s*[:=]\s*(\d+)", line, re.IGNORECASE)
-                        if match:
-                            return int(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for NVMe sanitize on {device}: {e}")
-    return None
-
-def poll_sas_sanitize_progress(device):
-    try:
-        sg_req_path = resolve_verify_command_path("sg_requests")
-        if sg_req_path:
-            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "progress" in line.lower():
-                        match = re.search(r"(\d+\.?\d*)\s*%", line)
-                        if match:
-                            return float(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for SAS sanitize on {device}: {e}")
-    return None
-
-def poll_sata_sanitize_progress(device):
-    try:
-        hdparm_path = resolve_verify_command_path("hdparm")
-        if hdparm_path:
-            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "progress" in line.lower() or "percent" in line.lower():
-                        match = re.search(r"(\d+\.?\d*)\s*%", line)
-                        if match:
-                            return float(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for SATA sanitize on {device}: {e}")
-    return None
-
-def prepare_erase_command(device, interface_type, method):
-    selected_method = str(method or "").strip().lower()
-    iface = str(interface_type or "").strip().lower()
-
-    # Validate interface type is one of the supported types
-    supported_interfaces = {"sata", "sas", "nvme", "scsi"}
-    if iface and iface not in supported_interfaces:
-        return {"ok": False, "error": f"unsupported_interface:{iface}"}
-
-    if selected_method == "overwrite":
-        dd_cmd = resolve_verify_command_path("dd")
-        if not dd_cmd:
-            return {"ok": False, "error": "dd_not_available"}
-        return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "conv=fdatasync"]}
-
-    if selected_method in {"secure_erase", "enhanced_secure_erase"}:
-        hdparm_cmd = resolve_verify_command_path("hdparm")
-        if not hdparm_cmd:
-            return {"ok": False, "error": "hdparm_not_available"}
-        user_password = "wipestation"
-        erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
-        erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
-        return {"ok": True, "command": erase_cmd}
-
-    if selected_method in {"block", "crypto"}:
-        if iface == "nvme":
-            nvme_cmd = resolve_verify_command_path("nvme")
-            if not nvme_cmd:
-                return {"ok": False, "error": "nvme_not_available"}
-            # NVMe sanitize must be run on the controller device (/dev/nvmeX), not namespace (/dev/nvmeXnY)
-            sanitize_device = device
-            if device and re.match(r'^/dev/nvme\d+n\d+\Z', device):
-                # Extract controller from namespace (e.g., /dev/nvme0n1 -> /dev/nvme0)
-                match = re.match(r'^(/dev/nvme\d+)n\d+\Z', device)
-                if match:
-                    sanitize_device = match.group(1)
-                    # Validate extracted controller path before use (lesson-learned #9)
-                    if not validate_device_path(sanitize_device):
-                        return {"ok": False, "error": "invalid_extracted_device_path"}
-            # --sanact expects decimal value: 4=crypto erase, 2=block erase
-            sanact_value = "4" if selected_method == "crypto" else "2"
-            return {"ok": True, "command": [nvme_cmd, "sanitize", sanitize_device, "--sanact", sanact_value]}
-            
-        if iface == "sata":
-            hdparm_cmd = resolve_verify_command_path("hdparm")
-            if not hdparm_cmd:
-                return {"ok": False, "error": "hdparm_not_available"}
-            action = "--sanitize-crypto-scramble" if selected_method == "crypto" else "--sanitize-block-erase"
-            return {"ok": True, "command": [hdparm_cmd, "--yes-i-know-what-i-am-doing", action, device]}
-
-        if iface == "sas":
-            sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize")
-            if not sg_sanitize_cmd:
-                return {"ok": False, "error": "sg_sanitize_not_available"}
-            return {"ok": True, "command": [sg_sanitize_cmd, "--block", device]}
-
-    return {"ok": False, "error": f"unsupported_method_or_interface:{selected_method}:{iface}"}
+from erase_commands import (
+    SATA_SECURITY_PASSWORD,
+    get_device_logical_block_size,
+    get_device_capacity_bytes,
+    calculate_firmware_progress,
+    get_device_sectors_written,
+    poll_nvme_sanitize_progress,
+    poll_sas_sanitize_progress,
+    poll_sata_sanitize_progress,
+    prepare_erase_command,
+)
+from job_validation import (
+    build_recommended_method,
+    check_health_gate_sync,
+    validate_single_bay,
+    create_erase_job,
+)
 
 def finalize_failed_job(job_id, error_message):
+    # Phase 1: Update job status and persist inside the lock
     with ERASE_JOBS_LOCK:
         job = ERASE_JOBS.get(job_id)
-        if job:
-            job["status"] = "failed"
-            job["finished_at"] = datetime.now(timezone.utc).isoformat()
-            job["error"] = error_message
-            
-            active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
-            failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
-            try:
-                os.rename(active_log_path, failed_log_path)
-            except FileNotFoundError:
-                pass
-            except Exception as e:
-                logger.warning(f"Failed to rename active log to failed log: {e}")
-            try:
-                with open(failed_log_path, "a", encoding="utf-8") as lf:
-                    lf.write(f"\n=== JOB CONFIGURATION FAILURE ===\nError Message: {error_message}\n")
-                    dev = job["request"].get("device")
-                    if dev:
-                        lf.write(get_raw_smart_diagnostics(dev))
-            except Exception as e:
-                logger.warning(f"Failed to write failure diagnostics to log: {e}")
-                
-            persist_job(job)
-            # Drop cached discovery data for this device so the next discovery reflects post-job state
-            invalidate_drive_cache(job["request"].get("device"))
-            send_slack_notification(job)
-            
-            # Emit a high-signal application log representing an initialization failure
-            logger.error(f"Job {job_id} (Bay {job['request']['bay']}) initialization failed: {error_message}")
-            
-            try:
-                purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
-            except Exception as e:
-                logger.warning(f"Failed to purge old logs: {e}")
+        if not job:
+            return
+        job["status"] = "failed"
+        job["finished_at"] = datetime.now(timezone.utc).isoformat()
+        job["error"] = error_message
+        persist_job(job)
+
+    # Phase 2: I/O operations outside the lock
+    active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
+    failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
+    try:
+        os.rename(active_log_path, failed_log_path)
+    except FileNotFoundError:
+        pass
+    except Exception as e:
+        logger.warning(f"Failed to rename active log to failed log: {e}")
+    try:
+        with open(failed_log_path, "a", encoding="utf-8") as lf:
+            lf.write(f"\n=== JOB CONFIGURATION FAILURE ===\nError Message: {error_message}\n")
+            dev = job["request"].get("device")
+            if dev:
+                lf.write(get_raw_smart_diagnostics(dev))
+    except Exception as e:
+        logger.warning(f"Failed to write failure diagnostics to log: {e}")
+
+    # Drop cached discovery data for this device so the next discovery reflects post-job state
+    invalidate_drive_cache(job["request"].get("device"))
+    send_slack_notification(job)
+
+    # Emit a high-signal application log representing an initialization failure
+    logger.error(f"Job {job_id} (Bay {job['request']['bay']}) initialization failed: {error_message}")
+
+    try:
+        purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
+    except Exception as e:
+        logger.warning(f"Failed to purge old logs: {e}")
 
 def run_erase_job(job_id):
     # High #14: Capture current generation so we can detect signals received during this job.
@@ -372,7 +169,7 @@ def run_erase_job(job_id):
     method = job["request"]["method"]
     capacity_bytes = job["request"].get("capacity_bytes")
     if capacity_bytes is None:
-        capacity_bytes = 100 * 1024 * 1024 * 1024
+        capacity_bytes = get_device_capacity_bytes(device) or (100 * 1024 * 1024 * 1024)
 
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}', Interface: '{interface_type}'")
@@ -454,7 +251,7 @@ def run_erase_job(job_id):
             finalize_failed_job(job_id, "hdparm_not_available")
             return
 
-        user_password = "wipestation"
+        user_password = SATA_SECURITY_PASSWORD
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         try:
             set_pass_proc = subprocess.run(set_pass_cmd, capture_output=True, text=True, shell=False)
@@ -527,12 +324,16 @@ def run_erase_job(job_id):
             if job:
                 job["_process"] = process
     except Exception as e:
-        log_file.close()
+        try:
+            log_file.close()
+        except Exception:
+            pass
         finalize_failed_job(job_id, f"process_spawn_failed:{str(e)}")
         return
 
     try:
-        estimated_seconds = ESTIMATED_ERASE_TIMEOUT_SECONDS
+        estimated_seconds = DEFAULT_SATA_ERASE_ESTIMATE_SECONDS
+        max_erase_seconds = _get_erase_timeout(method)
 
         # Thread sleep telemetry updates loop (contained within individual job context)
         while process.poll() is None:
@@ -558,6 +359,25 @@ def run_erase_job(job_id):
                 return
 
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+            # C-JM2: Enforce maximum erase duration to prevent stuck drives from blocking bays forever
+            if elapsed > max_erase_seconds:
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) erase timed out after {max_erase_seconds}s (method={method})")
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                with ERASE_JOBS_LOCK:
+                    job = ERASE_JOBS.get(job_id)
+                    if job:
+                        job["_process"] = None
+                if 'log_file' in locals() and not log_file.closed:
+                    log_file.close()
+                finalize_failed_job(job_id, f"erase_timeout: exceeded {max_erase_seconds}s (method={method})")
+                return
+
             progress = 0.0
             phase = "Sanitizing Drive..."
 
@@ -603,18 +423,19 @@ def run_erase_job(job_id):
 
             elif method in {"crypto", "block"} and interface_type == "nvme":
                 sprog_val = poll_nvme_sanitize_progress(device)
-                if sprog_val is not None:
-                    progress = min(99.9, (sprog_val / 65535.0) * 100)
-                    phase = f"NVMe controller sanitize ({progress:.1f}%)"
+                fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device, sprog_val=sprog_val)
+                if fw_progress is not None:
+                    progress = fw_progress
+                    phase = fw_phase
                 else:
                     progress = min(99.9, (elapsed / 60.0) * 100)
                     phase = "NVMe Sanitize in progress..."
 
             elif method in {"secure_erase", "enhanced_secure_erase"} and interface_type == "sata":
-                prog_val = poll_sata_sanitize_progress(device)
-                if prog_val is not None:
-                    progress = min(99.9, prog_val)
-                    phase = f"SATA sanitize active ({progress:.1f}%)"
+                fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device)
+                if fw_progress is not None:
+                    progress = fw_progress
+                    phase = fw_phase
                 else:
                     # Use drive-specific estimate if available, otherwise fall back to default
                     timeout_for_progress = erase_time_estimate_seconds if erase_time_estimate_seconds and erase_time_estimate_seconds > 0 else estimated_seconds
@@ -622,10 +443,10 @@ def run_erase_job(job_id):
                     phase = f"SATA Secure Erase running ({progress:.1f}%)"
 
             elif method == "block" and interface_type == "sas":
-                prog_val = poll_sas_sanitize_progress(device)
-                if prog_val is not None:
-                    progress = min(99.9, prog_val)
-                    phase = f"SAS firmware sanitizing ({progress:.1f}%)"
+                fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device)
+                if fw_progress is not None:
+                    progress = fw_progress
+                    phase = fw_phase
                 else:
                     progress = min(99.9, (elapsed / 120.0) * 100)
                     phase = "SAS Sanitize running..."
@@ -640,6 +461,11 @@ def run_erase_job(job_id):
 
         exit_code = process.returncode
         execution_ok = (exit_code == 0)
+
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["_process"] = None
 
         log_file.flush()
         log_file.close()
@@ -697,7 +523,9 @@ def run_erase_job(job_id):
 
             elapsed_poll = (datetime.now(timezone.utc) - poll_start_time).total_seconds()
             if elapsed_poll > max_poll_seconds:
-                break
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) firmware polling timed out after {max_poll_seconds}s")
+                finalize_failed_job(job_id, f"firmware_polling_timeout: exceeded {max_poll_seconds}s")
+                return
                 
             status_report = None
             progress_pct = 0.0
@@ -733,13 +561,15 @@ def run_erase_job(job_id):
                         match = re.search(r"progress:\s*(0x[0-9a-fA-F]+|\d+)\s*\(([0-9.]+)%\)", output_str)
                         if match:
                             parsed_pct = float(match.group(2))
-                            
-                    if parsed_pct is None and interface_type == "sas":
-                        prog_val = poll_sas_sanitize_progress(device)
-                        if prog_val is not None:
-                            parsed_pct = prog_val
 
-                    if parsed_pct is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
+                    # Use shared helper for NVMe sprog and SAS poll progress
+                    sprog_val = details.get("sprog") if interface_type == "nvme" else None
+                    fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device, sprog_val=sprog_val, parsed_pct=parsed_pct)
+                    if fw_progress is not None:
+                        progress_pct = fw_progress
+                        phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
+
+                    if fw_progress is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
                         # ATA secure erase doesn't provide progress, use time-based estimate
                         # Use total elapsed time from erase command start, not just polling start
                         total_elapsed = (datetime.now(timezone.utc) - erase_start_time).total_seconds()
@@ -754,15 +584,6 @@ def run_erase_job(job_id):
                             fallback_timeout = 900.0
                             progress_pct = min(99.9, (total_elapsed / fallback_timeout) * 100.0)
                             phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
-
-                    if parsed_pct is None and interface_type == "nvme":
-                        sprog_val = details.get("sprog")
-                        if sprog_val is not None:
-                            parsed_pct = (sprog_val / 65535.0) * 100.0
-
-                    if parsed_pct is not None:
-                        progress_pct = min(99.9, parsed_pct)
-                        phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
                 else:
                     consecutive_errors += 1
                     if consecutive_errors >= max_consecutive_errors:
@@ -770,6 +591,13 @@ def run_erase_job(job_id):
                     phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
                     fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                     progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
+            elif status_report is None:
+                # No status report for this interface type (e.g., scsi)
+                logger.warning(f"No status report for interface_type={interface_type} during firmware polling for {device}")
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    break
+                phase_text = f"Polling drive (no status report... {consecutive_errors}/{max_consecutive_errors})"
             else:
                 # Unknown error - log details and increment error counter
                 logger.warning(f"Unexpected verification error during firmware polling for {device}: {status_report.get('error')}, details: {status_report.get('details')}")
@@ -837,7 +665,6 @@ def run_erase_job(job_id):
             # Phase 5: Capture post-wipe SMART snapshot after successful verification
             post_wipe_smart = None
             try:
-                from smart_parsing import get_smart_data
                 command_diagnostics = {}
                 post_wipe_smart = get_smart_data(device, command_diagnostics)
                 if post_wipe_smart:
@@ -959,6 +786,7 @@ def run_erase_job(job_id):
     # Drop cached discovery data for this device so the next discovery reflects post-wipe state
     invalidate_drive_cache(device)
 
+    # Send notification outside the lock to avoid blocking all job operations during network I/O
     send_slack_notification(job)
 
     try:

@@ -136,7 +136,7 @@ async function loadBayMappingConfig() {
 
     bindDeleteBayButtons();
   } catch (err) {
-    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to load mapping configurations: ${err.message}</div>`;
+    bayMappingContainer.innerHTML = `<div class="bay-mapping-error">Failed to load mapping configurations: ${err.message}</div>`;
   }
 }
 
@@ -170,7 +170,7 @@ async function renderBayMappingConfig() {
 
     bindDeleteBayButtons();
   } catch (err) {
-    bayMappingContainer.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 12px;">Failed to render mapping configurations: ${err.message}</div>`;
+    bayMappingContainer.innerHTML = `<div class="bay-mapping-error">Failed to render mapping configurations: ${err.message}</div>`;
   }
 }
 
@@ -204,61 +204,60 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
     const container = document.createElement('div');
     container.className = 'bay-config-row';
     container.id = `config-row-${bayId}`;
-    container.style.marginBottom = "20px";
     
     const isU2 = bayConfig.type === 'u2';
     const lockStatusText = bayConfig.locked ? "Locked" : "Editable";
     const hasOverride = !!String(bayConfig.display_number || "").trim();
     
     const deleteBtnHtml = bayConfig.locked ? "" : `
-        <button type="button" class="btn-delete-bay" data-delete-bay-id="${escapeHtml(bayId)}" style="padding: 4px 10px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); margin-left: 12px; color: #fff;">
+        <button type="button" class="btn-delete-bay bay-mapping-delete-btn" data-delete-bay-id="${escapeHtml(bayId)}">
           Delete
         </button>
     `;
     
     container.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-            <h3 style="margin: 0; font-size: 1rem; color: var(--color-primary);">${escapeHtml(bayConfig.label || bayId)}</h3>
-            <div style="display: flex; align-items: center;">
-                <small style="font-size: 0.7rem; color: #888;">${lockStatusText}</small>
+        <div class="bay-mapping-header">
+            <h3 class="bay-mapping-title">${escapeHtml(bayConfig.label || bayId)}</h3>
+            <div class="bay-mapping-actions">
+                <small class="bay-mapping-lock-status">${lockStatusText}</small>
                 ${deleteBtnHtml}
             </div>
         </div>
 
-        <div class="form-group" style="margin-bottom: 8px;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Label</label>
-            <input id="label-${bayId}" class="bay-label-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.label || "")}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+        <div class="form-group bay-mapping-form-group">
+            <label class="bay-mapping-label">Bay Label</label>
+            <input id="label-${bayId}" class="bay-label-input bay-mapping-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.label || "")}" />
         </div>
 
-        <div class="form-group" style="margin-bottom: 8px; display: grid; grid-template-columns: 180px 1fr 1fr; gap: 8px; align-items: end;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Bay Number</label>
-            <input id="display-number-${bayId}" class="display-number-input input--number" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
-            <label style="font-size: 0.75rem; color: #aaa; text-transform: none; letter-spacing: 0; display: flex; align-items: center; gap: 6px;">
+        <div class="form-group bay-mapping-grid-3">
+            <label class="bay-mapping-label">Bay Number</label>
+            <input id="display-number-${bayId}" class="display-number-input input--number bay-mapping-input" data-bay="${bayId}" type="text" value="${escapeHtml(bayConfig.display_number || "")}" ${hasOverride ? "" : "disabled"} />
+            <label class="bay-mapping-override-label">
               <input id="override-number-${bayId}" class="override-number-toggle" data-bay="${bayId}" type="checkbox" ${hasOverride ? "checked" : ""} />
               Manual Override
             </label>
         </div>
 
-        <div class="form-group" style="margin-bottom: 8px;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Drive Interface Type</label>
-            <select id="type-${bayId}" class="bay-type-selector input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+        <div class="form-group bay-mapping-form-group">
+            <label class="bay-mapping-label">Drive Interface Type</label>
+            <select id="type-${bayId}" class="bay-type-selector input--select bay-mapping-select" data-bay="${bayId}">
                 <option value="sas_sata" ${!isU2 ? 'selected' : ''}>SAS / SATA</option>
                 <option value="u2" ${isU2 ? 'selected' : ''}>U.2 / U.3 / Hybrid (NVMe capable)</option>
             </select>
         </div>
 
-        <div class="form-group" style="margin-bottom: 8px;">
-            <label id="primary-label-${bayId}" style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Primary SAS/SATA Controller Port Path</label>
-            <select id="path-${bayId}" class="by-path-select input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+        <div class="form-group bay-mapping-form-group">
+            <label id="primary-label-${bayId}" class="bay-mapping-label">Primary SAS/SATA Controller Port Path</label>
+            <select id="path-${bayId}" class="by-path-select input--select bay-mapping-select" data-bay="${bayId}">
             </select>
         </div>
 
-        <div class="form-group nvme-group" id="nvme-group-${bayId}" style="${isU2 ? 'display: block;' : 'display: none;'} margin-bottom: 8px;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px; color: #4a90e2;">Motherboard NVMe direct-attach Path (Optional)</label>
-            <select id="path-nvme-${bayId}" class="by-path-nvme-select input--select" data-bay="${bayId}" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+        <div class="form-group nvme-group bay-mapping-form-group ${isU2 ? '' : 'hidden'}" id="nvme-group-${bayId}">
+            <label class="bay-mapping-nvme-label">Motherboard NVMe direct-attach Path (Optional)</label>
+            <select id="path-nvme-${bayId}" class="by-path-nvme-select input--select bay-mapping-select" data-bay="${bayId}">
             </select>
         </div>
-        <hr style="border: 0; border-top: 1px solid #333; margin: 16px 0;">
+        <hr class="bay-mapping-divider">
     `;
 
     const primarySelect = container.querySelector(`#path-${bayId}`);
@@ -292,10 +291,10 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
         const primaryLabel = container.querySelector(`#primary-label-${bayId}`);
 
         if (e.target.value === 'u2') {
-            nvmeGroup.style.display = 'block';
+            nvmeGroup.classList.remove('hidden');
             primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path (SATA Mode)';
         } else {
-            nvmeGroup.style.display = 'none';
+            nvmeGroup.classList.add('hidden');
             primaryLabel.textContent = 'Primary SAS/SATA Controller Port Path';
             nvmeSelect.value = "";
         }

@@ -85,5 +85,83 @@ Repeatable validation plan for backend, frontend, and operational behaviors, upd
 | Protocol | Detection Expectation | Expected Preferred Methods |
 |---|---|---|
 | NVMe | `interface_type=nvme` | `crypto`, `block`, `overwrite` |
-| SATA | `interface_type=sata` | `enhanced_secure_erase`, `secure_erase`, `overwrite` |
-| SAS | `interface_type=sas` | `block`, `overwrite` (conservative) |
+| SATA | `interface_type=sata` | `crypto`, `block`, `overwrite` |
+| SAS | `interface_type=sas` | `crypto`, `block`, `overwrite` |
+
+---
+
+## New Feature Test Cases
+
+### Test Case 9: Pre-Wipe Health Gate
+* **Objective**: Verify the health gate rejects drives with critical SMART failures before starting a wipe.
+* **Procedure**:
+  1. Insert/simulate a drive with health score below the `prewipe_health_gate_min_score` threshold.
+  2. Attempt to start an erase job.
+  3. Verify the job is immediately marked as `failed` with a health-gate rejection reason.
+  4. Insert/simulate a healthy drive and verify the job proceeds normally.
+* **Pass Criteria**: Unhealthy drives are rejected before the erase command is issued; healthy drives proceed to wipe.
+
+### Test Case 10: SMART Self-Test Runner
+* **Objective**: Verify SMART self-tests can be started, polled, and cancelled.
+* **Procedure**:
+  1. Start a short SMART self-test via `POST /api/admin/drives/<device>/smart-test`.
+  2. Poll `GET /api/admin/drives/<device>/smart-test-status` and verify progress is reported.
+  3. Wait for completion and verify the final status is reported correctly.
+  4. Start a long test and verify it can be cancelled.
+* **Pass Criteria**: Self-test lifecycle (start → running → completed/cancelled) works correctly.
+
+### Test Case 11: Batch Intake Triage Report
+* **Objective**: Verify the triage report displays all connected drives with correct recommendations.
+* **Procedure**:
+  1. Insert multiple drives with varying health levels (healthy, degraded, failing).
+  2. Navigate to the Batch Intake Triage tab (Tab 2).
+  3. Verify each drive appears with correct serial, model, health score, and recommendation.
+  4. Verify the flag column highlights anomalous signals (FAILED status, halted scan, uncorrectable errors).
+* **Pass Criteria**: Triage report accurately reflects drive health and recommendations for all connected drives.
+
+### Test Case 12: Enclosure CRUD Operations
+* **Objective**: Verify enclosure creation, update, deletion, and slot management via the admin API.
+* **Procedure**:
+  1. Create a new enclosure via `POST /api/admin/enclosures`.
+  2. Add slots via `POST /api/admin/enclosures/<id>/slots`.
+  3. Update slot mappings via `PUT /api/admin/enclosures/<id>/slots/<num>/mappings/<type>`.
+  4. Retrieve the enclosure via `GET /api/admin/enclosures/<id>` and verify all changes.
+  5. Delete a slot and verify it is removed.
+  6. Delete the enclosure and verify it is removed.
+* **Pass Criteria**: Full CRUD lifecycle for enclosures and slots works correctly via API.
+
+### Test Case 13: Zero-Check Manager
+* **Objective**: Verify zero-check jobs can be started, polled, and cancelled.
+* **Procedure**:
+  1. Start a zero-check via `POST /api/drives/<bay>/zero-check`.
+  2. Verify the zero-check status is reported in the drive payload.
+  3. Cancel the zero-check via `DELETE /api/drives/<bay>/zero-check`.
+  4. Verify the zero-check state is cleared.
+* **Pass Criteria**: Zero-check lifecycle (start → running → cancelled) works correctly.
+
+### Test Case 14: WebSocket Real-Time Updates
+* **Objective**: Verify WebSocket events are pushed to the frontend for drive discovery and SMART updates.
+* **Procedure**:
+  1. Open the web UI and verify WebSocket connection is established.
+  2. Insert a drive and verify the drive appears without a manual page refresh.
+  3. Wait for background SMART collection and verify SMART data updates are pushed.
+  4. Disconnect the WebSocket and verify the frontend falls back to polling.
+* **Pass Criteria**: Real-time updates work via WebSocket; polling fallback activates when WebSocket is unavailable.
+
+### Test Case 15: Drive Model Risk Profiles
+* **Objective**: Verify per-model thresholds are applied during health scoring.
+* **Procedure**:
+  1. Configure a drive model profile in `config/drive_models.json` with a specific `trip_temperature`.
+  2. Insert a drive matching that model and verify the trip temperature threshold is applied.
+  3. Insert a drive not in the profiles and verify generic thresholds are used.
+  4. Verify `GET /api/admin/drive-models` returns all configured profiles.
+* **Pass Criteria**: Model-specific thresholds are applied when available; generic thresholds are used as fallback.
+
+### Test Case 16: Kill-All-Jobs
+* **Objective**: Verify the kill-all-jobs endpoint terminates all running erase jobs.
+* **Procedure**:
+  1. Start multiple erase jobs across different bays.
+  2. Call `POST /api/admin/jobs/kill-all`.
+  3. Verify all running jobs are terminated and marked as failed.
+  4. Verify the wipe semaphore slots are released.
+* **Pass Criteria**: All running jobs are terminated; system returns to a clean state.

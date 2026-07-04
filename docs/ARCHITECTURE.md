@@ -7,6 +7,11 @@
 - `README.md` - Quickstart and installation instructions
 - `docs/api-contract.md` - API endpoint specifications
 - `docs/SOP_technician_guide.md` - Operational procedures for technicians
+- `docs/admin-guide.md` - System Administration features guide
+- `docs/enclosure-mapping-guide.md` - Enclosure setup and slot configuration
+- `docs/deployment.md` - Installation, releases, validation, and rollback
+- `docs/operations.md` - Service operations and troubleshooting
+- `docs/lifecycle.md` - Erase job lifecycle states and transitions
 
 ---
 
@@ -87,22 +92,23 @@
 - Required fields:
   - technician
   - ticket number
-  - bay
-  - typed confirmation (`erase {bay}`)
+  - bays (array)
+  - typed confirmation (`erase BAY <display_number>` for single, `erase <count> drives` for multiple)
 - Hard blocks:
   - `locked` bays
   - `os` and `reserved` roles
   - absent or unresolved devices
 - Method selection is constrained by detected capabilities and policy override settings
-- Job states are `queued`, `running`, `completed`, `failed`
+- Job states are `queued`, `running`, `completed`, `failed`, `cancelled`
 - Erase jobs are persisted to SQLite (`data/wipes.db`) so job status survives process restart and can be queried by job id
 - Job persistence includes verification, marker, and certificate payloads for audit continuity
 
 ## Bay Safety Model
-- Bay 0 = OS drive = locked / view only
-- Bay 1 = reserved / locked
-- Remaining work bays are wipe-capable based on platform
-- On the 4-bay test server, bays 2-3 are active wipe bays
+- Bay roles are configurable in `config/bay_map.json`, not hardcoded
+- Default config: bay0=wipe, bay1=OS (locked), bay2-3=wipe
+- The OS drive bay is locked and view-only; it can never be a wipe target
+- Any bay with `role: "os"` or `role: "reserved"` is hard-blocked from wipe operations
+- Bay `display_number` (from `bay_map.json`) is used in confirmation text and UI labels, not the raw bay ID
 - Protected bays must never be wipe targets even if detected and healthy
 
 ## Erase Workflow Requirements
@@ -116,7 +122,7 @@
 ## Erase Method Policy
 - NVMe: Crypto > Block > Overwrite
 - SAS: Crypto > Block > Overwrite
-- SATA: Enhanced Secure Erase > Secure Erase > Overwrite
+- SATA: Crypto > Block > Overwrite (configured in `policy.json` `method_priority`)
 - Allow operator override only within methods actually supported by the detected device
 - Current execution mapping in backend:
   - overwrite: `dd`
@@ -210,7 +216,7 @@
 
 ## Multi-Vector Health Scoring (SATA/NVMe/SAS)
 - **Problem**: Simple threshold checks or linear raw bad sector counts caused inaccurate drive life expectancy bars (e.g., used SSDs with harmless retired blocks showing 60% health).
-- **Decision**: Implemented a comprehensive multi-vector scoring engine in `backend/disk_ops.py` to calculate a single `health_score` (0-100) returned via `/api/drives`:
+- **Decision**: Implemented a comprehensive multi-vector scoring engine in `backend/smart_health.py` to calculate a single `health_score` (0-100) returned via `/api/drives`:
   - **Mutually Exclusive Wear-Life**: SSD base health starts at remaining flash wear life. HDD base health starts at 100% and ages gracefully via Power-On Hours (POH) and workload Full Drive Writes (FDW).
   - **Differentiated Bad Sectors**: HDDs are penalized strictly on raw bad sector counts (immediate warning). SSDs are ignored for raw bad blocks and are only penalized if their available spare pool deplets below 100%.
   - **Pre-Fail Overrides**: Bit 3 and Bit 4 of `smartctl`'s exit status immediately force the health score to a maximum of 5%. Bit 5 (usage warnings) is explicitly ignored to prevent POH double-dipping.
@@ -270,3 +276,39 @@
 - **Future option (Option B)**: Asynchronous collection. Keep the endpoint lightweight but return a job ID, push results via WebSocket, and have the frontend poll or listen for the unmapped drive list. This makes the UI resilient if the scan ever takes longer than a few seconds, but requires new job-state plumbing and frontend loading states.
 - **Future option (Option C)**: Lazy loading. Do not fetch unmapped drives on initial admin page load; only request them when the user opens a bay mapping dropdown. This gives the fastest first paint but merely relocates the delay to the first dropdown interaction.
 - **Rationale**: Option A is the minimal root-cause fix. It drops the scan from ~60 seconds to ~1–3 seconds for 25 drives, which eliminates the need for async or lazy loading for the current scale. Options B and C are documented here in case the system grows to hundreds of drives or if users still perceive the admin page as sluggish.
+
+## Pre-Wipe Health Gate
+- **Purpose**: Prevents wasting time on drives likely to fail mid-wipe by checking SMART health before starting the erase command
+- **Implementation**: `backend/smart_health_gate.py` — `pre_wipe_health_gate()` evaluates drive health score and SMART attributes before the erase command is issued
+- **Behavior**: If the health gate fails, the job is marked as failed with a health-gate rejection reason, avoiding a potentially hours-long wipe on a dying drive
+- **Configuration**: Controlled by `prewipe_health_gate_*` policy keys in `policy.json` (enable/disable, thresholds)
+- **Lifecycle Position**: Sits between INSPECTED and WIPE_READY states in the job lifecycle
+
+## SMART Self-Test Runner
+- **Purpose**: Allows technicians to run diagnostic SMART self-tests (short, long, conveyance) from the admin panel
+- **Implementation**: `backend/smart_test_runner.py` — `run_smart_test()`, `get_smart_test_status()`
+- **Persistence**: Test results are stored in SQLite via `backend/smart_db.py`
+- **API**: `POST /api/admin/drives/<device>/smart-test` (start), `GET /api/admin/drives/<device>/smart-test-status` (poll)
+- **Concurrency**: Device-level locking prevents concurrent tests on the same drive
+
+## Batch Intake Triage System
+- **Purpose**: Provides a quick summary report of all connected drives, recommending an action (Wipe, Scratch, or Destroy) based on health scoring
+- **Implementation**: `frontend/triageReport.js` (rendering), `frontend/admin/triageConfig.js` (threshold configuration)
+- **Configuration**: Triage thresholds in `policy.json` under `triage_thresholds` (SSD/HDD power-on hours, health score thresholds, FDW thresholds, SAS defect thresholds)
+- **UI**: Tab 2 in the frontend — displays a table of all drives with recommended actions
+- **Threshold Tuning**: Admin panel (Tab 4) allows adjusting triage thresholds via `GET/POST /api/admin/triage-config`
+
+## WebSocket / Socket.IO Real-Time Updates
+- **Purpose**: Eliminates polling for drive discovery and job status updates by pushing changes to the frontend in real-time
+- **Implementation**: Backend uses Flask-SocketIO; frontend uses `socket.io.min.js` client
+- **Events**: Drive discovery updates, extended SMART collection completion, zero-check progress, job status changes
+- **Background SMART**: `backend/extended_smart.py` uses `set_websocket_manager()` to push SMART data updates as they complete
+- **Fallback**: Frontend retains polling fallback for environments where WebSocket connections fail
+
+## Drive Model Risk Profiles
+- **Purpose**: Per-model thresholds for vendor-specific SMART attributes (e.g., Seagate NME thresholds, trip temperatures)
+- **Implementation**: `config/drive_models.json` — keyed by `VENDOR,PRODUCT,REVISION`
+- **Loading**: `backend/smart_data_parsing.py` — `_load_drive_models()` loads profiles at runtime
+- **API**: `GET /api/admin/drive-models` returns all configured profiles
+- **Frontend**: `frontend/admin/driveModels.js` provides admin UI for managing profiles
+- **Usage**: Health scoring engine consults model-specific thresholds when available, falling back to generic thresholds when a drive model is not configured

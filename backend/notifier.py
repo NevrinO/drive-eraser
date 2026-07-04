@@ -48,7 +48,7 @@ def send_slack_notification(job, status_override=None):
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             response.read()
     except Exception:
         pass

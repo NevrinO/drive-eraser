@@ -272,7 +272,7 @@ class TestSASRecommendationWithFixtures:
     @patch('smart_data_parsing.run_command')
     @patch('smart_data_parsing.get_command_path')
     def test_sas_healthy_drive_recommendation(self, mock_get_command_path, mock_run_command):
-        """Test healthy SAS drive is recommended SCRATCH."""
+        """Test healthy SAS drive is recommended USED_GOOD under unified health score."""
         from smart_parsing import get_smart_data, calculate_drive_health_score, get_drive_recommendation
 
         with open('tests/fixtures/smart/sas_healthy_drive.json', 'r') as f:
@@ -285,7 +285,7 @@ class TestSASRecommendationWithFixtures:
         health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
-        assert recommendation["status"] == "SCRATCH"
+        assert recommendation["status"] == "USED_GOOD"
 
     @patch('smart_data_parsing.run_command')
     @patch('smart_data_parsing.get_command_path')
@@ -322,8 +322,9 @@ class TestSASRecommendationWithFixtures:
         health, _ = calculate_drive_health_score("sas", smart)
         recommendation = get_drive_recommendation("sas", smart, health)
 
-        # Sticky LBA should trigger at least SCRATCH
-        assert recommendation["status"] in ["SCRATCH", "DESTROY"]
+        # Under unified health score: 20000 POH (no penalty), 50 grown defects (~34 penalty),
+        # sticky LBA (15 penalty) → score ~51, between scratch (50) and good (75) → USED_HEAVY
+        assert recommendation["status"] == "USED_HEAVY"
 
     @patch('smart_data_parsing.run_command')
     @patch('smart_data_parsing.get_command_path')

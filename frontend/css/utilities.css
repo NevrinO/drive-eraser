@@ -229,3 +229,131 @@
 .py-3 {
   padding: 12px;
 }
+
+/* --- CSP Refactor: New Utility + Component Classes --- */
+
+.flex-1 {
+  flex: 1;
+}
+
+.ml-auto {
+  margin-left: auto;
+}
+
+.mb-4 {
+  margin-bottom: 16px;
+}
+
+.noscript-message {
+  padding: 2rem;
+  text-align: center;
+}
+
+.admin-list-scroll {
+  margin-top: 12px;
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.triage-table-container {
+  overflow-x: auto;
+}
+
+.section-title--mt {
+  margin-top: 16px;
+  margin-bottom: 8px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.warning-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--color-warning);
+}
+
+/* Zero-check warning box */
+.zero-check-warning {
+  margin-top: 16px;
+  padding: 12px;
+  background: rgba(6, 182, 212, 0.14);
+  border: 1px solid var(--color-teal);
+  border-radius: 4px;
+}
+
+.zero-check-warning-title {
+  font-weight: 700;
+  color: var(--color-teal);
+  margin-bottom: 4px;
+}
+
+.zero-check-warning-body {
+  font-size: 0.8rem;
+  color: var(--color-text);
+}
+
+.zero-check-warning-list {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+}
+
+/* Template preview modal */
+.template-preview-info {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #222;
+  border-radius: 4px;
+}
+
+.template-preview-buttons {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.template-preview-grid {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  background: #1a1a1a;
+  border-radius: 4px;
+  min-height: 300px;
+}
+
+/* Drive models modal */
+.drive-models-info-box {
+  margin-bottom: 12px;
+  padding: 12px;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+}
+
+.drive-models-info-text {
+  font-size: 0.8rem;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.drive-models-info-warning {
+  font-size: 0.75rem;
+  color: var(--color-warning);
+}
+
+.drive-models-list {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Health gate override section */
+.override-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+}

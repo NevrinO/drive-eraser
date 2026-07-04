@@ -13,7 +13,7 @@ from flask import request, jsonify, send_from_directory
 
 from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, calculate_session_token, limiter, get_wipe_semaphore
 from routes.admin_routes import require_admin_auth
-from job_management import validate_single_bay, create_erase_job, run_erase_job
+from job_management import validate_single_bay, create_erase_job, run_erase_job, check_health_gate_sync
 from common import get_config_dir, load_policy, get_db_path
 from database import persist_job
 from disk_ops import discover_drives
@@ -122,6 +122,19 @@ def register_routes(flask_app):
             full_verification = payload.get("full_verification", False)
             health_gate_override = payload.get("health_gate_override", False)
             health_gate_override_justification = payload.get("health_gate_override_justification", "")
+
+            # Synchronous health gate pre-check before starting background jobs
+            for validated in validated_bays:
+                device = validated.get("device")
+                interface_type = validated.get("drive", {}).get("interface_type")
+                gate_result = check_health_gate_sync(device, interface_type, policy, health_gate_override)
+                if gate_result.get("blocked"):
+                    return jsonify({
+                        "error": gate_result["error_code"],
+                        "error_code": gate_result["error_code"],
+                        "block_reason": gate_result["block_reason"],
+                        "override_available": gate_result["override_available"],
+                    }), 400
 
             accepted_jobs = []
             semaphore = get_wipe_semaphore()

@@ -26,16 +26,20 @@ The lifecycle is designed to support:
 
 The primary lifecycle is:
 
-DETECTED → IDENTIFIED → INSPECTED → WIPE_READY → ERASING → VERIFYING → MARKING → CERTIFIED → COMPLETE
+DETECTED → IDENTIFIED → INSPECTED → HEALTH_GATE → WIPE_READY → ERASING → VERIFYING → MARKING → CERTIFIED → COMPLETE
 
 Possible branch states:
 
 - INSPECTED → REJECTED
+- HEALTH_GATE → REJECTED (health gate failure)
 - ERASING → ERASE_FAILED
+- ERASING → CANCELLED (technician-initiated cancellation)
 - VERIFYING → VERIFY_FAILED
 - MARKING → MARK_FAILED_WARNING → CERTIFIED
 
 This means a drive can complete successfully even if marker writing fails, as long as erase and verification succeeded.
+
+A drive can also be cancelled by the technician while in the `ERASING` state, which is a terminal state — the job is marked as cancelled and the drive must be re-erased from scratch if needed.
 
 ---
 
@@ -191,6 +195,35 @@ For poor drive health, this is currently a soft stop:
 
 ---
 
+### 4.5 HEALTH_GATE
+
+#### Definition
+The system has evaluated the drive's SMART health and I/O error status to determine if it is safe to proceed with wiping.
+
+#### Entry Conditions
+- Drive has been inspected successfully
+- Pre-wipe health gate is enabled in policy (`prewipe_health_gate_*` keys)
+
+#### System Actions
+- evaluate drive health score against configured thresholds
+- check for critical SMART pre-fail attributes (Bit 3/Bit 4)
+- check for excessive I/O errors or grown defect lists
+- determine whether the drive is stable enough for a potentially hours-long wipe
+
+#### Possible Outcomes
+- Proceed to `WIPE_READY` (health is acceptable)
+- Proceed to `REJECTED` (health is too poor — fail fast to avoid wasting time on a dying drive)
+
+#### Technician View
+- If passed: no visible interruption, proceeds to wipe-ready state
+- If failed: job is immediately marked as failed with a health-gate rejection reason
+
+#### Implementation
+- `backend/smart_health_gate.py` — `pre_wipe_health_gate()`
+- Called from `backend/job_management.py` — `check_health_gate_sync()`
+
+---
+
 ### 5. WIPE_READY
 
 #### Definition
@@ -212,7 +245,7 @@ The drive is approved for wiping and waiting for technician confirmation.
 #### Technician Inputs
 - technician name
 - ticket number
-- typed confirmation string, such as `ERASE`
+- typed confirmation string: `erase BAY <display_number>` (single drive) or `erase <count> drives` (multiple drives)
 - optional method override
 
 #### Technician View
@@ -298,6 +331,30 @@ The erase command failed, aborted, or returned an error before completion.
 - failure reason
 - exit code or error details
 - timestamp
+
+---
+
+### 7.5 CANCELLED
+
+#### Definition
+The technician manually cancelled the erase job while it was running or queued.
+
+#### Entry Conditions
+- Erase job was in `running` or `queued` state
+- Technician issued cancel via `POST /api/erase/jobs/<job_id>/cancel`
+
+#### System Actions
+- terminate the running erase process if applicable
+- mark job as `cancelled` in database
+- release the wipe semaphore slot
+- log the cancellation with timestamp and technician context
+
+#### Technician View
+- status shows `Cancelled`
+- drive may need to be re-erased from scratch if the wipe was partially complete
+
+#### Notes
+This is a terminal state. The job cannot be resumed — a new erase job must be started if the drive needs to be wiped.
 
 ---
 
@@ -491,16 +548,19 @@ This is the terminal state for a successful lifecycle. The drive may now be remo
 
 ## Lifecycle Diagram
 
-```
+```text
 DETECTED
     ↓
 IDENTIFIED
     ↓
 INSPECTED → REJECTED
     ↓
+HEALTH_GATE → REJECTED (health gate failure)
+    ↓
 WIPE_READY
     ↓
 ERASING → ERASE_FAILED
+    |       → CANCELLED
     ↓
 VERIFYING → VERIFY_FAILED
     ↓
@@ -517,106 +577,66 @@ COMPLETE
 
 The lifecycle behavior can be configured via `config/policy.json`:
 
-- `strict_audit_mode`: Requires non-empty wipe_passphrase and enforces verification
+**Core Policy**:
+- `strict_audit_mode`: Requires non-empty wipe_passphrase (≥ 8 chars) and enforces verification
 - `prewipe_zero_detection_enabled`: Enable/disable automatic pre-wipe zero detection (runs as a background visual-only check before a wipe)
 - `post_erase_marker`: Enables post-erase marker writing
 - `allow_method_override`: Allow technicians to override the recommended erase method
+- `method_priority`: Object mapping interface types (`nvme`, `sas`, `sata`) to ordered method arrays (e.g., `["crypto", "block", "overwrite"]`)
+- `crypto_fail_retry_block`: Retry with block erase if crypto erase fails
+- `health_soft_stop`: Soft-stop on health issues during discovery
+
+**Verification Policy**:
 - `secondary_verification_mode`: `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)
+
+**Pre-Wipe Health Gate**:
+- `prewipe_health_gate_enabled`: Enable/disable the pre-wipe health gate check
+- `prewipe_health_gate_min_score`: Minimum health score required to proceed (0-100)
+- `prewipe_health_gate_max_reallocated`: Maximum reallocated sectors allowed
+- `prewipe_health_gate_max_pending`: Maximum pending sectors allowed
+- Additional `prewipe_health_gate_*` keys for SAS defect thresholds, power-on hours, etc.
+
+**Zero-Check Configuration**:
+- `zero_detection_concurrency_limit`: Maximum concurrent zero-check jobs
+- `zero_check_sample_size`: Sample size for zero-check reads
+- `zero_check_timeout_seconds`: Hard timeout for zero-check operations
+
+**Discovery & SMART**:
 - `discovery_max_workers`: Parallel SMART query threads during discovery
+- `background_smart_max_workers`: Maximum workers for background extended SMART collection
+- `discovery_diag`: Enable/disable discovery diagnostics
+
+**Job Management**:
 - `max_concurrent_wipes`: Maximum simultaneous erase jobs
 - `blockdev_post_wipe_retries`: Retry attempts for post-wipe `blockdev --getsize64`
 - `blockdev_post_wipe_retry_delay`: Seconds between post-wipe blockdev retries
+
+**Triage Thresholds** (nested object under `triage_thresholds`):
+- `ssd_new_poh_threshold`, `ssd_high_poh_threshold`: SSD power-on hour thresholds
+- `hdd_new_poh_threshold`: HDD power-on hour threshold
+- `health_score_destroy_threshold`, `health_score_scratch_threshold`, `health_score_good_threshold`: Health score action thresholds
+- `ssd_new_fdw_threshold`, `hdd_new_fdw_threshold`: Full drive write thresholds
+- `realloc_raw_new_threshold`: Reallocated sector threshold
+- `sas_grown_defect_fail_threshold`, `sas_nme_advisory_threshold`, `sas_nme_penalty_threshold`, `sas_sticky_lba_threshold`, `sas_high_poh_threshold`: SAS-specific thresholds
+
+**Certificate & Retention**:
 - `certificate_retention_days`: How long to keep certificates in database
-- `log_retention_days`: How long to keep operational logs
+- `max_logo_size_mb`: Maximum logo file size for certificates
+- `max_bulk_cert_batch_size`: Maximum batch size for bulk certificate generation
 
 ---
 
 ## Physical Slot Mapping Configuration
 
-The drive discovery and bay mapping system uses an enclosure-based physical slot architecture configured via `config/bay_map.json`:
+The drive discovery and bay mapping system uses an enclosure-based physical slot architecture configured via `config/bay_map.json`. The system supports:
 
-### Schema Structure
+- **Enclosure templates** with configurable slot counts, hybrid slots, and traversal presets
+- **Multiple slot types**: SAS expander, SAS direct, motherboard SATA, PCIe NVMe
+- **Master slot map** auto-generated from sysfs (cached 60 seconds)
+- **MPIO resolution** for dual-ported SAS drives
+- **Hybrid bays** supporting both SAS/SATA and NVMe in the same physical slot
 
-**Templates**: Define physical layout independent of hardware
-- `id`: Template identifier (e.g., "dell_r440_10bay")
-- `name`: Human-readable template name
-- `vendor`: Hardware vendor
-- `slot_count`: Total number of physical slots
-- `hybrid_slots`: Array of physical slot numbers that support multiple interface types
-- `traversal_preset`: Slot traversal order for workbench display
-- `default_role`: Default role for slots (wipe, os, reserved)
-
-**Enclosures**: Physical chassis/backplanes with hardware bindings
-- `id`: Enclosure identifier
-- `name`: Human-readable enclosure name
-- `template_id`: Reference to template definition
-- `pci_controller`: PCI address of HBA/controller (e.g., "0000:af:00.0")
-- `expander_sas_address`: SAS address of expander (null for direct AHCI/NVMe)
-- `display_order`: Display order in UI
-- `slots`: Physical slot mappings
-  - `physical_slot_number`: 0-indexed slot number from hardware
-  - `label`: Custom display label (e.g., "Bay 1")
-  - `role`: Slot role (wipe, os, reserved)
-  - `locked`: Whether slot is locked from modification
-  - `mappings`: Interface type mappings
-    - `sas_sata`: {slot_type, hardware_identifier, auto_detected}
-    - `nvme`: {slot_type, hardware_identifier, auto_detected}
-
-### Supported Slot Types
-
-1. **sas_expander**: HBA + SAS expander topology (`phy-X:Y:Z`)
-2. **sas_direct**: Direct HBA connection (`phy-X:Y`)
-3. **motherboard_sata**: Onboard AHCI ports (`ataX`)
-4. **pcie_nvme**: U.2/U.3 hotplug bays (PCIe slots from `/sys/bus/pci/slots/`)
-
-### Master Slot Map
-
-The system automatically generates a master slot map by scanning sysfs:
-- PCI controller addresses
-- Slot types (SAS expander, SAS direct, motherboard SATA, PCIe NVMe)
-- Expander SAS addresses (for collision prevention in multi-expander setups)
-- Physical slot numbers
-- Hardware identifiers (phy paths, PCIe slot numbers)
-
-This map is cached for 60 seconds to reduce sysfs overhead while keeping drive presence detection real-time for hot-swapping.
-
-### MPIO (Multipath I/O) Resolution
-
-When a drive is dual-ported under MPIO, the system automatically resolves both paths to a single Device Mapper node:
-- Checks `/sys/block/<dev>/holders` for dm-* entries
-- Maps to `/dev/mapper/mpathX` or `/dev/dm-X` as the unified device path
-- Presents a single device to the UI and wipe operations
-
-### Setup Instructions
-
-1. **Initial Setup**: Use the System Administration panel to create enclosures
-2. **Controller Selection**: Select PCI controller and expander SAS address from master map
-3. **Template Selection**: Choose a template matching your physical chassis
-4. **Auto-Mapping**: System auto-detects slot mappings (0→0, 1→1, etc.)
-5. **Hybrid Configuration**: For hybrid templates, select starting PCIe NVMe slot for auto-incrementing
-6. **Verification**: Review auto-detected mappings against actual drive presence
-7. **Manual Override**: Correct any incorrect mappings before saving
-8. **Multi-Enclosure**: Repeat for additional enclosures as needed
-
-### Hybrid NVMe Bay Configuration
-
-Some enclosures support both SAS/SATA and NVMe drives in the same physical slot (hybrid bays). To configure hybrid bays:
-
-1. **Template Configuration**: In the Template Management panel, specify which physical slots are hybrid using the `hybrid_slots` field (comma-separated bay numbers, e.g., "1,5,9").
-2. **Enclosure Mapping**: When creating an enclosure from a hybrid template, the system will:
-   - Display both SAS/SATA and NVMe mapping options for hybrid slots
-   - Allow auto-incrementing NVMe slot numbers for sequential PCIe slot mapping
-   - Store separate hardware identifiers for each interface type
-3. **Drive Detection**: During discovery, the system:
-   - Detects which interface type is present in each hybrid slot
-   - Updates the `auto_detected` flag for the active interface
-   - Falls back to the configured mapping if auto-detection fails
-4. **UI Display**: Hybrid slots show the active interface type based on the detected drive
-
-**Example**: A 16-bay enclosure with slots 1, 5, 9, and 13 configured as hybrid:
-- Slot 1 can accept either a SAS drive (via SAS expander) or an NVMe drive (via PCIe slot 0)
-- When an NVMe drive is inserted in slot 1, the system detects it at `/sys/bus/pci/slots/0` and maps it accordingly
-- When a SAS drive is inserted, the system detects it via the SAS expander phy path
+For detailed schema reference, setup instructions, hybrid configuration, and worked examples, see **[enclosure-mapping-guide.md](enclosure-mapping-guide.md)**.
 
 ---
 

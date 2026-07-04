@@ -56,11 +56,15 @@ class TestAdminRoutes:
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
             patch('database.get_cert_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_config_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_data_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_failed_logs_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_db_path', return_value=test_db_path),
+            patch('routes._shared.get_config_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_config_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_data_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_logs_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_failed_logs_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_db_path', return_value=test_db_path),
+            patch('routes.policy_routes.get_config_dir', return_value=test_config_dir),
+            patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
+            patch('routes.smart_routes.get_config_dir', return_value=test_config_dir),
         ]
         for p in patches:
             p.start()
@@ -77,17 +81,18 @@ class TestAdminRoutes:
             admin_bp = getattr(admin_routes, 'admin_bp', None)
             if admin_bp:
                 app.register_blueprint(admin_bp)
+            from routes.support_routes import support_bp
+            from routes.policy_routes import policy_bp
+            from routes.enclosure_routes import enclosure_bp
+            from routes.smart_routes import smart_bp
+            app.register_blueprint(support_bp)
+            app.register_blueprint(policy_bp)
+            app.register_blueprint(enclosure_bp)
+            app.register_blueprint(smart_bp)
             # Register api_routes module routes (e.g., /api/auth/verify)
             api_routes.register_routes(app)
             yield app
         finally:
-            # Clean up database connections before stopping patches
-            from database import close_all_connections
-            try:
-                # Close all SQLite connections to prevent ResourceWarning
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 
@@ -106,18 +111,18 @@ class TestAdminRoutes:
 
     def test_admin_metrics_unauthenticated_remote(self, client):
         """Test that remote requests without authentication return 401."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = client.get('/api/admin/metrics')
             assert response.status_code == 401
 
     def test_admin_metrics_authenticated(self, admin_session):
         """Test that authenticated requests return metrics."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.get_ram_usage', return_value=50.0):
-                with patch('routes.admin_routes.get_cpu_usage', return_value=25.0):
-                    with patch('routes.admin_routes.get_system_uptime', return_value="1d 2h"):
-                        with patch('routes.admin_routes.get_local_ip', return_value="192.168.1.100"):
-                            with patch('routes.admin_routes.shutil.disk_usage') as mock_disk:
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes.support_routes.get_ram_usage', return_value=50.0):
+                with patch('routes.support_routes.get_cpu_usage', return_value=25.0):
+                    with patch('routes.support_routes.get_system_uptime', return_value="1d 2h"):
+                        with patch('routes.support_routes.get_local_ip', return_value="192.168.1.100"):
+                            with patch('routes.support_routes.shutil.disk_usage') as mock_disk:
                                 mock_disk.return_value = (1000000000, 500000000, 500000000)
                                 response = admin_session.get('/api/admin/metrics')
                                 assert response.status_code == 200
@@ -128,19 +133,19 @@ class TestAdminRoutes:
 
     def test_admin_metrics_local_request_allowed(self, client):
         """Test that localhost requests bypass authentication."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
-            with patch('routes.admin_routes.get_ram_usage', return_value=50.0):
-                with patch('routes.admin_routes.get_cpu_usage', return_value=25.0):
-                    with patch('routes.admin_routes.get_system_uptime', return_value="1d 2h"):
-                        with patch('routes.admin_routes.get_local_ip', return_value="127.0.0.1"):
-                            with patch('routes.admin_routes.shutil.disk_usage') as mock_disk:
+        with patch('routes._shared.is_local_request', return_value=True):
+            with patch('routes.support_routes.get_ram_usage', return_value=50.0):
+                with patch('routes.support_routes.get_cpu_usage', return_value=25.0):
+                    with patch('routes.support_routes.get_system_uptime', return_value="1d 2h"):
+                        with patch('routes.support_routes.get_local_ip', return_value="127.0.0.1"):
+                            with patch('routes.support_routes.shutil.disk_usage') as mock_disk:
                                 mock_disk.return_value = (1000000000, 500000000, 500000000)
                                 response = client.get('/api/admin/metrics')
                                 assert response.status_code == 200
 
     def test_test_webhook_no_url_configured(self, admin_session):
         """Test webhook test fails when no URL configured."""
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.support_routes.load_policy') as mock_load:
             mock_load.return_value = {"slack_webhook_url": None}
             response = admin_session.post('/api/admin/test-webhook')
             assert response.status_code == 400
@@ -149,12 +154,12 @@ class TestAdminRoutes:
 
     def test_test_webhook_success(self, admin_session):
         """Test webhook test succeeds with valid URL."""
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.support_routes.load_policy') as mock_load:
             mock_load.return_value = {
                 "slack_webhook_url": "https://hooks.slack.com/test",
                 "station_id": "test-station"
             }
-            with patch('routes.admin_routes.urllib.request.urlopen') as mock_urlopen:
+            with patch('routes.support_routes.urllib.request.urlopen') as mock_urlopen:
                 mock_response = Mock()
                 mock_response.getcode.return_value = 200
                 mock_urlopen.return_value.__enter__.return_value = mock_response
@@ -172,15 +177,15 @@ class TestAdminRoutes:
 
     def test_support_bundle_download(self, admin_session):
         """Test support bundle download endpoint."""
-        with patch('routes.admin_routes.socket.gethostname', return_value="test-host"):
-            with patch('routes.admin_routes.subprocess.run') as mock_run:
+        with patch('routes.support_routes.socket.gethostname', return_value="test-host"):
+            with patch('routes.support_routes.subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(stdout="test output", stderr="")
-                with patch('routes.admin_routes.os.listdir', return_value=[]):
-                    with patch('routes.admin_routes.os.makedirs'):
-                        with patch('routes.admin_routes.tarfile.open') as mock_tar:
+                with patch('routes.support_routes.os.listdir', return_value=[]):
+                    with patch('routes.support_routes.os.makedirs'):
+                        with patch('routes.support_routes.tarfile.open') as mock_tar:
                             mock_tar.return_value.__enter__.return_value = MagicMock()
-                            with patch('routes.admin_routes.shutil.rmtree'):
-                                with patch('routes.admin_routes.send_file') as mock_send:
+                            with patch('routes.support_routes.shutil.rmtree'):
+                                with patch('routes.support_routes.send_file') as mock_send:
                                     mock_send.return_value = MagicMock(status_code=200)
                                     response = admin_session.get('/api/admin/support-bundle')
                                     # Should return 200 or 500 depending on implementation
@@ -217,8 +222,8 @@ class TestAdminRoutes:
 
     def test_admin_policy_post_update_background_smart_workers_restarts_pool(self, admin_session):
         """Test that changing background_smart_max_workers restarts the extended SMART pool."""
-        import routes.admin_routes as admin_module
-        with patch.object(admin_module, 'stop_extended_smart_pool') as mock_stop:
+        import routes.policy_routes as policy_module
+        with patch.object(policy_module, 'stop_extended_smart_pool') as mock_stop:
             payload = {"background_smart_max_workers": 6}
             response = admin_session.post('/api/admin/policy', json=payload)
             assert response.status_code == 200
@@ -236,7 +241,7 @@ class TestAdminRoutes:
 
     def test_admin_triage_config_get(self, admin_session):
         """Test GET triage config endpoint."""
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.policy_routes.load_policy') as mock_load:
             mock_load.return_value = {"triage_thresholds": {"ssd_new_poh_threshold": 1000}}
             response = admin_session.get('/api/admin/triage-config')
             assert response.status_code == 200
@@ -249,9 +254,9 @@ class TestAdminRoutes:
             "ssd_new_poh_threshold": 5000,
             "hdd_new_poh_threshold": 3000
         }
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.policy_routes.load_policy') as mock_load:
             mock_load.return_value = {"triage_thresholds": {}}
-            with patch('routes.admin_routes.save_policy'):
+            with patch('routes.policy_routes.save_policy'):
                 response = admin_session.post('/api/admin/triage-config', json=payload)
                 assert response.status_code == 200
 
@@ -260,7 +265,7 @@ class TestAdminRoutes:
         payload = {
             "ssd_new_poh_threshold": 999999  # Exceeds max
         }
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.policy_routes.load_policy') as mock_load:
             mock_load.return_value = {"triage_thresholds": {}}
             response = admin_session.post('/api/admin/triage-config', json=payload)
             assert response.status_code == 400
@@ -272,7 +277,7 @@ class TestAdminRoutes:
         payload = {
             "ssd_new_poh_threshold": "not-a-number"
         }
-        with patch('routes.admin_routes.load_policy') as mock_load:
+        with patch('routes.policy_routes.load_policy') as mock_load:
             mock_load.return_value = {"triage_thresholds": {}}
             response = admin_session.post('/api/admin/triage-config', json=payload)
             assert response.status_code == 400
@@ -281,7 +286,7 @@ class TestAdminRoutes:
 
     def test_manage_logo_get_no_logo(self, admin_session):
         """Test GET logo when no logo exists."""
-        with patch('routes.admin_routes.os.path.exists', return_value=False):
+        with patch('routes.support_routes.os.path.exists', return_value=False):
             response = admin_session.get('/api/admin/logo')
             assert response.status_code == 200
             data = json.loads(response.data)
@@ -289,8 +294,8 @@ class TestAdminRoutes:
 
     def test_manage_logo_get_with_logo(self, admin_session):
         """Test GET logo when logo exists."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
-            with patch('routes.admin_routes.Image.open') as mock_img:
+        with patch('routes.support_routes.os.path.exists', return_value=True):
+            with patch('routes.support_routes.Image.open') as mock_img:
                 mock_img.return_value.__enter__.return_value.width = 100
                 mock_img.return_value.__enter__.return_value.height = 100
                 with patch('builtins.open', MagicMock(return_value=BytesIO(b'test'))):
@@ -308,7 +313,7 @@ class TestAdminRoutes:
 
     def test_manage_logo_post_requires_confirmation(self, admin_session):
         """Test POST logo requires confirmation when logo exists."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
+        with patch('routes.support_routes.os.path.exists', return_value=True):
             data = {'logo': (BytesIO(b'fake'), 'test.png')}
             response = admin_session.post('/api/admin/logo', data=data, content_type='multipart/form-data')
             assert response.status_code == 400
@@ -329,7 +334,7 @@ class TestAdminRoutes:
                 "model": "Test Drive",
                 "raw": json.dumps({"test": "data"})
             }
-            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+            with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
                 response = admin_session.get('/api/admin/drives/sda/smart-export')
@@ -339,11 +344,11 @@ class TestAdminRoutes:
 
     def test_smart_export_while_wiping(self, admin_session):
         """Test smart-export blocked during active wipe."""
-        with patch('routes.admin_routes.ERASE_JOBS') as mock_jobs:
+        with patch('routes.smart_routes.ERASE_JOBS') as mock_jobs:
             mock_jobs.values.return_value = [
                 {"status": "running", "request": {"device": "/dev/sda"}}
             ]
-            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+            with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
                 response = admin_session.get('/api/admin/drives/sda/smart-export')
@@ -395,37 +400,37 @@ class TestAdminRoutes:
 
     def test_smart_test_invalid_test_type(self, admin_session):
         """Test smart-test rejects invalid test types."""
-        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
-            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+        with patch('routes.smart_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
+            with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
-                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                with patch('routes.smart_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
-                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                    with patch('routes.smart_routes.SMART_TEST_LOCKS', {}):
                         # Mock lsblk to avoid mounted drive check (403)
-                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                        with patch('routes.smart_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
                             # Mock discover_drives to avoid locked/secondary path checks (403)
-                            with patch('routes.admin_routes.discover_drives', return_value=[]):
+                            with patch('routes.smart_routes.discover_drives', return_value=[]):
                                 response = admin_session.post('/api/admin/drives/sdb/smart-test', json={"test_type": "invalid"})
                                 assert response.status_code == 400
 
     def test_smart_test_success(self, admin_session):
         """Test smart-test starts a test successfully."""
-        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
-            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+        with patch('routes.smart_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
+            with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
-                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                with patch('routes.smart_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
-                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                    with patch('routes.smart_routes.SMART_TEST_LOCKS', {}):
                         # Mock lsblk to avoid mounted drive check (403)
-                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                        with patch('routes.smart_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
                             # Mock discover_drives to avoid locked/secondary path checks (403)
-                            with patch('routes.admin_routes.discover_drives', return_value=[]):
+                            with patch('routes.smart_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",
@@ -445,12 +450,12 @@ class TestAdminRoutes:
 
     def test_smart_test_while_wiping(self, admin_session):
         """Test smart-test blocked during active wipe."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
-            with patch('routes.admin_routes.ERASE_JOBS') as mock_jobs:
+        with patch('routes.smart_routes.os.path.exists', return_value=True):
+            with patch('routes.smart_routes.ERASE_JOBS') as mock_jobs:
                 mock_jobs.values.return_value = [
                     {"status": "running", "request": {"device": "/dev/sda"}}
                 ]
-                with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+                with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                     mock_lock.__enter__ = Mock()
                     mock_lock.__exit__ = Mock()
                     response = admin_session.post('/api/admin/drives/sda/smart-test', json={"test_type": "short"})
@@ -460,19 +465,19 @@ class TestAdminRoutes:
 
     def test_smart_test_conveyance_sata_only(self, admin_session):
         """Test conveyance test rejected on non-SATA devices."""
-        with patch('routes.admin_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
-            with patch('routes.admin_routes.ERASE_JOBS_LOCK') as mock_lock:
+        with patch('routes.smart_routes.os.path.exists', side_effect=lambda path: path == "/dev/sdb"):
+            with patch('routes.smart_routes.ERASE_JOBS_LOCK') as mock_lock:
                 mock_lock.__enter__ = Mock()
                 mock_lock.__exit__ = Mock()
-                with patch('routes.admin_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
+                with patch('routes.smart_routes.SMART_TEST_LOCKS_LOCK') as mock_test_locks_lock:
                     mock_test_locks_lock.__enter__ = Mock()
                     mock_test_locks_lock.__exit__ = Mock()
-                    with patch('routes.admin_routes.SMART_TEST_LOCKS', {}):
+                    with patch('routes.smart_routes.SMART_TEST_LOCKS', {}):
                         # Mock lsblk to avoid mounted drive check (403)
-                        with patch('routes.admin_routes.subprocess.run') as mock_run:
+                        with patch('routes.smart_routes.subprocess.run') as mock_run:
                             mock_run.return_value = MagicMock(returncode=0, stdout='{"blockdevices": []}')
                             # Mock discover_drives to avoid locked/secondary path checks (403)
-                            with patch('routes.admin_routes.discover_drives', return_value=[]):
+                            with patch('routes.smart_routes.discover_drives', return_value=[]):
                                 with patch('smart_parsing.get_smart_data') as mock_get_smart:
                                     mock_get_smart.return_value = {
                                         "serial": "TEST123",
@@ -504,7 +509,7 @@ class TestAdminRoutes:
 
     def test_drive_models_endpoint(self, admin_session):
         """Test drive-models endpoint returns model profiles."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
+        with patch('routes.smart_routes.os.path.exists', return_value=True):
             with patch('builtins.open', MagicMock(return_value=BytesIO(json.dumps({
                 "drive_models": {
                     "SEAGATE,ST4000NM0023,0003": {
@@ -522,14 +527,14 @@ class TestAdminRoutes:
 
     def test_manage_logo_post_with_confirmation(self, admin_session):
         """Test POST logo with confirmation."""
-        with patch('routes.admin_routes.os.path.exists', return_value=True):
-            with patch('routes.admin_routes.Image.open') as mock_img:
+        with patch('routes.support_routes.os.path.exists', return_value=True):
+            with patch('routes.support_routes.Image.open') as mock_img:
                 mock_img.return_value.__enter__.return_value.format = "PNG"
                 mock_img.return_value.__enter__.return_value.thumbnail = MagicMock()
                 mock_img.return_value.__enter__.return_value.save = MagicMock()
-                with patch('routes.admin_routes.os.makedirs'):
-                    with patch('routes.admin_routes.os.path.getsize', return_value=500000):
-                        with patch('routes.admin_routes.os.replace'):
+                with patch('routes.support_routes.os.makedirs'):
+                    with patch('routes.support_routes.os.path.getsize', return_value=500000):
+                        with patch('routes.support_routes.os.replace'):
                             with patch('builtins.open', MagicMock()):
                                 response = admin_session.post(
                                     '/api/admin/logo?confirm=true',
@@ -540,19 +545,19 @@ class TestAdminRoutes:
 
     def test_manage_logo_delete(self, admin_session):
         """Test DELETE logo."""
-        with patch('routes.admin_routes.os.remove'):
+        with patch('routes.support_routes.os.remove'):
             response = admin_session.delete('/api/admin/logo')
             assert response.status_code == 200
 
     def test_manage_logo_delete_not_found(self, admin_session):
         """Test DELETE logo when file doesn't exist."""
-        with patch('routes.admin_routes.os.remove', side_effect=FileNotFoundError):
+        with patch('routes.support_routes.os.remove', side_effect=FileNotFoundError):
             response = admin_session.delete('/api/admin/logo')
             assert response.status_code == 200
 
     def test_create_enclosure_uses_layout_templates(self, admin_session):
         """Regression: enclosure creation must find templates via load_layout_templates and auto-map slots."""
-        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+        with patch('routes.enclosure_routes.load_layout_templates') as mock_load_templates:
             mock_load_templates.return_value = ({
                 "test_4bay": {
                     "id": "test_4bay",
@@ -565,7 +570,7 @@ class TestAdminRoutes:
                     "default_role": "wipe"
                 }
             }, False)
-            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+            with patch('routes.enclosure_routes.generate_master_slot_map') as mock_master:
                 mock_master.return_value = [
                     {
                         "pci_controller": "0000:00:1f.2",
@@ -596,7 +601,7 @@ class TestAdminRoutes:
                         "expander_sas_address": None
                     }
                 ]
-                with patch('routes.admin_routes.save_bay_map') as mock_save:
+                with patch('routes.enclosure_routes.save_bay_map') as mock_save:
                     payload = {
                         "id": "test_enc",
                         "name": "Test Enclosure",

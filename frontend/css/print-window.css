@@ -1,0 +1,5 @@
+/* Print window loading and error states — used in about:blank windows opened by auditLedger.js */
+body { font-family: Arial, sans-serif; padding: 32px; text-align: center; color: #555; }
+h2 { margin-bottom: 8px; }
+.error-detail { color: #555; }
+body.print-error { color: #dc2626; }

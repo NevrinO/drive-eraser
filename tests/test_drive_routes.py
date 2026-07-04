@@ -50,7 +50,7 @@ class TestDriveRoutes:
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
             patch('database.get_cert_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_config_dir', return_value=test_config_dir),
+            patch('routes._shared.get_config_dir', return_value=test_config_dir),
             patch('routes.drive_routes.get_config_dir', return_value=test_config_dir),
         ]
         for p in patches:
@@ -82,13 +82,13 @@ class TestDriveRoutes:
 
     def test_get_drives_unauthenticated(self, client):
         """Test that unauthenticated requests return 401."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = client.get('/api/drives')
             assert response.status_code == 401
 
     def test_get_drives_local_request_allowed(self, client):
         """Test that localhost requests bypass authentication."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
+        with patch('routes._shared.is_local_request', return_value=True):
             with patch('routes.drive_routes.discover_drives', return_value=[]):
                 with patch('routes.drive_routes.ERASE_JOBS', {}):
                     with patch('routes.drive_routes.ERASE_JOBS_LOCK'):
@@ -101,7 +101,7 @@ class TestDriveRoutes:
         response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
         assert response.status_code == 200
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.drive_routes.discover_drives', return_value=[
                 {"bay": "bay1", "device": "/dev/sdb"}
             ]):
@@ -118,7 +118,7 @@ class TestDriveRoutes:
         response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
         assert response.status_code == 200
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.drive_routes.discover_drives', return_value=[
                 {"bay": "bay1", "device": "/dev/sdb"}
             ]):
@@ -149,7 +149,7 @@ class TestDriveRoutes:
         response = client.post('/api/auth/verify', json={"passphrase": "test-lan-pass"})
         assert response.status_code == 200
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.drive_routes.discover_drives', return_value=[
                 {"bay": "bay1", "device": "/dev/sdb"}
             ]):
@@ -352,13 +352,13 @@ class TestDriveRoutes:
 
     def test_start_zero_check_invalid_bay_returns_400(self, client):
         """Test that invalid bay identifier returns 400 on zero-check start (A39)."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
+        with patch('routes._shared.is_local_request', return_value=True):
             response = client.post('/api/drives/bay%3Brm/zero-check')
             assert response.status_code == 400
 
     def test_cancel_zero_check_invalid_bay_returns_400(self, client):
         """Test that invalid bay identifier returns 400 on zero-check cancel (A39)."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
+        with patch('routes._shared.is_local_request', return_value=True):
             response = client.delete('/api/drives/bay%3Brm/zero-check')
             assert response.status_code == 400
 

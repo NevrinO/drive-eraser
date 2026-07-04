@@ -41,7 +41,7 @@ class TestBuildRecommendedMethod:
 
     def test_method_priority_respected(self):
         """Test that method priority from policy is respected."""
-        from job_management import build_recommended_method
+        from job_validation import build_recommended_method
         drive = {"interface_type": "sata", "supported_methods": ["overwrite", "secure_erase"]}
         policy = {"method_priority": {"sata": ["secure_erase", "overwrite"]}}
         result = build_recommended_method(drive, policy)
@@ -49,7 +49,7 @@ class TestBuildRecommendedMethod:
 
     def test_fallback_to_overwrite(self):
         """Test fallback to overwrite when priority method not supported."""
-        from job_management import build_recommended_method
+        from job_validation import build_recommended_method
         drive = {"interface_type": "sata", "supported_methods": ["overwrite"]}
         policy = {"method_priority": {"sata": ["secure_erase"]}}
         result = build_recommended_method(drive, policy)
@@ -57,7 +57,7 @@ class TestBuildRecommendedMethod:
 
     def test_fallback_to_first_supported(self):
         """Test fallback to first supported method when no priority."""
-        from job_management import build_recommended_method
+        from job_validation import build_recommended_method
         drive = {"interface_type": "nvme", "supported_methods": ["block", "crypto"]}
         policy = {"method_priority": {}}
         result = build_recommended_method(drive, policy)
@@ -65,7 +65,7 @@ class TestBuildRecommendedMethod:
 
     def test_no_supported_methods(self):
         """Test handling when no methods are supported."""
-        from job_management import build_recommended_method
+        from job_validation import build_recommended_method
         drive = {"interface_type": "sata", "supported_methods": []}
         policy = {}
         result = build_recommended_method(drive, policy)
@@ -73,7 +73,7 @@ class TestBuildRecommendedMethod:
 
     def test_case_insensitive_interface(self):
         """Test that interface type matching is case-insensitive."""
-        from job_management import build_recommended_method
+        from job_validation import build_recommended_method
         drive = {"interface_type": "SATA", "supported_methods": ["overwrite"]}
         policy = {"method_priority": {"sata": ["overwrite"]}}
         result = build_recommended_method(drive, policy)
@@ -85,7 +85,7 @@ class TestValidateSingleBay:
 
     def test_bay_not_found(self):
         """Test that missing bay returns error."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True}]
         result, error, status = validate_single_bay("tech", "TICKET-1", "bay2", None, drives, {})
         assert result is None
@@ -94,7 +94,7 @@ class TestValidateSingleBay:
 
     def test_locked_bay_rejected(self):
         """Test that locked bay is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "locked": True, "present": True}]
         result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, {})
         assert result is None
@@ -103,7 +103,7 @@ class TestValidateSingleBay:
 
     def test_os_role_rejected(self):
         """Test that OS role bay is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "role": "os", "present": True}]
         result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, {})
         assert result is None
@@ -112,7 +112,7 @@ class TestValidateSingleBay:
 
     def test_reserved_role_rejected(self):
         """Test that reserved role bay is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "role": "reserved", "present": True}]
         result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, {})
         assert result is None
@@ -121,7 +121,7 @@ class TestValidateSingleBay:
 
     def test_no_drive_present(self):
         """Test that bay without drive is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": False}]
         result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, {})
         assert result is None
@@ -130,7 +130,7 @@ class TestValidateSingleBay:
 
     def test_strict_audit_mode_requires_technician(self):
         """Test that strict audit mode requires valid technician."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
         policy = {"strict_audit_mode": True}
         result, error, status = validate_single_bay("", "TICKET-1", "bay1", None, drives, policy)
@@ -140,7 +140,7 @@ class TestValidateSingleBay:
 
     def test_strict_audit_mode_rejects_system_operator(self):
         """Test that strict audit mode rejects System Operator."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
         policy = {"strict_audit_mode": True}
         result, error, status = validate_single_bay("System Operator", "TICKET-1", "bay1", None, drives, policy)
@@ -150,7 +150,7 @@ class TestValidateSingleBay:
 
     def test_strict_audit_mode_requires_ticket(self):
         """Test that strict audit mode requires valid ticket."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
         policy = {"strict_audit_mode": True}
         result, error, status = validate_single_bay("tech", "", "bay1", None, drives, policy)
@@ -160,7 +160,7 @@ class TestValidateSingleBay:
 
     def test_strict_audit_mode_rejects_internal(self):
         """Test that strict audit mode rejects INTERNAL ticket."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
         policy = {"strict_audit_mode": True}
         result, error, status = validate_single_bay("tech", "INTERNAL", "bay1", None, drives, policy)
@@ -170,9 +170,9 @@ class TestValidateSingleBay:
 
     def test_os_drive_protection(self):
         """Test that OS drive protection works."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
-        with patch('job_management.get_os_by_path', return_value=("/dev/sda", "pci-0000:00:1f.2-scsi-0:0:0:0")):
+        with patch('job_validation.get_os_by_path', return_value=("/dev/sda", "pci-0000:00:1f.2-scsi-0:0:0:0")):
             result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, {})
             assert result is None
             assert "OS drive" in error.get("error", "")
@@ -180,9 +180,9 @@ class TestValidateSingleBay:
 
     def test_method_override_not_supported(self):
         """Test that unsupported method override is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"]}]
-        with patch('job_management.get_os_by_path', return_value=None):
+        with patch('job_validation.get_os_by_path', return_value=None):
             result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", "secure_erase", drives, {})
             assert result is None
             assert "not supported" in error["error"]
@@ -190,10 +190,10 @@ class TestValidateSingleBay:
 
     def test_method_override_disabled_by_policy(self):
         """Test that method override disabled by policy is rejected."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite", "secure_erase"]}]
         policy = {"allow_method_override": False, "method_priority": {"sata": ["overwrite"]}}
-        with patch('job_management.get_os_by_path', return_value=None):
+        with patch('job_validation.get_os_by_path', return_value=None):
             result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", "secure_erase", drives, policy)
             assert result is None
             assert "override is disabled" in error["error"]
@@ -201,10 +201,10 @@ class TestValidateSingleBay:
 
     def test_successful_validation(self):
         """Test successful validation."""
-        from job_management import validate_single_bay
+        from job_validation import validate_single_bay
         drives = [{"bay": "bay1", "present": True, "device": "/dev/sda", "supported_methods": ["overwrite"], "interface_type": "sata"}]
         policy = {"method_priority": {"sata": ["overwrite"]}}
-        with patch('job_management.get_os_by_path', return_value=None):
+        with patch('job_validation.get_os_by_path', return_value=None):
             result, error, status = validate_single_bay("tech", "TICKET-1", "bay1", None, drives, policy)
             assert result is not None
             assert error is None
@@ -218,7 +218,7 @@ class TestCreateEraseJob:
 
     def test_job_structure(self):
         """Test that job structure is correct."""
-        from job_management import create_erase_job
+        from job_validation import create_erase_job
         validated = {
             "technician": "tech",
             "ticket_number": "TICKET-1",
@@ -238,7 +238,7 @@ class TestCreateEraseJob:
 
     def test_uuid_generation(self):
         """Test that UUID is generated."""
-        from job_management import create_erase_job
+        from job_validation import create_erase_job
         validated = {
             "technician": "tech",
             "ticket_number": "TICKET-1",
@@ -259,29 +259,29 @@ class TestGetDeviceSectorsWritten:
 
     def test_get_sectors_written_success(self):
         """Test successful sectors read."""
-        from job_management import get_device_sectors_written
+        from erase_commands import get_device_sectors_written
         with tempfile.TemporaryDirectory() as tmpdir:
             stat_path = os.path.join(tmpdir, "stat")
             with open(stat_path, "w") as f:
                 f.write("   12345   67890   11111   22222   33333   44444   55555   66666")
             
-            with patch('job_management.os.path.basename', return_value='sda'):
-                with patch('job_management.os.path.join', return_value=stat_path):
-                    with patch('job_management.os.path.exists', return_value=True):
+            with patch('erase_commands.os.path.basename', return_value='sda'):
+                with patch('erase_commands.os.path.join', return_value=stat_path):
+                    with patch('erase_commands.os.path.exists', return_value=True):
                         with patch('builtins.open', mock_open(read_data="   12345   67890   11111   22222   33333   44444   55555   66666")):
                             result = get_device_sectors_written("/dev/sda")
                             assert result == 55555
 
     def test_get_sectors_written_file_not_found(self):
         """Test handling when stat file not found."""
-        from job_management import get_device_sectors_written
+        from erase_commands import get_device_sectors_written
         with patch('os.path.exists', return_value=False):
             result = get_device_sectors_written("/dev/sda")
             assert result is None
 
     def test_get_sectors_written_io_error(self):
         """Test handling IO error."""
-        from job_management import get_device_sectors_written
+        from erase_commands import get_device_sectors_written
         with patch('os.path.exists', return_value=True):
             with patch('builtins.open', side_effect=IOError):
                 result = get_device_sectors_written("/dev/sda")
@@ -293,8 +293,8 @@ class TestPollNvmeSanitizeProgress:
 
     def test_successful_nvme_progress(self):
         """Test successful NVMe progress parsing."""
-        from job_management import poll_nvme_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/nvme'):
+        from erase_commands import poll_nvme_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/nvme'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(
                     returncode=0,
@@ -305,15 +305,15 @@ class TestPollNvmeSanitizeProgress:
 
     def test_nvme_no_command(self):
         """Test handling when nvme command not found."""
-        from job_management import poll_nvme_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import poll_nvme_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = poll_nvme_sanitize_progress("/dev/nvme0n1")
             assert result is None
 
     def test_nvme_command_failure(self):
         """Test handling when nvme command fails."""
-        from job_management import poll_nvme_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/nvme'):
+        from erase_commands import poll_nvme_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/nvme'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(returncode=1)
                 result = poll_nvme_sanitize_progress("/dev/nvme0n1")
@@ -321,8 +321,8 @@ class TestPollNvmeSanitizeProgress:
 
     def test_nvme_no_sprog_in_output(self):
         """Test handling when sprog not in output."""
-        from job_management import poll_nvme_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/nvme'):
+        from erase_commands import poll_nvme_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/nvme'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(
                     returncode=0,
@@ -337,8 +337,8 @@ class TestPollSasSanitizeProgress:
 
     def test_successful_sas_progress(self):
         """Test successful SAS progress parsing."""
-        from job_management import poll_sas_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/sg_requests'):
+        from erase_commands import poll_sas_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/sg_requests'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(
                     returncode=0,
@@ -349,15 +349,15 @@ class TestPollSasSanitizeProgress:
 
     def test_sas_no_command(self):
         """Test handling when sg_requests not found."""
-        from job_management import poll_sas_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import poll_sas_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = poll_sas_sanitize_progress("/dev/sda")
             assert result is None
 
     def test_sas_command_failure(self):
         """Test handling when sg_requests fails."""
-        from job_management import poll_sas_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/sg_requests'):
+        from erase_commands import poll_sas_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/sg_requests'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(returncode=1)
                 result = poll_sas_sanitize_progress("/dev/sda")
@@ -369,8 +369,8 @@ class TestPollSataSanitizeProgress:
 
     def test_successful_sata_progress(self):
         """Test successful SATA progress parsing."""
-        from job_management import poll_sata_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import poll_sata_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(
                     returncode=0,
@@ -381,15 +381,15 @@ class TestPollSataSanitizeProgress:
 
     def test_sata_no_command(self):
         """Test handling when hdparm not found."""
-        from job_management import poll_sata_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import poll_sata_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = poll_sata_sanitize_progress("/dev/sda")
             assert result is None
 
     def test_sata_command_failure(self):
         """Test handling when hdparm fails."""
-        from job_management import poll_sata_sanitize_progress
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import poll_sata_sanitize_progress
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             with patch('subprocess.run') as mock_run:
                 mock_run.return_value = MagicMock(returncode=1)
                 result = poll_sata_sanitize_progress("/dev/sda")
@@ -401,8 +401,8 @@ class TestPrepareEraseCommand:
 
     def test_overwrite_method_sata(self):
         """Test overwrite method for SATA."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", "sata", "overwrite")
             assert result["ok"] is True
             assert any("dd" in cmd for cmd in result["command"])
@@ -410,32 +410,32 @@ class TestPrepareEraseCommand:
 
     def test_overwrite_method_nvme(self):
         """Test overwrite method for NVMe."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/nvme0n1", "nvme", "overwrite")
             assert result["ok"] is True
             assert any("dd" in cmd for cmd in result["command"])
 
     def test_overwrite_method_sas(self):
         """Test overwrite method for SAS."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", "sas", "overwrite")
             assert result["ok"] is True
             assert any("dd" in cmd for cmd in result["command"])
 
     def test_dd_not_available(self):
         """Test handling when dd not available."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = prepare_erase_command("/dev/sda", "sata", "overwrite")
             assert result["ok"] is False
             assert result["error"] == "dd_not_available"
 
     def test_secure_erase_sata(self):
         """Test secure erase for SATA."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             result = prepare_erase_command("/dev/sda", "sata", "secure_erase")
             assert result["ok"] is True
             assert any("hdparm" in cmd for cmd in result["command"])
@@ -443,8 +443,8 @@ class TestPrepareEraseCommand:
 
     def test_enhanced_secure_erase_sata(self):
         """Test enhanced secure erase for SATA."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             result = prepare_erase_command("/dev/sda", "sata", "enhanced_secure_erase")
             assert result["ok"] is True
             assert any("hdparm" in cmd for cmd in result["command"])
@@ -452,16 +452,16 @@ class TestPrepareEraseCommand:
 
     def test_hdparm_not_available_for_secure_erase(self):
         """Test handling when hdparm not available for secure erase."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = prepare_erase_command("/dev/sda", "sata", "secure_erase")
             assert result["ok"] is False
             assert result["error"] == "hdparm_not_available"
 
     def test_crypto_erase_nvme(self):
         """Test crypto erase for NVMe."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/nvme'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/nvme'):
             result = prepare_erase_command("/dev/nvme0n1", "nvme", "crypto")
             assert result["ok"] is True
             assert any("nvme" in cmd for cmd in result["command"])
@@ -471,8 +471,8 @@ class TestPrepareEraseCommand:
 
     def test_block_erase_nvme(self):
         """Test block erase for NVMe."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/nvme'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/nvme'):
             result = prepare_erase_command("/dev/nvme0n1", "nvme", "block")
             assert result["ok"] is True
             assert any("nvme" in cmd for cmd in result["command"])
@@ -482,16 +482,16 @@ class TestPrepareEraseCommand:
 
     def test_nvme_not_available(self):
         """Test handling when nvme not available."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = prepare_erase_command("/dev/nvme0n1", "nvme", "crypto")
             assert result["ok"] is False
             assert result["error"] == "nvme_not_available"
 
     def test_crypto_erase_sata(self):
         """Test crypto erase for SATA."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             result = prepare_erase_command("/dev/sda", "sata", "crypto")
             assert result["ok"] is True
             assert any("hdparm" in cmd for cmd in result["command"])
@@ -499,8 +499,8 @@ class TestPrepareEraseCommand:
 
     def test_block_erase_sata(self):
         """Test block erase for SATA."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/hdparm'):
             result = prepare_erase_command("/dev/sda", "sata", "block")
             assert result["ok"] is True
             assert any("hdparm" in cmd for cmd in result["command"])
@@ -508,8 +508,8 @@ class TestPrepareEraseCommand:
 
     def test_block_erase_sas(self):
         """Test block erase for SAS."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/sg_sanitize'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/sg_sanitize'):
             result = prepare_erase_command("/dev/sda", "sas", "block")
             assert result["ok"] is True
             assert any("sg_sanitize" in cmd for cmd in result["command"])
@@ -517,63 +517,63 @@ class TestPrepareEraseCommand:
 
     def test_sg_sanitize_not_available(self):
         """Test handling when sg_sanitize not available."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value=None):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value=None):
             result = prepare_erase_command("/dev/sda", "sas", "block")
             assert result["ok"] is False
             assert result["error"] == "sg_sanitize_not_available"
 
     def test_unsupported_method(self):
         """Test unsupported method."""
-        from job_management import prepare_erase_command
+        from erase_commands import prepare_erase_command
         result = prepare_erase_command("/dev/sda", "sata", "invalid_method")
         assert result["ok"] is False
         assert "unsupported" in result["error"]
 
     def test_unsupported_interface_for_method(self):
         """Test unsupported interface for method."""
-        from job_management import prepare_erase_command
+        from erase_commands import prepare_erase_command
         result = prepare_erase_command("/dev/sda", "unsupported_interface", "overwrite")
         assert result["ok"] is False
         assert "unsupported_interface" in result["error"]
 
     def test_case_insensitive_method(self):
         """Test that method is case-insensitive."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", "sata", "OVERWRITE")
             assert result["ok"] is True
 
     def test_whitespace_in_method(self):
         """Test that whitespace in method is handled."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", "sata", "  overwrite  ")
             assert result["ok"] is True
 
     def test_none_method(self):
         """Test that None method is handled."""
-        from job_management import prepare_erase_command
+        from erase_commands import prepare_erase_command
         result = prepare_erase_command("/dev/sda", "sata", None)
         assert result["ok"] is False
 
     def test_empty_method(self):
         """Test that empty method is handled."""
-        from job_management import prepare_erase_command
+        from erase_commands import prepare_erase_command
         result = prepare_erase_command("/dev/sda", "sata", "")
         assert result["ok"] is False
 
     def test_none_interface(self):
         """Test that None interface is handled - overwrite works without interface."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", None, "overwrite")
             assert result["ok"] is True  # overwrite works regardless of interface
 
     def test_command_safety_no_shell(self):
         """Test that commands don't use shell=True."""
-        from job_management import prepare_erase_command
-        with patch('job_management.resolve_verify_command_path', return_value='/usr/bin/dd'):
+        from erase_commands import prepare_erase_command
+        with patch('erase_commands.resolve_verify_command_path', return_value='/usr/bin/dd'):
             result = prepare_erase_command("/dev/sda", "sata", "overwrite")
             assert result["ok"] is True
             # Command should be a list, not a shell string

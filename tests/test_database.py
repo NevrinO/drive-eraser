@@ -173,10 +173,13 @@ def test_record_intake_snapshot():
     try:
         from database import record_intake_snapshot, get_db_path
         import database
+        import smart_db
 
         # Patch get_db_path to use our test database
         original_get_db_path = database.get_db_path
+        original_smart_db_path = smart_db.get_db_path
         database.get_db_path = lambda: db_path
+        smart_db.get_db_path = lambda: db_path
 
         # Initialize database with required tables using init_wipe_db
         from database import init_wipe_db
@@ -216,13 +219,12 @@ def test_record_intake_snapshot():
 
         # Restore original function
         database.get_db_path = original_get_db_path
+        smart_db.get_db_path = original_smart_db_path
 
     except Exception as e:
         print(f"[FAIL] record_intake_snapshot test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 
@@ -235,10 +237,13 @@ def test_load_prior_visit():
     try:
         from database import record_intake_snapshot, load_prior_visit, get_db_path
         import database
+        import smart_db
 
         # Patch get_db_path to use our test database
         original_get_db_path = database.get_db_path
+        original_smart_db_path = smart_db.get_db_path
         database.get_db_path = lambda: db_path
+        smart_db.get_db_path = lambda: db_path
 
         # Initialize database using init_wipe_db
         from database import init_wipe_db
@@ -273,13 +278,12 @@ def test_load_prior_visit():
 
         # Restore original function
         database.get_db_path = original_get_db_path
+        smart_db.get_db_path = original_smart_db_path
 
     except Exception as e:
         print(f"[FAIL] load_prior_visit test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 
@@ -292,10 +296,13 @@ def test_save_wipe_smart_snapshot():
     try:
         from database import save_wipe_smart_snapshot, get_db_path
         import database
+        import smart_db
 
         # Patch get_db_path to use our test database
         original_get_db_path = database.get_db_path
+        original_smart_db_path = smart_db.get_db_path
         database.get_db_path = lambda: db_path
+        smart_db.get_db_path = lambda: db_path
 
         # Initialize database using init_wipe_db
         from database import init_wipe_db
@@ -352,13 +359,12 @@ def test_save_wipe_smart_snapshot():
 
         # Restore original function
         database.get_db_path = original_get_db_path
+        smart_db.get_db_path = original_smart_db_path
 
     except Exception as e:
         print(f"[FAIL] save_wipe_smart_snapshot test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 
