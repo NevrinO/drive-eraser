@@ -502,10 +502,10 @@ class TestSmartDetailsEndpoint:
     """Test smart-details endpoint."""
 
     @patch('smart_parsing.get_smart_data')
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.is_valid_device_name')
     def test_smart_details_endpoint_basic(self, mock_is_valid, mock_get_smart_data):
         """Test basic smart-details endpoint."""
-        from routes.admin_routes import get_smart_details
+        from routes.smart_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -527,10 +527,10 @@ class TestSmartDetailsEndpoint:
             assert "attributes" in data
             assert len(data["attributes"]) == 1
 
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.is_valid_device_name')
     def test_smart_details_invalid_device(self, mock_is_valid):
         """Test that invalid device name is rejected."""
-        from routes.admin_routes import get_smart_details
+        from routes.smart_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -544,10 +544,10 @@ class TestSmartDetailsEndpoint:
             assert status_code == 400
 
     @patch('smart_parsing.get_smart_data')
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.is_valid_device_name')
     def test_smart_details_size_limits(self, mock_is_valid, mock_get_smart_data):
         """Test that size limits are enforced (DoS prevention)."""
-        from routes.admin_routes import get_smart_details
+        from routes.smart_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -574,10 +574,10 @@ class TestSmartDetailsEndpoint:
             assert data["truncated"] is True
 
     @patch('smart_parsing.get_smart_data')
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.is_valid_device_name')
     def test_smart_details_extended_self_test_log(self, mock_is_valid, mock_get_smart_data):
         """Test that smart-details endpoint reads self-test log from extended.table."""
-        from routes.admin_routes import get_smart_details
+        from routes.smart_routes import get_smart_details
         from flask import Flask
 
         app = Flask(__name__)
@@ -621,12 +621,12 @@ class TestSmartDetailsEndpoint:
 class TestSmartExportEndpoint:
     """Test smart-export endpoint."""
 
-    @patch('routes.admin_routes.ERASE_JOBS_LOCK')
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.ERASE_JOBS_LOCK')
+    @patch('routes.smart_routes.is_valid_device_name')
     @patch('smart_parsing.get_smart_data')
     def test_smart_export_endpoint(self, mock_get_smart_data, mock_is_valid, mock_jobs_lock):
         """Test basic smart-export endpoint."""
-        from routes.admin_routes import export_smart_data, ERASE_JOBS
+        from routes.smart_routes import export_smart_data, ERASE_JOBS
         from flask import Flask
 
         app = Flask(__name__)
@@ -659,10 +659,10 @@ class TestSmartExportEndpoint:
         finally:
             ERASE_JOBS.update(original_jobs)
 
-    @patch('routes.admin_routes.is_valid_device_name')
+    @patch('routes.smart_routes.is_valid_device_name')
     def test_smart_export_invalid_device(self, mock_is_valid):
         """Test that invalid device name is rejected."""
-        from routes.admin_routes import export_smart_data
+        from routes.smart_routes import export_smart_data
         from flask import Flask
 
         app = Flask(__name__)
