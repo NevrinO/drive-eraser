@@ -9,6 +9,7 @@ import subprocess
 import tarfile
 import base64
 import hashlib
+import uuid
 import hmac
 import sqlite3
 import urllib.request
@@ -36,7 +37,7 @@ from disk_ops import invalidate_drive_cache, stop_extended_smart_pool, get_os_by
 from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
-from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS, SMART_TEST_GRACE_PERIOD_SECONDS
+from smart_constants import SMART_TEST_GRACE_PERIOD_SECONDS, correct_self_test_log_hours
 from job_management import poll_sata_sanitize_progress, poll_sas_sanitize_progress, get_device_sectors_written
 
 
@@ -72,6 +73,8 @@ admin_bp = Blueprint('admin_routes', __name__)
 _SATA_DEVICE_RE = re.compile(r'^sd[a-z]+\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
 MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
+
+_VALID_ROLES = frozenset({"wipe", "os", "reserved"})
 
 # Size limits for DoS prevention (Rule #5)
 MAX_ENCLOSURES = 100
@@ -115,6 +118,87 @@ def is_valid_device_name(name: str) -> bool:
     if ".." in name or "\n" in name or "\r" in name:
         return False
     return bool(_SATA_DEVICE_RE.match(name) or _NVME_DEVICE_RE.match(name))
+
+def _validate_slot_metadata(custom_labels, custom_roles, slot_mappings, default_role=None):
+    """Validate custom_labels, custom_roles, and slot_mappings for enclosure POST/PUT handlers.
+
+    Args:
+        custom_labels: Dict of slot number -> label string.
+        custom_roles: Dict of slot number -> role string.
+        slot_mappings: Dict of slot number -> slot mapping dict, or None.
+        default_role: Default role for slot_mappings entries (POST uses template default, PUT uses None).
+
+    Returns:
+        Error message string if validation fails, None if valid.
+    """
+    # Validate custom_labels and custom_roles types and size limits
+    if not isinstance(custom_labels, dict):
+        return "custom_labels must be a dictionary"
+    if not isinstance(custom_roles, dict):
+        return "custom_roles must be a dictionary"
+    if slot_mappings is not None and not isinstance(slot_mappings, dict):
+        return "slot_mappings must be a dictionary"
+    if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
+        return f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"
+    if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
+        return f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"
+    if slot_mappings is not None and len(slot_mappings) > MAX_SLOTS_PER_ENCLOSURE:
+        return f"Slot mappings count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"
+
+    # Validate custom label and role keys are strings
+    for slot_num in custom_labels.keys():
+        if not isinstance(slot_num, str):
+            return f"Custom label key must be a string, got {type(slot_num).__name__}"
+    for slot_num in custom_roles.keys():
+        if not isinstance(slot_num, str):
+            return f"Custom role key must be a string, got {type(slot_num).__name__}"
+
+    # Validate custom label content
+    for slot_num, label in custom_labels.items():
+        if not isinstance(label, str):
+            return f"Custom label for slot {slot_num} must be a string"
+        if len(label) > 100:
+            return f"Custom label for slot {slot_num} exceeds maximum length (100)"
+        if any(ord(c) < 32 for c in label):
+            return f"Custom label for slot {slot_num} contains invalid characters"
+
+    # Validate custom role values against allowlist
+    for slot_num, role in custom_roles.items():
+        if role not in _VALID_ROLES:
+            return f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(_VALID_ROLES))}"
+
+    # Validate slot_mappings if provided
+    if slot_mappings is not None:
+        for slot_key, slot_mapping in slot_mappings.items():
+            if not isinstance(slot_mapping, dict):
+                return f"Slot mapping for {slot_key} must be a dictionary"
+            label = slot_mapping.get("label", "")
+            if not isinstance(label, str):
+                return f"Custom label for slot {slot_key} must be a string"
+            if len(label) > 100:
+                return f"Custom label for slot {slot_key} exceeds maximum length (100)"
+            if any(ord(c) < 32 for c in label):
+                return f"Custom label for slot {slot_key} contains invalid characters"
+            role = slot_mapping.get("role", default_role)
+            if role is not None and role not in _VALID_ROLES:
+                return f"Invalid role '{role}' for slot {slot_key}. Must be one of: {', '.join(sorted(_VALID_ROLES))}"
+            mappings = slot_mapping.get("mappings", {})
+            if not isinstance(mappings, dict):
+                return f"Mappings for slot {slot_key} must be a dictionary"
+            for interface_type, mapping in mappings.items():
+                if interface_type not in ("sas_sata", "nvme"):
+                    return f"Invalid interface type '{interface_type}' for slot {slot_key}"
+                if not isinstance(mapping, dict):
+                    return f"Mapping for {interface_type} in slot {slot_key} must be a dictionary"
+                if "slot_type" not in mapping or "hardware_identifier" not in mapping:
+                    return f"Mapping for {interface_type} in slot {slot_key} must include slot_type and hardware_identifier"
+                if mapping.get("slot_type") not in ("sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"):
+                    return f"Invalid slot_type '{mapping.get('slot_type')}' for {interface_type} in slot {slot_key}"
+                hw_id = mapping.get("hardware_identifier")
+                if not isinstance(hw_id, str) or len(hw_id) == 0 or len(hw_id) > 100:
+                    return f"Invalid hardware_identifier for {interface_type} in slot {slot_key}"
+
+    return None
 
 def is_local_request(request):
     """Check if the request is from localhost or local network."""
@@ -284,7 +368,7 @@ def download_support_bundle():
     try:
         hostname = socket.gethostname()
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        bundle_name = f"support-bundle-{hostname}-{timestamp}"
+        bundle_name = f"support-bundle-{hostname}-{timestamp}-{uuid.uuid4().hex[:8]}"
         workspace_dir = os.path.join("/tmp", bundle_name)
         os.makedirs(workspace_dir, exist_ok=True)
         
@@ -1236,38 +1320,10 @@ def manage_enclosures():
                 custom_labels = payload.get("custom_labels", {})
                 custom_roles = payload.get("custom_roles", {})
 
-                # Validate custom_labels and custom_roles (Rule #83)
-                if not isinstance(custom_labels, dict):
-                    return jsonify({"error": "custom_labels must be a dictionary"}), 400
-                if not isinstance(custom_roles, dict):
-                    return jsonify({"error": "custom_roles must be a dictionary"}), 400
-                if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
-                    return jsonify({"error": f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-                if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
-                    return jsonify({"error": f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-
-                # Validate custom label and role keys are strings (type mismatch fix)
-                for slot_num in custom_labels.keys():
-                    if not isinstance(slot_num, str):
-                        return jsonify({"error": f"Custom label key must be a string, got {type(slot_num).__name__}"}), 400
-                for slot_num in custom_roles.keys():
-                    if not isinstance(slot_num, str):
-                        return jsonify({"error": f"Custom role key must be a string, got {type(slot_num).__name__}"}), 400
-
-                # Validate custom label content (Rule #86)
-                for slot_num, label in custom_labels.items():
-                    if not isinstance(label, str):
-                        return jsonify({"error": f"Custom label for slot {slot_num} must be a string"}), 400
-                    if len(label) > 100:
-                        return jsonify({"error": f"Custom label for slot {slot_num} exceeds maximum length (100)"}), 400
-                    if any(ord(c) < 32 for c in label):
-                        return jsonify({"error": f"Custom label for slot {slot_num} contains invalid characters"}), 400
-
-                # Validate custom role values against allowlist (Rule #87)
-                VALID_ROLES = {"wipe", "os", "reserved"}
-                for slot_num, role in custom_roles.items():
-                    if role not in VALID_ROLES:
-                        return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
+                # Validate custom_labels and custom_roles
+                err = _validate_slot_metadata(custom_labels, custom_roles, None)
+                if err:
+                    return jsonify({"error": err}), 400
 
                 # Check if frontend provided explicit slot mappings
                 slot_mappings = payload.get("slot_mappings")
@@ -1286,12 +1342,6 @@ def manage_enclosures():
                     if slot_count > MAX_SLOTS_PER_ENCLOSURE:
                         return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
 
-                    # Validate slot_mappings structure
-                    if not isinstance(slot_mappings, dict):
-                        return jsonify({"error": "slot_mappings must be a dictionary"}), 400
-                    if len(slot_mappings) > MAX_SLOTS_PER_ENCLOSURE:
-                        return jsonify({"error": f"Slot mappings count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-
                     # Safe numeric conversion for starting_slot_number (Rule #84)
                     try:
                         starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
@@ -1300,37 +1350,10 @@ def manage_enclosures():
                     except (ValueError, TypeError):
                         return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
 
-                    # Validate each provided slot mapping
-                    VALID_ROLES = {"wipe", "os", "reserved"}
-                    for slot_key, slot_mapping in slot_mappings.items():
-                        if not isinstance(slot_mapping, dict):
-                            return jsonify({"error": f"Slot mapping for {slot_key} must be a dictionary"}), 400
-                        label = slot_mapping.get("label", "")
-                        if not isinstance(label, str):
-                            return jsonify({"error": f"Custom label for slot {slot_key} must be a string"}), 400
-                        if len(label) > 100:
-                            return jsonify({"error": f"Custom label for slot {slot_key} exceeds maximum length (100)"}), 400
-                        if any(ord(c) < 32 for c in label):
-                            return jsonify({"error": f"Custom label for slot {slot_key} contains invalid characters"}), 400
-                        role = slot_mapping.get("role", template.get("default_role", "wipe"))
-                        if role not in VALID_ROLES:
-                            return jsonify({"error": f"Invalid role '{role}' for slot {slot_key}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
-                        # Validate each interface mapping against the schema
-                        mappings = slot_mapping.get("mappings", {})
-                        if not isinstance(mappings, dict):
-                            return jsonify({"error": f"Mappings for slot {slot_key} must be a dictionary"}), 400
-                        for interface_type, mapping in mappings.items():
-                            if interface_type not in ("sas_sata", "nvme"):
-                                return jsonify({"error": f"Invalid interface type '{interface_type}' for slot {slot_key}"}), 400
-                            if not isinstance(mapping, dict):
-                                return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must be a dictionary"}), 400
-                            if "slot_type" not in mapping or "hardware_identifier" not in mapping:
-                                return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must include slot_type and hardware_identifier"}), 400
-                            if mapping.get("slot_type") not in ("sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"):
-                                return jsonify({"error": f"Invalid slot_type '{mapping.get('slot_type')}' for {interface_type} in slot {slot_key}"}), 400
-                            hw_id = mapping.get("hardware_identifier")
-                            if not isinstance(hw_id, str) or len(hw_id) == 0 or len(hw_id) > 100:
-                                return jsonify({"error": f"Invalid hardware_identifier for {interface_type} in slot {slot_key}"}), 400
+                    # Validate slot_mappings entries
+                    err = _validate_slot_metadata({}, {}, slot_mappings, default_role=template.get("default_role", "wipe"))
+                    if err:
+                        return jsonify({"error": err}), 400
 
                     # Build traversal positions
                     if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
@@ -1519,76 +1542,13 @@ def manage_enclosure(enclosure_id):
                     if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
                         return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
             
-            # Validate custom_labels and custom_roles if provided (Rule #83)
+            # Validate custom_labels, custom_roles, and slot_mappings if provided
             custom_labels = payload.get("custom_labels", {})
             custom_roles = payload.get("custom_roles", {})
             slot_mappings = payload.get("slot_mappings")
-            if not isinstance(custom_labels, dict):
-                return jsonify({"error": "custom_labels must be a dictionary"}), 400
-            if not isinstance(custom_roles, dict):
-                return jsonify({"error": "custom_roles must be a dictionary"}), 400
-            if slot_mappings is not None and not isinstance(slot_mappings, dict):
-                return jsonify({"error": "slot_mappings must be a dictionary"}), 400
-            if len(custom_labels) > MAX_SLOTS_PER_ENCLOSURE:
-                return jsonify({"error": f"Custom labels count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-            if len(custom_roles) > MAX_SLOTS_PER_ENCLOSURE:
-                return jsonify({"error": f"Custom roles count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-            if slot_mappings is not None and len(slot_mappings) > MAX_SLOTS_PER_ENCLOSURE:
-                return jsonify({"error": f"Slot mappings count exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-            
-            # Validate custom label and role keys are strings (type mismatch fix)
-            for slot_num in custom_labels.keys():
-                if not isinstance(slot_num, str):
-                    return jsonify({"error": f"Custom label key must be a string, got {type(slot_num).__name__}"}), 400
-            for slot_num in custom_roles.keys():
-                if not isinstance(slot_num, str):
-                    return jsonify({"error": f"Custom role key must be a string, got {type(slot_num).__name__}"}), 400
-            
-            # Validate custom label content (Rule #86)
-            for slot_num, label in custom_labels.items():
-                if not isinstance(label, str):
-                    return jsonify({"error": f"Custom label for slot {slot_num} must be a string"}), 400
-                if len(label) > 100:
-                    return jsonify({"error": f"Custom label for slot {slot_num} exceeds maximum length (100)"}), 400
-                if any(ord(c) < 32 for c in label):
-                    return jsonify({"error": f"Custom label for slot {slot_num} contains invalid characters"}), 400
-            
-            # Validate custom role values against allowlist (Rule #87)
-            VALID_ROLES = {"wipe", "os", "reserved"}
-            for slot_num, role in custom_roles.items():
-                if role not in VALID_ROLES:
-                    return jsonify({"error": f"Invalid role '{role}' for slot {slot_num}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
-            
-            # Validate slot_mappings if provided
-            if slot_mappings is not None:
-                for slot_key, slot_mapping in slot_mappings.items():
-                    if not isinstance(slot_mapping, dict):
-                        return jsonify({"error": f"Slot mapping for {slot_key} must be a dictionary"}), 400
-                    label = slot_mapping.get("label", "")
-                    if not isinstance(label, str):
-                        return jsonify({"error": f"Custom label for slot {slot_key} must be a string"}), 400
-                    if len(label) > 100:
-                        return jsonify({"error": f"Custom label for slot {slot_key} exceeds maximum length (100)"}), 400
-                    if any(ord(c) < 32 for c in label):
-                        return jsonify({"error": f"Custom label for slot {slot_key} contains invalid characters"}), 400
-                    role = slot_mapping.get("role")
-                    if role is not None and role not in VALID_ROLES:
-                        return jsonify({"error": f"Invalid role '{role}' for slot {slot_key}. Must be one of: {', '.join(sorted(VALID_ROLES))}"}), 400
-                    mappings = slot_mapping.get("mappings", {})
-                    if not isinstance(mappings, dict):
-                        return jsonify({"error": f"Mappings for slot {slot_key} must be a dictionary"}), 400
-                    for interface_type, mapping in mappings.items():
-                        if interface_type not in ("sas_sata", "nvme"):
-                            return jsonify({"error": f"Invalid interface type '{interface_type}' for slot {slot_key}"}), 400
-                        if not isinstance(mapping, dict):
-                            return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must be a dictionary"}), 400
-                        if "slot_type" not in mapping or "hardware_identifier" not in mapping:
-                            return jsonify({"error": f"Mapping for {interface_type} in slot {slot_key} must include slot_type and hardware_identifier"}), 400
-                        if mapping.get("slot_type") not in ("sas_expander", "sas_direct", "motherboard_sata", "pcie_nvme"):
-                            return jsonify({"error": f"Invalid slot_type '{mapping.get('slot_type')}' for {interface_type} in slot {slot_key}"}), 400
-                        hw_id = mapping.get("hardware_identifier")
-                        if not isinstance(hw_id, str) or len(hw_id) == 0 or len(hw_id) > 100:
-                            return jsonify({"error": f"Invalid hardware_identifier for {interface_type} in slot {slot_key}"}), 400
+            err = _validate_slot_metadata(custom_labels, custom_roles, slot_mappings)
+            if err:
+                return jsonify({"error": err}), 400
             
             with BAY_MAP_LOCK:
                 bay_map = load_bay_map(config_dir)
@@ -2273,32 +2233,7 @@ def get_smart_details(device):
             logger.debug(f"Device {device}: Found {len(self_test_table)} ATA self-test log entries")
             for idx, test in enumerate(self_test_table[:MAX_SELF_TEST_LOGS]):
                 log_hours = test.get("hours") or test.get("lifetime_hours")
-                corrected_hours = log_hours
-                rollover_corrected = False
-                ambiguous = False
-                
-                if current_poh and log_hours is not None:
-                    if current_poh < SMART_SELF_TEST_LOG_MAX_HOURS:
-                        # No rollover possible
-                        corrected_hours = log_hours
-                    else:
-                        # POH > 65,535 - rollover has occurred
-                        # Only correct if we have historical evidence that drive was already over 65,535
-                        # when we started tracking it (proves this is our system's data)
-                        if historical_poh and historical_poh > SMART_SELF_TEST_LOG_MAX_HOURS:
-                            # We know from database that drive was already over 65,535 when we first saw it
-                            # Calculate rollovers based on current POH (use 65536 for accurate boundary)
-                            rollover_count = int(current_poh // SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY)
-                            corrected_hours = log_hours + (rollover_count * SMART_SELF_TEST_LOG_MAX_HOURS)
-                            rollover_corrected = True
-                            # Flag ambiguous if near rollover boundary (within 1000 hours)
-                            # or if log hours differ significantly from expected corrected hours
-                            if current_poh > SMART_SELF_TEST_LOG_MAX_HOURS and (abs(current_poh % SMART_SELF_TEST_LOG_MAX_HOURS) < SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS or abs(current_poh - corrected_hours) > SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS):
-                                ambiguous = True
-                        else:
-                            # No database history or drive was under 65,535 when we first saw it
-                            # Don't correct - these may be from another system or before rollover
-                            corrected_hours = log_hours
+                corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
                 
                 # Handle remaining field: convert string "null" to actual None
                 remaining_raw = test.get("status", {}).get("remaining_percent", test.get("status", {}).get("remaining"))

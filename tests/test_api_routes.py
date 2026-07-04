@@ -165,6 +165,7 @@ class TestAPIRoutes:
 
         with patch('api_routes.discover_drives', return_value=[mocked_drive]), \
              patch('api_routes.validate_single_bay', return_value=(validated, None, None)), \
+             patch('api_routes.check_health_gate_sync', return_value={"blocked": False}), \
              patch('api_routes.create_erase_job', return_value=job), \
              patch('api_routes.get_wipe_semaphore', return_value=mock_semaphore), \
              patch('api_routes.run_erase_job'), \

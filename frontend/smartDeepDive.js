@@ -79,9 +79,9 @@ async function checkAndResumeTestPolling(device) {
       testStatusDiv.innerHTML = `
         <p>Test in progress (resumed)...</p>
         <div class="progress-bar">
-          <div class="progress-bar-fill" id="testProgressBar" style="width: ${pct}%"></div>
+          <div class="progress-bar-fill" id="testProgressBar" style="width: ${escapeHtml(pct)}%"></div>
         </div>
-        <p id="testProgressText">${Math.round(pct)}%</p>
+        <p id="testProgressText">${escapeHtml(Math.round(pct))}%</p>
       `;
       pollSmartTestStatus(device, testType);
     } else if (data.status === 'completed') {
@@ -105,7 +105,7 @@ async function loadSmartDetails(device, serial, interfaceType) {
     const response = await safeFetch(`/api/admin/drives/${device}/smart-details`);
     if (!response.ok) {
       const error = await response.json();
-      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${error.error || 'Unknown error'}</p>`;
+      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(error.error || 'Unknown error')}</p>`;
       return;
     }
 
@@ -113,7 +113,7 @@ async function loadSmartDetails(device, serial, interfaceType) {
     renderSmartDetails(data, device, serial, interfaceType);
   } catch (error) {
     console.error('Failed to load SMART details:', error);
-    smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${error.message}</p>`;
+    smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -226,12 +226,12 @@ function renderAttributesTable(attributes) {
 
     return `
       <tr class="${rowClass}">
-        <td>${attr.id}</td>
+        <td>${escapeHtml(attr.id)}</td>
         <td>${escapeHtml(name)}</td>
-        <td>${value}</td>
-        <td>${worst}</td>
-        <td>${thresh}</td>
-        <td>${rawValue}</td>
+        <td>${escapeHtml(value)}</td>
+        <td>${escapeHtml(worst)}</td>
+        <td>${escapeHtml(thresh)}</td>
+        <td>${escapeHtml(rawValue)}</td>
       </tr>
     `;
   }).join('');
@@ -260,7 +260,7 @@ function renderAuditHistory(liveSelfTestLogs, currentPoh) {
 
   // Display current POH for context
   if (currentPoh !== undefined && currentPoh !== null) {
-    html += `<p class="info-text">Current Power-On Hours: ${currentPoh.toLocaleString()}</p>`;
+    html += `<p class="info-text">Current Power-On Hours: ${escapeHtml(currentPoh.toLocaleString())}</p>`;
   }
 
   // Display live drive self-test logs
@@ -290,7 +290,7 @@ function renderAuditHistory(liveSelfTestLogs, currentPoh) {
           for (let i = 1; i <= rolloverCount; i++) {
             const threshold = ROLLOVER_LIMIT * i;
             const adjustedValue = threshold + hours;
-            displayStr += ` <span class="info-text">(${adjustedValue.toLocaleString()})</span>`;
+            displayStr += ` <span class="info-text">(${escapeHtml(adjustedValue.toLocaleString())})</span>`;
           }
         }
         
@@ -317,8 +317,8 @@ function renderAuditHistory(liveSelfTestLogs, currentPoh) {
         <tr>
           <td>${escapeHtml(testType)}</td>
           <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
-          <td>${test.remaining !== undefined && test.remaining !== null && String(test.remaining).toLowerCase() !== 'null' ? test.remaining + '%' : '-'}</td>
-          <td>${test.lba !== undefined && test.lba !== null ? test.lba : '-'}</td>
+          <td>${test.remaining !== undefined && test.remaining !== null && String(test.remaining).toLowerCase() !== 'null' ? escapeHtml(test.remaining) + '%' : '-'}</td>
+          <td>${test.lba !== undefined && test.lba !== null ? escapeHtml(test.lba) : '-'}</td>
           <td>${hoursDisplay}</td>
         </tr>
       `;
@@ -351,11 +351,11 @@ function renderSasSpecific(sasData) {
   let html = '';
 
   if (sasData.grown_defect_list !== undefined) {
-    html += `<div class="kv"><span>Grown Defect List:</span><span>${sasData.grown_defect_list}</span></div>`;
+    html += `<div class="kv"><span>Grown Defect List:</span><span>${escapeHtml(sasData.grown_defect_list)}</span></div>`;
   }
 
   if (sasData.non_medium_errors !== undefined) {
-    html += `<div class="kv"><span>Non-Medium Errors:</span><span>${sasData.non_medium_errors}</span></div>`;
+    html += `<div class="kv"><span>Non-Medium Errors:</span><span>${escapeHtml(sasData.non_medium_errors)}</span></div>`;
   }
 
   // Display start/stop cycle counter
@@ -394,21 +394,21 @@ function renderSasStartStopCounter(counterData) {
   const year = counterData.year_of_manufacture;
   const week = counterData.week_of_manufacture;
   if (year && week) {
-    html += `<div class="kv"><span>Manufactured:</span><span>Week ${week} of ${year}</span></div>`;
+    html += `<div class="kv"><span>Manufactured:</span><span>Week ${escapeHtml(week)} of ${escapeHtml(year)}</span></div>`;
   }
 
   const specifiedCycles = counterData.specified_cycle_count_over_device_lifetime;
   const accumulatedCycles = counterData.accumulated_start_stop_cycles;
   if (specifiedCycles !== undefined && accumulatedCycles !== undefined) {
     const percentage = specifiedCycles > 0 ? ((accumulatedCycles / specifiedCycles) * 100).toFixed(1) : 'N/A';
-    html += `<div class="kv"><span>Start/Stop Cycles:</span><span>${accumulatedCycles.toLocaleString()} / ${specifiedCycles.toLocaleString()} (${percentage}%)</span></div>`;
+    html += `<div class="kv"><span>Start/Stop Cycles:</span><span>${escapeHtml(accumulatedCycles.toLocaleString())} / ${escapeHtml(specifiedCycles.toLocaleString())} (${escapeHtml(percentage)}%)</span></div>`;
   }
 
   const specifiedLoadUnload = counterData.specified_load_unload_count_over_device_lifetime;
   const accumulatedLoadUnload = counterData.accumulated_load_unload_cycles;
   if (specifiedLoadUnload !== undefined && accumulatedLoadUnload !== undefined) {
     const percentage = specifiedLoadUnload > 0 ? ((accumulatedLoadUnload / specifiedLoadUnload) * 100).toFixed(1) : 'N/A';
-    html += `<div class="kv"><span>Load/Unload Cycles:</span><span>${accumulatedLoadUnload.toLocaleString()} / ${specifiedLoadUnload.toLocaleString()} (${percentage}%)</span></div>`;
+    html += `<div class="kv"><span>Load/Unload Cycles:</span><span>${escapeHtml(accumulatedLoadUnload.toLocaleString())} / ${escapeHtml(specifiedLoadUnload.toLocaleString())} (${escapeHtml(percentage)}%)</span></div>`;
   }
 
   return html;
@@ -419,7 +419,7 @@ function renderSasPortInfo(portData, portName) {
     return '';
   }
 
-  let html = `<h5>SAS ${portName}</h5>`;
+  let html = `<h5>SAS ${escapeHtml(portName)}</h5>`;
 
   const phyData = portData.phy_0;
   if (!phyData) {
@@ -454,10 +454,10 @@ function renderSasPortInfo(portData, portName) {
       </thead>
       <tbody>
         <tr>
-          <td class="${invalidDwordCount > 0 ? 'row-warning' : ''}">${invalidDwordCount}</td>
-          <td class="${runningDisparityErrorCount > 0 ? 'row-warning' : ''}">${runningDisparityErrorCount}</td>
-          <td class="${lossOfDwordSyncCount > 0 ? 'row-warning' : ''}">${lossOfDwordSyncCount}</td>
-          <td class="${phyResetProblemCount > 0 ? 'row-warning' : ''}">${phyResetProblemCount}</td>
+          <td class="${invalidDwordCount > 0 ? 'row-warning' : ''}">${escapeHtml(invalidDwordCount)}</td>
+          <td class="${runningDisparityErrorCount > 0 ? 'row-warning' : ''}">${escapeHtml(runningDisparityErrorCount)}</td>
+          <td class="${lossOfDwordSyncCount > 0 ? 'row-warning' : ''}">${escapeHtml(lossOfDwordSyncCount)}</td>
+          <td class="${phyResetProblemCount > 0 ? 'row-warning' : ''}">${escapeHtml(phyResetProblemCount)}</td>
         </tr>
       </tbody>
     </table>
@@ -489,12 +489,12 @@ function renderSasErrorCounterLog(errorLog) {
       rows += `
         <tr>
           <td><strong>${section.toUpperCase()}</strong></td>
-          <td>${errorsEccFast}</td>
-          <td>${errorsEccDelayed}</td>
-          <td>${errorsRereadsRewrites}</td>
-          <td>${totalErrorsCorrected}</td>
-          <td>${gigabytesProcessed}</td>
-          <td class="${totalUncorrectable > 0 ? 'row-warning' : ''}">${totalUncorrectable}</td>
+          <td>${escapeHtml(errorsEccFast)}</td>
+          <td>${escapeHtml(errorsEccDelayed)}</td>
+          <td>${escapeHtml(errorsRereadsRewrites)}</td>
+          <td>${escapeHtml(totalErrorsCorrected)}</td>
+          <td>${escapeHtml(gigabytesProcessed)}</td>
+          <td class="${totalUncorrectable > 0 ? 'row-warning' : ''}">${escapeHtml(totalUncorrectable)}</td>
         </tr>
       `;
     }
@@ -564,10 +564,10 @@ function renderSasBackgroundScanLog(scanLog) {
   html += `
     <div class="kv"><span>Scan Status:</span><span>${escapeHtml(scanStatus)}</span></div>
     <div class="kv"><span>Scan Progress:</span><span>${escapeHtml(scanProgress)}</span></div>
-    <div class="kv"><span>Total Scans Performed:</span><span>${numScans}</span></div>
+    <div class="kv"><span>Total Scans Performed:</span><span>${escapeHtml(numScans)}</span></div>
   `;
   if (numMediumScans !== '-') {
-    html += `<div class="kv"><span>Medium Scans Performed:</span><span>${numMediumScans}</span></div>`;
+    html += `<div class="kv"><span>Medium Scans Performed:</span><span>${escapeHtml(numMediumScans)}</span></div>`;
   }
 
   // Parse scan event table if present
@@ -586,7 +586,7 @@ function renderSasBackgroundScanLog(scanLog) {
 
       html += `
         <tr class="${rowClass}">
-          <td>${lba}</td>
+          <td>${escapeHtml(lba)}</td>
           <td>${escapeHtml(status)}</td>
         </tr>
       `;
@@ -633,7 +633,7 @@ function renderNvmeHealthLog(healthLog) {
   const warningDisplay = warningBits.length > 0 ? warningBits.join(', ') : 'None';
   const warningClass = criticalWarning > 0 ? 'row-warning' : '';
 
-  html += `<div class="kv"><span>Critical Warning:</span><span class="${warningClass}">${warningDisplay} (0x${criticalWarning.toString(16).padStart(2, '0')})</span></div>`;
+  html += `<div class="kv"><span>Critical Warning:</span><span class="${warningClass}">${escapeHtml(warningDisplay)} (0x${escapeHtml(criticalWarning.toString(16).padStart(2, '0'))})</span></div>`;
 
   // Temperature sensors
   const temperature = healthLog.temperature !== undefined ? healthLog.temperature + '°C' : '-';
@@ -652,12 +652,12 @@ function renderNvmeHealthLog(healthLog) {
   const availableSpareThreshold = healthLog.available_spare_threshold !== undefined ? healthLog.available_spare_threshold + '%' : '-';
   const spareClass = (healthLog.available_spare !== undefined && healthLog.available_spare_threshold !== undefined && 
                       healthLog.available_spare < healthLog.available_spare_threshold) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Available Spare:</span><span class="${spareClass}">${availableSpare} (threshold: ${availableSpareThreshold})</span></div>`;
+  html += `<div class="kv"><span>Available Spare:</span><span class="${spareClass}">${escapeHtml(availableSpare)} (threshold: ${escapeHtml(availableSpareThreshold)})</span></div>`;
 
   // Percentage used
   const percentageUsed = healthLog.percentage_used !== undefined ? healthLog.percentage_used + '%' : '-';
   const usedClass = (healthLog.percentage_used !== undefined && healthLog.percentage_used > 90) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Percentage Used:</span><span class="${usedClass}">${percentageUsed}</span></div>`;
+  html += `<div class="kv"><span>Percentage Used:</span><span class="${usedClass}">${escapeHtml(percentageUsed)}</span></div>`;
 
   // Data units read/written
   const dataUnitsRead = healthLog.data_units_read !== undefined ? formatDataUnits(healthLog.data_units_read) : '-';
@@ -669,14 +669,14 @@ function renderNvmeHealthLog(healthLog) {
   const mediaErrors = healthLog.media_errors !== undefined ? healthLog.media_errors.toLocaleString() : '-';
   const numErrLogEntries = healthLog.num_err_log_entries !== undefined ? healthLog.num_err_log_entries.toLocaleString() : '-';
   const mediaErrorsClass = (healthLog.media_errors !== undefined && healthLog.media_errors > 0) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Media Errors:</span><span class="${mediaErrorsClass}">${mediaErrors}</span></div>`;
-  html += `<div class="kv"><span>Error Log Entries:</span><span>${numErrLogEntries}</span></div>`;
+  html += `<div class="kv"><span>Media Errors:</span><span class="${mediaErrorsClass}">${escapeHtml(mediaErrors)}</span></div>`;
+  html += `<div class="kv"><span>Error Log Entries:</span><span>${escapeHtml(numErrLogEntries)}</span></div>`;
 
   // Power cycles and power on hours
   const powerCycles = healthLog.power_cycles !== undefined ? healthLog.power_cycles.toLocaleString() : '-';
   const powerOnHours = healthLog.power_on_hours !== undefined ? healthLog.power_on_hours.toLocaleString() : '-';
-  html += `<div class="kv"><span>Power Cycles:</span><span>${powerCycles}</span></div>`;
-  html += `<div class="kv"><span>Power-On Hours:</span><span>${powerOnHours}</span></div>`;
+  html += `<div class="kv"><span>Power Cycles:</span><span>${escapeHtml(powerCycles)}</span></div>`;
+  html += `<div class="kv"><span>Power-On Hours:</span><span>${escapeHtml(powerOnHours)}</span></div>`;
 
   // Controller busy time
   const controllerBusyTime = healthLog.controller_busy_time !== undefined ? formatMinutes(healthLog.controller_busy_time) : '-';
@@ -713,12 +713,12 @@ function renderNvmeErrorLog(errorLog) {
       html += `
         <tr>
           <td>${idx + 1}</td>
-          <td>${errorCount}</td>
-          <td>${sqid}</td>
-          <td>${cid}</td>
-          <td>${status}</td>
-          <td>${lba}</td>
-          <td>${nsid}</td>
+          <td>${escapeHtml(errorCount)}</td>
+          <td>${escapeHtml(sqid)}</td>
+          <td>${escapeHtml(cid)}</td>
+          <td>${escapeHtml(status)}</td>
+          <td>${escapeHtml(lba)}</td>
+          <td>${escapeHtml(nsid)}</td>
           <td>${escapeHtml(command)}</td>
         </tr>
       `;
@@ -773,7 +773,7 @@ function renderDeviceStatistics(deviceStats) {
   let html = '';
 
   deviceStats.forEach(page => {
-    html += `<h5>Page ${page.number}</h5>`;
+    html += `<h5>Page ${escapeHtml(page.number)}</h5>`;
     html += '<table class="data-table">';
     html += '<thead><tr><th>Name</th><th>Value</th><th>Offset</th></tr></thead>';
     html += '<tbody>';
@@ -783,8 +783,8 @@ function renderDeviceStatistics(deviceStats) {
         html += `
           <tr>
             <td>${escapeHtml(item.name)}</td>
-            <td>${item.value}</td>
-            <td>${item.offset}</td>
+            <td>${escapeHtml(item.value)}</td>
+            <td>${escapeHtml(item.offset)}</td>
           </tr>
         `;
       });
@@ -838,20 +838,20 @@ async function startSmartTest(device) {
 
     if (!response.ok) {
       const errorMessage = await parseErrorResponse(response);
-      testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${errorMessage}</p>`;
+      testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${escapeHtml(errorMessage)}</p>`;
       return;
     }
 
     const result = await response.json();
 
     if (!result || result.status !== 'started') {
-      testStatusDiv.innerHTML = `<p class="error">Unexpected response from server: ${JSON.stringify(result)}</p>`;
+      testStatusDiv.innerHTML = `<p class="error">Unexpected response from server: ${escapeHtml(JSON.stringify(result))}</p>`;
       return;
     }
 
     testStatusDiv.innerHTML = `
       <p>Test started successfully!</p>
-      <p>Estimated time: ${result.estimated_minutes || 'unknown'} minutes</p>
+      <p>Estimated time: ${escapeHtml(result.estimated_minutes || 'unknown')} minutes</p>
       <div class="progress-bar">
         <div class="progress-bar-fill" id="testProgressBar" style="width: 0%"></div>
       </div>
@@ -862,7 +862,7 @@ async function startSmartTest(device) {
     pollSmartTestStatus(device, testType);
   } catch (error) {
     console.error('Failed to start SMART test:', error);
-    testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${error.message}</p>`;
+    testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${escapeHtml(error.message)}</p>`;
   }
 }
 

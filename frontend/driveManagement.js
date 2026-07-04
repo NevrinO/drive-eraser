@@ -110,6 +110,10 @@ function stopPolling() {
     clearInterval(pollingIntervalId);
     pollingIntervalId = null;
   }
+  if (_zeroCheckRenderTimer !== null) {
+    clearTimeout(_zeroCheckRenderTimer);
+    _zeroCheckRenderTimer = null;
+  }
 }
 
 let _zeroCheckRenderTimer = null;
@@ -227,6 +231,58 @@ function _skeletonCardHtml(bayId, conf) {
   `;
 }
 
+function _blockedCardHtml(row, col) {
+  return `
+    <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
+      <div class="bay-banner" style="background: transparent; color: #444;"></div>
+      <div class="bay-header-row">
+        <div class="bay-number" style="color: #444;"></div>
+      </div>
+    </article>
+  `;
+}
+
+function _emptyCardHtml(row, col) {
+  return `
+    <article class="bay-card empty" data-bay="empty-${row}-${col}">
+      <div class="bay-banner">EMPTY BAY</div>
+      <div class="bay-header-row">
+        <div class="bay-number">— Empty slot —</div>
+      </div>
+    </article>
+  `;
+}
+
+function _getLocalTemplate() {
+  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
+    return availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id) || null;
+  }
+  return null;
+}
+
+function _buildPositionMap(items, getKey, getValue) {
+  const map = new Map();
+  items.forEach(item => {
+    const pos = getKey(item);
+    if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
+      map.set(`${pos.row},${pos.col}`, getValue(item));
+    }
+  });
+  return map;
+}
+
+function _sortByPhysicalPosition(a, b, fallbackFn) {
+  const aPos = a.physical_position || {};
+  const bPos = b.physical_position || {};
+  const hasAPos = Number.isInteger(aPos.row) && Number.isInteger(aPos.col);
+  const hasBPos = Number.isInteger(bPos.row) && Number.isInteger(bPos.col);
+  if (hasAPos && hasBPos) {
+    if (aPos.row !== bPos.row) return aPos.row - bPos.row;
+    if (aPos.col !== bPos.col) return aPos.col - bPos.col;
+  }
+  return fallbackFn(a, b);
+}
+
 function _renderSkeletonByEnclosure(bayEntries) {
   const baysByEnclosure = {};
   const unassigned = [];
@@ -257,13 +313,11 @@ function _renderSkeletonByEnclosure(bayEntries) {
     const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
     const enclosureBays = baysByEnclosure[enclosureId] || [];
-    const bayByPosition = new Map();
-    enclosureBays.forEach(([bayId, conf]) => {
-      const pos = conf.physical_position;
-      if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
-        bayByPosition.set(`${pos.row},${pos.col}`, [bayId, conf]);
-      }
-    });
+    const bayByPosition = _buildPositionMap(
+      enclosureBays,
+      ([, conf]) => conf.physical_position,
+      ([bayId, conf]) => [bayId, conf]
+    );
 
     gridHtml += `
       <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
@@ -278,27 +332,13 @@ function _renderSkeletonByEnclosure(bayEntries) {
       for (let col = 0; col < templateCols; col++) {
         const posKey = `${row},${col}`;
         if (skipSet.has(posKey)) {
-          gridHtml += `
-            <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
-              <div class="bay-banner" style="background: transparent; color: #444;"></div>
-              <div class="bay-header-row">
-                <div class="bay-number" style="color: #444;"></div>
-              </div>
-            </article>
-          `;
+          gridHtml += _blockedCardHtml(row, col);
         } else {
           const entry = bayByPosition.get(posKey);
           if (entry) {
             gridHtml += _skeletonCardHtml(entry[0], entry[1]);
           } else {
-            gridHtml += `
-              <article class="bay-card empty" data-bay="empty-${row}-${col}">
-                <div class="bay-banner">EMPTY BAY</div>
-                <div class="bay-header-row">
-                  <div class="bay-number">— Empty slot —</div>
-                </div>
-              </article>
-            `;
+            gridHtml += _emptyCardHtml(row, col);
           }
         }
       }
@@ -333,23 +373,15 @@ function _renderSkeletonByEnclosure(bayEntries) {
 }
 
 function _renderSkeletonLegacy(bayEntries) {
-  let skipPositions = [];
-  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
-    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
-    if (template && template.skip_positions) {
-      skipPositions = template.skip_positions;
-    }
-  }
+  const template = _getLocalTemplate();
+  const skipPositions = (template && template.skip_positions) || [];
   const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
   let templateRows = 1;
   let templateCols = 4;
-  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
-    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
-    if (template) {
-      templateRows = template.rows || 1;
-      templateCols = template.cols || 4;
-    }
+  if (template) {
+    templateRows = template.rows || 1;
+    templateCols = template.cols || 4;
   } else {
     const bayCount = bayEntries.length;
     if (bayCount <= 4) templateCols = 4;
@@ -360,40 +392,24 @@ function _renderSkeletonLegacy(bayEntries) {
 
   baysGrid.style.gridTemplateColumns = `repeat(${templateCols}, minmax(0, 1fr))`;
 
-  const bayByPosition = new Map();
-  bayEntries.forEach(([bayId, conf]) => {
-    const pos = conf.physical_position;
-    if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
-      bayByPosition.set(`${pos.row},${pos.col}`, [bayId, conf]);
-    }
-  });
+  const bayByPosition = _buildPositionMap(
+    bayEntries,
+    ([, conf]) => conf.physical_position,
+    ([bayId, conf]) => [bayId, conf]
+  );
 
   let gridHtml = "";
   for (let row = 0; row < templateRows; row++) {
     for (let col = 0; col < templateCols; col++) {
       const posKey = `${row},${col}`;
       if (skipSet.has(posKey)) {
-        gridHtml += `
-          <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
-            <div class="bay-banner" style="background: transparent; color: #444;"></div>
-            <div class="bay-header-row">
-              <div class="bay-number" style="color: #444;"></div>
-            </div>
-          </article>
-        `;
+        gridHtml += _blockedCardHtml(row, col);
       } else {
         const entry = bayByPosition.get(posKey);
         if (entry) {
           gridHtml += _skeletonCardHtml(entry[0], entry[1]);
         } else {
-          gridHtml += `
-            <article class="bay-card empty" data-bay="empty-${row}-${col}">
-              <div class="bay-banner">EMPTY BAY</div>
-              <div class="bay-header-row">
-                <div class="bay-number">— Empty slot —</div>
-              </div>
-            </article>
-          `;
+          gridHtml += _emptyCardHtml(row, col);
         }
       }
     }
@@ -449,12 +465,16 @@ function renderBaysByEnclosure(drives) {
     const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
     // Create a map of drives by their physical position
-    const driveByPosition = new Map();
+    const driveByPosition = _buildPositionMap(
+      enclosureDrives,
+      d => d.physical_position,
+      d => d
+    );
+
+    // Also collect drives with invalid positions
     enclosureDrives.forEach(drive => {
       const pos = drive.physical_position;
-      if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
-        driveByPosition.set(`${pos.row},${pos.col}`, drive);
-      } else {
+      if (!(pos && Number.isInteger(pos.row) && Number.isInteger(pos.col))) {
         allDrivesWithInvalidPositions.push(drive);
       }
     });
@@ -476,27 +496,11 @@ function renderBaysByEnclosure(drives) {
         const drive = driveByPosition.get(posKey);
 
         if (isSkipped) {
-          // Render blocked placeholder
-          gridHtml += `
-            <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
-              <div class="bay-banner" style="background: transparent; color: #444;"></div>
-              <div class="bay-header-row">
-                <div class="bay-number" style="color: #444;"></div>
-              </div>
-            </article>
-          `;
+          gridHtml += _blockedCardHtml(row, col);
         } else if (drive) {
           gridHtml += renderBayCard(drive);
         } else {
-          // Render empty placeholder for grid position with no drive
-          gridHtml += `
-            <article class="bay-card empty" data-bay="empty-${row}-${col}">
-              <div class="bay-banner">EMPTY BAY</div>
-              <div class="bay-header-row">
-                <div class="bay-number">— Empty slot —</div>
-              </div>
-            </article>
-          `;
+          gridHtml += _emptyCardHtml(row, col);
         }
       }
     }
@@ -519,20 +523,11 @@ function renderBaysByEnclosure(drives) {
     `;
 
     // Sort unassigned drives by physical position (row, col) to follow traversal pattern
-    unassignedDrives.sort((a, b) => {
-      const aPos = a.physical_position || {};
-      const bPos = b.physical_position || {};
-      const hasAPos = Number.isInteger(aPos.row) && Number.isInteger(aPos.col);
-      const hasBPos = Number.isInteger(bPos.row) && Number.isInteger(bPos.col);
-      if (hasAPos && hasBPos) {
-        if (aPos.row !== bPos.row) return aPos.row - bPos.row;
-        if (aPos.col !== bPos.col) return aPos.col - bPos.col;
-      }
-      // Fallback to physical_slot_number if physical_position is missing
+    unassignedDrives.sort((a, b) => _sortByPhysicalPosition(a, b, (a, b) => {
       const slotA = a.physical_slot_number || 0;
       const slotB = b.physical_slot_number || 0;
       return slotA - slotB;
-    });
+    }));
 
     unassignedDrives.forEach(drive => {
       gridHtml += renderBayCard(drive);
@@ -601,36 +596,20 @@ function renderBaysByEnclosure(drives) {
 
 function renderBaysLegacy(drives) {
   // Get skip positions from template if available
-  let skipPositions = [];
-  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
-    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
-    if (template && template.skip_positions) {
-      skipPositions = template.skip_positions;
-    }
-  }
+  const template = _getLocalTemplate();
+  const skipPositions = (template && template.skip_positions) || [];
   const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
-  const orderedDrives = [...drives].sort((a, b) => {
-    const aPos = a.physical_position || {};
-    const bPos = b.physical_position || {};
-    const hasAPos = Number.isInteger(aPos.row) && Number.isInteger(aPos.col);
-    const hasBPos = Number.isInteger(bPos.row) && Number.isInteger(bPos.col);
-    if (hasAPos && hasBPos) {
-      if (aPos.row !== bPos.row) return aPos.row - bPos.row;
-      if (aPos.col !== bPos.col) return aPos.col - bPos.col;
-    }
+  const orderedDrives = [...drives].sort((a, b) => _sortByPhysicalPosition(a, b, (a, b) => {
     const aNum = parseInt(String(a.display_number || a.bay).replace(/\D/g, ""), 10) || 0;
     const bNum = parseInt(String(b.display_number || b.bay).replace(/\D/g, ""), 10) || 0;
     return aNum - bNum;
-  });
+  }));
 
   // Determine grid columns based on template or default to 4
   let gridCols = 4;
-  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
-    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
-    if (template && template.cols) {
-      gridCols = template.cols;
-    }
+  if (template && template.cols) {
+    gridCols = template.cols;
   } else {
     const bayCount = drives.length;
     if (bayCount <= 4) {
@@ -648,22 +627,17 @@ function renderBaysLegacy(drives) {
   // Get template dimensions for grid generation
   let templateRows = 1;
   let templateCols = gridCols;
-  if (localLayoutMetadata.template_id && availableLayoutTemplates.length > 0) {
-    const template = availableLayoutTemplates.find(t => t.id === localLayoutMetadata.template_id);
-    if (template) {
-      templateRows = template.rows || 1;
-      templateCols = template.cols || gridCols;
-    }
+  if (template) {
+    templateRows = template.rows || 1;
+    templateCols = template.cols || gridCols;
   }
 
   // Create a map of drives by their physical position
-  const driveByPosition = new Map();
-  orderedDrives.forEach(drive => {
-    const pos = drive.physical_position;
-    if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
-      driveByPosition.set(`${pos.row},${pos.col}`, drive);
-    }
-  });
+  const driveByPosition = _buildPositionMap(
+    orderedDrives,
+    d => d.physical_position,
+    d => d
+  );
 
   // Generate grid cells
   let gridHtml = "";
@@ -674,27 +648,11 @@ function renderBaysLegacy(drives) {
       const drive = driveByPosition.get(posKey);
 
       if (isSkipped) {
-        // Render blocked placeholder
-        gridHtml += `
-          <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
-            <div class="bay-banner" style="background: transparent; color: #444;"></div>
-            <div class="bay-header-row">
-              <div class="bay-number" style="color: #444;"></div>
-            </div>
-          </article>
-        `;
+        gridHtml += _blockedCardHtml(row, col);
       } else if (drive) {
         gridHtml += renderBayCard(drive);
       } else {
-        // Render empty placeholder for grid position with no drive
-        gridHtml += `
-          <article class="bay-card empty" data-bay="empty-${row}-${col}">
-            <div class="bay-banner">EMPTY BAY</div>
-            <div class="bay-header-row">
-              <div class="bay-number">— Empty slot —</div>
-            </div>
-          </article>
-        `;
+        gridHtml += _emptyCardHtml(row, col);
       }
     }
   }
@@ -983,7 +941,9 @@ async function handleZeroCheckAction(bay, action) {
     const response = await safeFetch(`/api/drives/${encodeURIComponent(bay)}/zero-check`, { method });
     if (!response.ok) {
       const data = await response.json().catch(() => ({}));
-      console.error(`Zero-check ${action} failed for ${bay}:`, data.error || response.status);
+      const errMsg = data.error || response.status;
+      console.error(`Zero-check ${action} failed for ${bay}:`, errMsg);
+      alert(`Zero-check ${action} failed for ${bay}: ${errMsg}`);
       return;
     }
     await loadDrives(true);
@@ -1008,7 +968,12 @@ function toggleBaySelection(bay) {
   }
   selectedCountLabel.textContent = `${selectedBays.size} Bay(s) Staged`;
   batchActionFooter.classList.toggle("hidden", selectedBays.size === 0);
-  renderBays(currentDrives);
+  const card = baysGrid.querySelector(`article[data-bay="${CSS.escape(bay)}"]`);
+  if (card) {
+    card.classList.toggle("selected", selectedBays.has(bay));
+    const checkbox = card.querySelector(".card-checkbox");
+    if (checkbox) checkbox.checked = selectedBays.has(bay);
+  }
 }
 
 batchSelectToggleBtn.addEventListener("click", () => {
@@ -1196,11 +1161,10 @@ batchEraseForm.addEventListener("submit", async (event) => {
     if (!response.ok) {
       const error = result.error || "Unknown Error";
       
-      // Check if error is from health gate
-      if (error.includes("pre_wipe_health_check_failed")) {
-        // Parse health gate details if available
-        const isOverrideAvailable = error.includes("override_available");
-        const blockReason = error.split(":")[1]?.trim() || "Unknown health issue";
+      // Check if error is from health gate (structured response)
+      if (result.error_code === "pre_wipe_health_check_failed") {
+        const blockReason = result.block_reason || "Unknown health issue";
+        const isOverrideAvailable = result.override_available === true;
         
         // Show health gate warning modal
         showHealthGateWarning(blockReason, isOverrideAvailable, payload);
@@ -1341,6 +1305,13 @@ if (healthGateCancelBtn || healthGateWarningClose) {
   };
   if (healthGateCancelBtn) healthGateCancelBtn.addEventListener("click", cancelHandler);
   if (healthGateWarningClose) healthGateWarningClose.addEventListener("click", cancelHandler);
+}
+
+const healthGateBackdrop = healthGateWarningModal.querySelector(".modal-backdrop");
+if (healthGateBackdrop) {
+  healthGateBackdrop.addEventListener("click", () => {
+    pendingHealthGatePayload = null;
+  });
 }
 
 // --- END OF FILE frontend/driveManagement.js ---

@@ -116,7 +116,7 @@
       <div class="control-bar history-controls">
         <label>
           Search Ledger Filter
-          <input type="text" id="historyQuery" placeholder="Type serial, ticket, model, tech, CERT-************ to find records instantly...">
+          <input type="text" id="historyQuery" maxlength="200" placeholder="Type serial, ticket, model, tech, CERT-************ to find records instantly...">
         </label>
         <label>
           Filter Wipes
@@ -342,11 +342,11 @@
           <div class="form-fields-stack">
             <label>
               Technician Name
-              <input type="text" id="technician" name="technician" placeholder="Enter full name or ID">
+              <input type="text" id="technician" name="technician" maxlength="100" placeholder="Enter full name or ID">
             </label>
             <label>
               Ticket Number
-              <input type="text" id="ticketNumber" name="ticketNumber" placeholder="e.g. TKT-49201">
+              <input type="text" id="ticketNumber" name="ticketNumber" maxlength="50" placeholder="e.g. TKT-49201">
             </label>
           </div>
 
@@ -382,7 +382,7 @@
             <label>
               Typed Confirmation
               <span id="dynamicConfirmationHint" class="confirmation-hint-label">Type "erase X drives" below:</span>
-              <input type="text" id="confirmationText" name="confirmationText" autocomplete="off" placeholder="Type exactly as shown above">
+              <input type="text" id="confirmationText" name="confirmationText" autocomplete="off" maxlength="100" placeholder="Type exactly as shown above">
             </label>
           </div>
 
@@ -407,7 +407,7 @@
         <div id="healthGateOverrideSection" class="hidden" style="margin-top: 16px; padding: 12px; background: var(--color-surface-2); border-radius: 4px;">
           <label>
             Justification for Override
-            <input type="text" id="healthGateOverrideJustification" placeholder="Enter reason for overriding health check (e.g., 'Drive for testing only')">
+            <input type="text" id="healthGateOverrideJustification" maxlength="200" placeholder="Enter reason for overriding health check (e.g., 'Drive for testing only')">
           </label>
           <button type="button" id="healthGateOverrideBtn" class="btn btn--warning w-full py-3 mt-2">Override and Proceed</button>
         </div>
@@ -788,16 +788,16 @@
           <div class="form-fields-stack">
             <label>
               Template ID
-              <input type="text" id="templateId" name="id" placeholder="e.g., dell_r320_4bay" required>
+              <input type="text" id="templateId" name="id" maxlength="50" placeholder="e.g., dell_r320_4bay" required>
               <small class="text-muted-xs">Unique identifier for this template (lowercase, hyphens allowed)</small>
             </label>
             <label>
               Template Name
-              <input type="text" id="templateName" name="name" placeholder="e.g., Dell 16-Bay Server" required>
+              <input type="text" id="templateName" name="name" maxlength="100" placeholder="e.g., Dell 16-Bay Server" required>
             </label>
             <label>
               Vendor
-              <input type="text" id="templateVendor" name="vendor" placeholder="e.g., Dell, Supermicro">
+              <input type="text" id="templateVendor" name="vendor" maxlength="100" placeholder="e.g., Dell, Supermicro">
             </label>
             <label>
               Bay Count
@@ -825,12 +825,12 @@
             </label>
             <label>
               Skip Positions (Optional)
-              <input type="text" id="templateSkipPositions" name="skip_positions" placeholder="e.g., 4,8,12">
+              <input type="text" id="templateSkipPositions" name="skip_positions" maxlength="200" placeholder="e.g., 4,8,12">
               <small class="text-muted-xs">Comma-separated bay numbers to skip (e.g., for empty slots)</small>
             </label>
             <label>
               Hybrid Slots (Optional)
-              <input type="text" id="templateHybridSlots" name="hybrid_slots" placeholder="e.g., 1,5,9">
+              <input type="text" id="templateHybridSlots" name="hybrid_slots" maxlength="200" placeholder="e.g., 1,5,9">
               <small class="text-muted-xs">Comma-separated bay numbers that support both SAS/SATA and NVMe (for hybrid enclosures)</small>
             </label>
           </div>
@@ -1283,7 +1283,7 @@
           <div id="manualMappingControls" style="margin-bottom: 16px; padding: 12px; background: #1a1a1a; border-radius: 4px; display: none;">
             <div style="margin-bottom: 12px;">
               <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Search Devices</label>
-              <input id="deviceSearchInput" type="text" placeholder="Search by path, model, serial, or controller..." style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+              <input id="deviceSearchInput" type="text" maxlength="200" placeholder="Search by path, model, serial, or controller..." style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
             </div>
             <div style="margin-bottom: 12px;">
               <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Device Filter</label>
