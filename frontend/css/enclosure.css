@@ -112,3 +112,113 @@
   gap: 12px;
   contain: layout;
 }
+
+/* JS-generated enclosure wizard classes */
+.wizard-badge-occupied {
+  background: #4a90e2;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.wizard-badge-total {
+  background: #666;
+  color: white;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 0.75rem;
+}
+
+.wizard-hint-box {
+  background: #2a2a2a;
+  padding: 12px;
+  border-radius: 4px;
+  margin-top: 12px;
+  border-left: 3px solid #4a90e2;
+}
+
+.wizard-hint-text {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #aaa;
+}
+
+.wizard-refresh-btn {
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: #4a90e2;
+  color: white;
+  border: none;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+
+.wizard-hybrid-section {
+  background: #2a2a2a;
+  padding: 12px;
+  border-radius: 4px;
+  margin-top: 12px;
+}
+
+.wizard-hybrid-label {
+  color: #4a90e2;
+  font-weight: bold;
+}
+
+.wizard-hybrid-desc {
+  font-size: 0.8rem;
+  color: #aaa;
+  margin: 8px 0;
+}
+
+.wizard-form-hint {
+  color: #888;
+  display: block;
+  margin-top: 4px;
+}
+
+.wizard-slot-config-section {
+  background: #2a2a2a;
+  padding: 12px;
+  border-radius: 4px;
+  margin-bottom: 16px;
+}
+
+.wizard-slot-config-label {
+  font-weight: bold;
+}
+
+.wizard-slot-number-input {
+  width: 100px;
+  padding: 4px;
+  background: #333;
+  border: 1px solid #555;
+  color: #fff;
+}
+
+.wizard-form-input {
+  width: 100%;
+  padding: 4px;
+  background: #222;
+  border: 1px solid #444;
+  color: #fff;
+}
+
+.wizard-form-select {
+  width: 100%;
+  padding: 4px;
+  background: #222;
+  border: 1px solid #444;
+  color: #fff;
+}
+
+.slot-status--unconfigured { color: #888; }
+.slot-status--present { color: #4CAF50; }
+.slot-status--empty { color: #FFA500; }
+.slot-status--configured { color: #4CAF50; }
+
+.enclosure-id-text {
+  color: #888;
+}

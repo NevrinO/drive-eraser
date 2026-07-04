@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';">
   <title>Drive Sanitization Station</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css">
@@ -11,7 +11,7 @@
 <body>
   <a href="#main-content" class="skip-to-content">Skip to main content</a>
   <div class="app" id="main-content">
-    <noscript><p style="padding: 2rem; text-align: center;">This application requires JavaScript to function.</p></noscript>
+    <noscript><p class="noscript-message">This application requires JavaScript to function.</p></noscript>
     <header class="app-header">
       <h1>Drive Sanitization Station</h1>
       <div class="header-actions">
@@ -27,15 +27,15 @@
       <span id="apiStatus">API status: unknown</span>
     </section>
 
-    <nav class="tabs" id="mainTabs">
-      <button type="button" class="tab-button active" data-tab="workbenchPanel">Active Workbench</button>
-      <button type="button" class="tab-button" data-tab="triagePanel">Batch Intake Triage</button>
-      <button type="button" class="tab-button" data-tab="auditPanel">Compliance Audit Vault</button>
-      <button type="button" class="tab-button" data-tab="adminPanel">System Administration</button>
+    <nav class="tabs" id="mainTabs" role="tablist">
+      <button type="button" class="tab-button active" role="tab" id="tab-workbench" aria-selected="true" aria-controls="workbenchPanel" tabindex="0" data-tab="workbenchPanel">Active Workbench</button>
+      <button type="button" class="tab-button" role="tab" id="tab-triage" aria-selected="false" aria-controls="triagePanel" tabindex="-1" data-tab="triagePanel">Batch Intake Triage</button>
+      <button type="button" class="tab-button" role="tab" id="tab-audit" aria-selected="false" aria-controls="auditPanel" tabindex="-1" data-tab="auditPanel">Compliance Audit Vault</button>
+      <button type="button" class="tab-button" role="tab" id="tab-admin" aria-selected="false" aria-controls="adminPanel" tabindex="-1" data-tab="adminPanel">System Administration</button>
     </nav>
 
     <!-- TAB A: WORKBENCH -->
-    <section id="workbenchPanel" class="tab-panel active">
+    <section id="workbenchPanel" class="tab-panel active" role="tabpanel" aria-labelledby="tab-workbench" tabindex="0">
       <div class="workbench-controls-header">
         <div class="section-title">Drive Bay Layout Overview</div>
         <!-- Safety Toggle: Defaults to clean inactive state -->
@@ -54,27 +54,27 @@
     </section>
 
     <!-- TAB B: BATCH INTAKE TRIAGE -->
-    <section id="triagePanel" class="tab-panel">
+    <section id="triagePanel" class="tab-panel" role="tabpanel" aria-labelledby="tab-triage" tabindex="0">
       <div class="workbench-controls-header">
         <div class="section-title">Batch Intake Triage Report</div>
         <button type="button" id="refreshTriageBtn" class="btn btn--secondary">Refresh Drives</button>
       </div>
 
-      <div class="triage-controls" style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
-        <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-          <label style="font-size: 0.8rem; font-weight: bold;">Filter:</label>
-          <select id="filterInterface" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+      <div class="triage-controls">
+        <div class="triage-controls-inner">
+          <label class="triage-filter-label">Filter:</label>
+          <select id="filterInterface" class="triage-filter-select">
             <option value="all">All Interfaces</option>
             <option value="sata">SATA</option>
             <option value="sas">SAS</option>
             <option value="nvme">NVMe</option>
           </select>
-          <select id="filterMediaType" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+          <select id="filterMediaType" class="triage-filter-select">
             <option value="all">All Media Types</option>
             <option value="ssd">SSD</option>
             <option value="hdd">HDD</option>
           </select>
-          <select id="filterRecommendation" style="padding: 4px 8px; background: #333; color: #fff; border: 1px solid #444; border-radius: 4px; font-size: 0.8rem;">
+          <select id="filterRecommendation" class="triage-filter-select">
             <option value="all">All Recommendations</option>
             <option value="new">New Stock</option>
             <option value="good">Used Good</option>
@@ -84,11 +84,11 @@
             <option value="locked">Locked</option>
             <option value="unknown">Unknown</option>
           </select>
-          <button type="button" id="printTriageBtn" class="btn btn--primary" style="margin-left: auto;">Print Report</button>
+          <button type="button" id="printTriageBtn" class="btn btn--primary ml-auto">Print Report</button>
         </div>
       </div>
 
-      <div id="triageTableContainer" style="overflow-x: auto;">
+      <div id="triageTableContainer" class="triage-table-container">
         <table id="triageTable" class="triage-table">
           <thead>
             <tr>
@@ -111,7 +111,7 @@
     </section>
 
     <!-- TAB C: AUDIT VAULT -->
-    <section id="auditPanel" class="tab-panel">
+    <section id="auditPanel" class="tab-panel" role="tabpanel" aria-labelledby="tab-audit" tabindex="0">
       <div class="section-title">Compliance Search Index</div>
       <div class="control-bar history-controls">
         <label>
@@ -143,7 +143,7 @@
     </section>
 
     <!-- TAB D: SYSTEM ADMINISTRATION -->
-    <section id="adminPanel" class="tab-panel">
+    <section id="adminPanel" class="tab-panel" role="tabpanel" aria-labelledby="tab-admin" tabindex="0">
       <div class="admin-grid">
         
         <!-- Zone A: Host Health Monitor -->
@@ -153,21 +153,21 @@
             <div class="metric-row">
               <span class="metric-label">OS Disk Space</span>
               <div class="progress-bar-container">
-                <div id="metricDiskBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+                <div id="metricDiskBar" class="progress-bar-fill fill-green"></div>
               </div>
               <span id="metricDiskText" class="metric-value">0%</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">RAM Usage</span>
               <div class="progress-bar-container">
-                <div id="metricRamBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+                <div id="metricRamBar" class="progress-bar-fill fill-green"></div>
               </div>
               <span id="metricRamText" class="metric-value">0%</span>
             </div>
             <div class="metric-row">
               <span class="metric-label">CPU Utilization</span>
               <div class="progress-bar-container">
-                <div id="metricCpuBar" class="progress-bar-fill fill-green" style="width: 0%"></div>
+                <div id="metricCpuBar" class="progress-bar-fill fill-green"></div>
               </div>
               <span id="metricCpuText" class="metric-value">0%</span>
             </div>
@@ -226,7 +226,7 @@
             </div>
           </div>
           <p class="admin-desc">Manage custom bay layout templates for different workstation configurations.</p>
-          <div id="templateList" class="template-list" style="margin-top: 12px; flex: 1; overflow-y: auto; min-height: 0;">
+          <div id="templateList" class="template-list admin-list-scroll">
             <!-- Populated dynamically -->
           </div>
           <div id="templateStatus" class="test-result-label hidden"></div>
@@ -261,7 +261,7 @@
             <button type="button" id="addEnclosureBtn" class="btn btn--primary btn-sm">+ Add Enclosure</button>
           </div>
           <p class="admin-desc">Manage physical enclosures, backplanes, and slot mappings.</p>
-          <div id="enclosureList" class="enclosure-list" style="margin-top: 12px; flex: 1; overflow-y: auto; min-height: 0;">
+          <div id="enclosureList" class="enclosure-list admin-list-scroll">
             <!-- Populated dynamically -->
           </div>
         </div>
@@ -350,12 +350,12 @@
             </label>
           </div>
 
-          <div class="section-title" style="margin-top: 16px; margin-bottom: 8px;">Staged Drives Configurations</div>
+          <div class="section-title section-title--mt">Staged Drives Configurations</div>
           <div id="selectedDrivesConfigList" class="batch-config-list"></div>
 
-          <div class="section-title" style="margin-top: 16px; margin-bottom: 8px;">Wipe Options</div>
+          <div class="section-title section-title--mt">Wipe Options</div>
           <div class="form-fields-stack">
-            <label style="display: flex; align-items: center; gap: 8px;">
+            <label class="checkbox-label">
               <input type="checkbox" id="writeMarkerCheckbox" name="write_marker" checked>
               <span>Write post-erase marker</span>
             </label>
@@ -365,17 +365,17 @@
                 <option value="sampled">10% sampled</option>
                 <option value="full">100% full</option>
               </select>
-              <small class="text-muted-xs" style="display: block; margin-top: 4px; color: var(--color-warning);">Full coverage will significantly increase wipe time on large drives</small>
+              <small class="text-muted-xs warning-note">Full coverage will significantly increase wipe time on large drives</small>
             </label>
-            <div id="secondaryVerificationDisabledNote" class="text-muted-xs hidden" style="margin-top: 4px; color: var(--color-warning);">
+            <div id="secondaryVerificationDisabledNote" class="text-muted-xs hidden warning-note">
               Secondary verification is disabled globally. Only primary verification will run.
             </div>
           </div>
 
-          <div id="zeroCheckWarning" class="hidden" style="margin-top: 16px; padding: 12px; background: rgba(6, 182, 212, 0.14); border: 1px solid var(--color-teal); border-radius: 4px;">
-            <div style="font-weight: 700; color: var(--color-teal); margin-bottom: 4px;">Zeroed Drives Detected</div>
-            <div style="font-size: 0.8rem; color: var(--color-text);">The following staged bays appear to already be zero-filled based on the sampled check. This is informational only; you may still proceed with sanitization if required.</div>
-            <div id="zeroCheckWarningList" style="margin-top: 8px; font-size: 0.8rem; color: var(--color-text-muted);"></div>
+          <div id="zeroCheckWarning" class="hidden zero-check-warning">
+            <div class="zero-check-warning-title">Zeroed Drives Detected</div>
+            <div class="zero-check-warning-body">The following staged bays appear to already be zero-filled based on the sampled check. This is informational only; you may still proceed with sanitization if required.</div>
+            <div id="zeroCheckWarningList" class="zero-check-warning-list"></div>
           </div>
 
           <div class="confirmation-section">
@@ -395,16 +395,16 @@
   <!-- HEALTH GATE WARNING MODAL -->
   <div id="healthGateWarningModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="healthGateWarningTitle" style="max-width: 600px;">
+    <div class="modal-dialog modal-dialog--sm" role="dialog" aria-modal="true" aria-labelledby="healthGateWarningTitle">
       <header class="modal-header">
         <h3 id="healthGateWarningTitle">Pre-Wipe Health Check Warning</h3>
         <button type="button" id="healthGateWarningClose" class="close-button" data-close-modal="true">Cancel</button>
       </header>
       <div class="modal-content">
-        <div id="healthGateWarningContent" style="margin-bottom: 16px;">
+        <div id="healthGateWarningContent" class="mb-4">
           <!-- Populated dynamically -->
         </div>
-        <div id="healthGateOverrideSection" class="hidden" style="margin-top: 16px; padding: 12px; background: var(--color-surface-2); border-radius: 4px;">
+        <div id="healthGateOverrideSection" class="hidden override-section">
           <label>
             Justification for Override
             <input type="text" id="healthGateOverrideJustification" maxlength="200" placeholder="Enter reason for overriding health check (e.g., 'Drive for testing only')">
@@ -843,20 +843,20 @@
   <!-- TEMPLATE PREVIEW MODAL -->
   <div id="templatePreviewModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="templatePreviewTitle" style="max-width: 800px;">
+    <div class="modal-dialog modal-dialog--lg" role="dialog" aria-modal="true" aria-labelledby="templatePreviewTitle">
       <header class="modal-header">
         <h3 id="templatePreviewTitle">Template Preview</h3>
         <button type="button" id="templatePreviewClose" class="close-button" data-close-modal="true">Close</button>
       </header>
       <div class="modal-content">
-        <div id="templatePreviewInfo" style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
+        <div id="templatePreviewInfo" class="template-preview-info">
           <!-- Template info populated dynamically -->
         </div>
-        <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-          <button type="button" id="previewAnimateBtn" class="btn btn--primary" style="flex: 1;">Animate Traversal</button>
-          <button type="button" id="previewResetBtn" class="btn btn--secondary" style="flex: 1;">Reset</button>
+        <div class="template-preview-buttons">
+          <button type="button" id="previewAnimateBtn" class="btn btn--primary flex-1">Animate Traversal</button>
+          <button type="button" id="previewResetBtn" class="btn btn--secondary flex-1">Reset</button>
         </div>
-        <div id="templatePreviewGrid" class="template-preview-grid" style="display: grid; gap: 8px; padding: 16px; background: #1a1a1a; border-radius: 4px; min-height: 300px;">
+        <div id="templatePreviewGrid" class="template-preview-grid">
           <!-- Grid populated dynamically -->
         </div>
       </div>
@@ -866,7 +866,7 @@
   <!-- TRIAGE CONFIG MODAL -->
   <div id="triageConfigModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="triageConfigTitle" style="max-width: 800px;">
+    <div class="modal-dialog modal-dialog--lg" role="dialog" aria-modal="true" aria-labelledby="triageConfigTitle">
       <header class="modal-header">
         <h3 id="triageConfigTitle">Configure Triage Thresholds</h3>
         <button type="button" id="triageConfigClose" class="close-button" data-close-modal="true">Cancel</button>
@@ -973,7 +973,7 @@
 
   <div id="systemConfigModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="systemConfigTitle" style="max-width: 700px;">
+    <div class="modal-dialog modal-dialog--md" role="dialog" aria-modal="true" aria-labelledby="systemConfigTitle">
       <header class="modal-header">
         <h3 id="systemConfigTitle">Configure System Settings</h3>
         <button type="button" id="systemConfigClose" class="close-button" data-close-modal="true">Cancel</button>
@@ -1138,22 +1138,22 @@
   <!-- DRIVE MODELS MODAL -->
   <div id="driveModelsModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="driveModelsTitle" style="max-width: 900px;">
+    <div class="modal-dialog modal-dialog--xl" role="dialog" aria-modal="true" aria-labelledby="driveModelsTitle">
       <header class="modal-header">
         <h3 id="driveModelsTitle">Drive Model Risk Profiles</h3>
         <button type="button" id="driveModelsClose" class="close-button" data-close-modal="true">Close</button>
       </header>
       <div class="modal-content">
         <div id="driveModelsError" class="test-result-label hidden mb-3"></div>
-        <div style="margin-bottom: 12px; padding: 12px; background: var(--color-surface-2); border-radius: 4px;">
-          <div style="font-size: 0.8rem; color: var(--color-text-muted); margin-bottom: 8px;">
+        <div class="drive-models-info-box">
+          <div class="drive-models-info-text">
             Drive model risk profiles are stored in <code>config/drive_models.json</code>. These profiles contain model-specific thresholds and notes for SMART health assessment.
           </div>
-          <div style="font-size: 0.75rem; color: var(--color-warning);">
+          <div class="drive-models-info-warning">
             To add new entries, edit the JSON file directly. The key format is <code>VENDOR,PRODUCT,REVISION</code>.
           </div>
         </div>
-        <div id="driveModelsList" style="max-height: 500px; overflow-y: auto;">
+        <div id="driveModelsList" class="drive-models-list">
           <!-- Populated dynamically -->
         </div>
       </div>
@@ -1163,7 +1163,7 @@
   <!-- ENCLOSURE WIZARD MODAL -->
   <div id="enclosureWizardModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="enclosureWizardTitle" style="max-width: 900px;">
+    <div class="modal-dialog modal-dialog--xl" role="dialog" aria-modal="true" aria-labelledby="enclosureWizardTitle">
       <header class="modal-header">
         <h3 id="enclosureWizardTitle">Add New Enclosure</h3>
         <button type="button" id="enclosureWizardClose" class="close-button" data-close-modal="true">Cancel</button>
@@ -1186,9 +1186,9 @@
         </div>
 
         <div class="flex-row gap-3 mt-4">
-          <button type="button" id="wizardPrevBtn" class="btn btn--secondary" style="flex: 1;">&lt; Back</button>
-          <button type="button" id="wizardNextBtn" class="btn btn--primary" style="flex: 1;">Next Step &gt;</button>
-          <button type="button" id="wizardSaveBtn" class="btn btn--primary" style="flex: 1;">Save Enclosure</button>
+          <button type="button" id="wizardPrevBtn" class="btn btn--secondary flex-1">&lt; Back</button>
+          <button type="button" id="wizardNextBtn" class="btn btn--primary flex-1">Next Step &gt;</button>
+          <button type="button" id="wizardSaveBtn" class="btn btn--primary flex-1">Save Enclosure</button>
         </div>
       </div>
     </div>
@@ -1197,144 +1197,144 @@
   <!-- DISCOVERY MODAL -->
   <div id="discoveryModal" class="modal" aria-hidden="true">
     <div class="modal-backdrop" data-close-modal="true"></div>
-    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="discoveryTitle" style="max-width: 1200px;">
+    <div class="modal-dialog modal-dialog--xxl" role="dialog" aria-modal="true" aria-labelledby="discoveryTitle">
       <header class="modal-header">
         <h3 id="discoveryTitle">Slot Discovery & Mapping</h3>
         <button type="button" id="discoveryClose" class="close-button" data-close-modal="true">Close</button>
       </header>
       <div class="modal-content">
-        <div style="margin-bottom: 16px;">
+        <div class="discovery-toolbar">
           <button type="button" id="discoverSlotsBtn" class="btn btn--primary">⚡ Discover Slots</button>
-          <span id="discoveryStatus" style="margin-left: 12px; color: #888;"></span>
+          <span id="discoveryStatus" class="discovery-status-text"></span>
         </div>
 
-        <div id="discoveryResults" style="display: none;">
+        <div id="discoveryResults" class="hidden">
           <!-- Grouping Controls -->
-          <div style="margin-bottom: 16px; padding: 12px; background: #222; border-radius: 4px;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Controller Grouping</label>
-            <div style="display: flex; gap: 8px;">
-              <button type="button" id="groupNoneBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">None</button>
-              <button type="button" id="groupTypeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By Type</button>
-              <button type="button" id="groupPciBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">By PCI</button>
+          <div class="discovery-group-box">
+            <label class="discovery-group-label">Controller Grouping</label>
+            <div class="discovery-group-buttons">
+              <button type="button" id="groupNoneBtn" class="btn btn--secondary">None</button>
+              <button type="button" id="groupTypeBtn" class="btn btn--secondary">By Type</button>
+              <button type="button" id="groupPciBtn" class="btn btn--secondary">By PCI</button>
             </div>
           </div>
 
           <!-- Controllers Section -->
-          <div class="modal-section-header" style="margin-top: 16px; margin-bottom: 8px;">Detected Controllers</div>
-          <div id="controllersList" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+          <div class="modal-section-header section-title--mt">Detected Controllers</div>
+          <div id="controllersList" class="discovery-list-container">
             <!-- Controllers populated dynamically -->
           </div>
 
           <!-- Devices Section -->
-          <div class="modal-section-header" style="margin-bottom: 8px;">Detected Devices</div>
-          <div id="devicesList" style="margin-bottom: 16px; max-height: 500px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+          <div class="modal-section-header mb-2">Detected Devices</div>
+          <div id="devicesList" class="discovery-list-container discovery-list-container--tall">
             <!-- Devices populated dynamically -->
           </div>
 
           <!-- Enclosure Slots Section -->
-          <div id="enclosureSlotsSection" style="display: none;">
-            <div class="modal-section-header" style="margin-bottom: 8px;">Enclosure Slots</div>
-            <div id="enclosureSlotsList" style="margin-bottom: 16px; max-height: 400px; overflow-y: auto; background: #222; border-radius: 4px; padding: 12px;">
+          <div id="enclosureSlotsSection" class="hidden">
+            <div class="modal-section-header mb-2">Enclosure Slots</div>
+            <div id="enclosureSlotsList" class="discovery-list-container">
               <!-- Enclosure slots populated dynamically -->
             </div>
           </div>
 
           <!-- Mapping Interface -->
-          <div class="modal-section-header" style="margin-bottom: 8px;">Device Mapping</div>
+          <div class="modal-section-header mb-2">Device Mapping</div>
           
           <!-- Mapping Mode Toggle -->
-          <div style="margin-bottom: 12px; padding: 12px; background: #222; border-radius: 4px;">
-            <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 8px;">Mapping Mode</label>
-            <div style="display: flex; gap: 8px;">
-              <button type="button" id="patternModeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem; background: var(--color-primary);">Pattern-Based</button>
-              <button type="button" id="manualModeBtn" class="btn btn--secondary" style="flex: 1; padding: 6px 12px; font-size: 0.75rem;">Manual</button>
+          <div class="discovery-group-box">
+            <label class="discovery-group-label">Mapping Mode</label>
+            <div class="discovery-group-buttons">
+              <button type="button" id="patternModeBtn" class="btn btn--secondary">Pattern-Based</button>
+              <button type="button" id="manualModeBtn" class="btn btn--secondary">Manual</button>
             </div>
           </div>
 
           <!-- Pattern-based mapping controls -->
-          <div id="patternMappingControls" style="margin-bottom: 16px; padding: 12px; background: #1a1a1a; border-radius: 4px;">
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Mapping Pattern</label>
-              <select id="mappingPattern" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+          <div id="patternMappingControls" class="discovery-mapping-panel">
+            <div class="mb-3">
+              <label class="discovery-mapping-label">Mapping Pattern</label>
+              <select id="mappingPattern" class="discovery-mapping-select">
                 <option value="sequential">Sequential (Bay 0 → First Device, Bay 1 → Second Device, ...)</option>
                 <option value="controller_sequential">Controller Sequential (Group by controller, then sequential)</option>
                 <option value="pci_sequential">PCI Sequential (Group by PCI address, then sequential)</option>
               </select>
             </div>
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Starting Bay Number</label>
-              <input id="mappingStartBay" type="number" min="0" max="127" value="0" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+            <div class="mb-3">
+              <label class="discovery-mapping-label">Starting Bay Number</label>
+              <input id="mappingStartBay" type="number" min="0" max="127" value="0" class="discovery-mapping-input" />
             </div>
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Device Filter (Optional)</label>
-              <select id="mappingDeviceFilter" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+            <div class="mb-3">
+              <label class="discovery-mapping-label">Device Filter (Optional)</label>
+              <select id="mappingDeviceFilter" class="discovery-mapping-select">
                 <option value="all">All Devices</option>
                 <option value="sas_sata">SAS/SATA Only</option>
                 <option value="nvme">NVMe Only</option>
               </select>
             </div>
-            <button type="button" id="previewMappingBtn" style="width: 100%; padding: 8px; background: #444; border: 1px solid #666; color: #fff; cursor: pointer;">Preview Mapping</button>
-            <div id="mappingPreview" style="margin-top: 12px; max-height: 300px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; display: none;">
+            <button type="button" id="previewMappingBtn" class="discovery-preview-btn">Preview Mapping</button>
+            <div id="mappingPreview" class="discovery-mapping-preview hidden">
               <!-- Preview populated dynamically -->
             </div>
           </div>
 
           <!-- Manual mapping controls -->
-          <div id="manualMappingControls" style="margin-bottom: 16px; padding: 12px; background: #1a1a1a; border-radius: 4px; display: none;">
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Search Devices</label>
-              <input id="deviceSearchInput" type="text" maxlength="200" placeholder="Search by path, model, serial, or controller..." style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;" />
+          <div id="manualMappingControls" class="discovery-mapping-panel hidden">
+            <div class="mb-3">
+              <label class="discovery-mapping-label">Search Devices</label>
+              <input id="deviceSearchInput" type="text" maxlength="200" placeholder="Search by path, model, serial, or controller..." class="discovery-mapping-input" />
             </div>
-            <div style="margin-bottom: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Device Filter</label>
-              <select id="manualDeviceFilter" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+            <div class="mb-3">
+              <label class="discovery-mapping-label">Device Filter</label>
+              <select id="manualDeviceFilter" class="discovery-mapping-select">
                 <option value="all">All Devices</option>
                 <option value="sas_sata">SAS/SATA Only</option>
                 <option value="nvme">NVMe Only</option>
               </select>
             </div>
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+            <div class="discovery-manual-grid">
               <div>
-                <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Available Devices</label>
-                <div id="availableDevicesList" style="max-height: 500px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 150px;">
+                <label class="discovery-mapping-label">Available Devices</label>
+                <div id="availableDevicesList" class="discovery-manual-list">
                   <!-- Devices populated dynamically -->
                 </div>
               </div>
               <div>
-                <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Manual Mapping</label>
-                <div style="margin-bottom: 8px;">
-                  <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 4px;">Select Bay</label>
-                  <select id="manualBaySelect" style="width: 100%; padding: 6px; background: #222; border: 1px solid #444; color: #fff;">
+                <label class="discovery-mapping-label">Manual Mapping</label>
+                <div class="mb-2">
+                  <label class="discovery-manual-bay-label">Select Bay</label>
+                  <select id="manualBaySelect" class="discovery-mapping-select">
                     <!-- Bays populated dynamically -->
                   </select>
                 </div>
-                <div style="margin-bottom: 8px;">
-                  <label style="font-size: 0.75rem; color: #888; display: block; margin-bottom: 4px;">Selected Device</label>
-                  <div id="selectedDeviceInfo" style="padding: 8px; background: #333; border-radius: 4px; min-height: 40px; font-size: 0.75rem; color: #888;">
+                <div class="mb-2">
+                  <label class="discovery-manual-bay-label">Selected Device</label>
+                  <div id="selectedDeviceInfo" class="discovery-manual-info">
                     No device selected
                   </div>
                 </div>
-                <button type="button" id="addManualMappingBtn" style="width: 100%; padding: 8px; background: #444; border: 1px solid #666; color: #fff; cursor: pointer; margin-bottom: 8px;">Add Mapping</button>
-                <button type="button" id="clearManualMappingsBtn" style="width: 100%; padding: 8px; background: #333; border: 1px solid #555; color: #fff; cursor: pointer;">Clear All Mappings</button>
+                <button type="button" id="addManualMappingBtn" class="discovery-action-btn mb-2">Add Mapping</button>
+                <button type="button" id="clearManualMappingsBtn" class="discovery-action-btn discovery-action-btn--secondary">Clear All Mappings</button>
               </div>
             </div>
-            <div style="margin-top: 12px;">
-              <label style="font-size: 0.8rem; font-weight: bold; display: block; margin-bottom: 4px;">Manual Mappings Preview</label>
-              <div id="manualMappingPreview" style="max-height: 200px; overflow-y: auto; background: #222; border-radius: 4px; padding: 8px; min-height: 50px;">
+            <div class="mt-3">
+              <label class="discovery-mapping-label">Manual Mappings Preview</label>
+              <div id="manualMappingPreview" class="discovery-manual-list discovery-manual-list--short">
                 <!-- Manual mappings populated dynamically -->
               </div>
             </div>
           </div>
 
           <!-- Validation Error Display (Task 4.8) -->
-          <div id="mappingValidationError" style="display: none; margin-top: 12px; padding: 8px; background: #3d1a1a; border: 1px solid var(--color-danger); border-radius: 4px; font-size: 0.8rem; color: #ffcccc;">
+          <div id="mappingValidationError" class="discovery-validation-error hidden">
             <!-- Validation errors populated dynamically -->
           </div>
 
           <div class="flex-row gap-3 mt-4">
-            <button type="button" id="applyMappingBtn" class="btn btn--primary" style="flex: 1;" disabled>Apply Mapping</button>
-            <button type="button" id="undoMappingBtn" class="btn btn--secondary" style="flex: 1;" disabled>Undo Last Change</button>
-            <button type="button" id="cancelMappingBtn" class="btn btn--secondary" style="flex: 1;" data-close-modal="true">Cancel</button>
+            <button type="button" id="applyMappingBtn" class="btn btn--primary flex-1" disabled>Apply Mapping</button>
+            <button type="button" id="undoMappingBtn" class="btn btn--secondary flex-1" disabled>Undo Last Change</button>
+            <button type="button" id="cancelMappingBtn" class="btn btn--secondary flex-1" data-close-modal="true">Cancel</button>
           </div>
         </div>
       </div>

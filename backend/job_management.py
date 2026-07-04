@@ -16,6 +16,16 @@ from datetime import datetime, timezone
 DEFAULT_SATA_ERASE_ESTIMATE_SECONDS = 600  # Default estimated seconds for SATA erase progress calculation
 SATA_SECURITY_PASSWORD = "wipestation"  # Used for hdparm security-erase commands
 
+# C-JM2: Per-method erase timeouts (in seconds) to prevent stuck drives from blocking bays forever.
+# Overridable via policy.json "erase_timeouts" key (e.g. {"overwrite_seconds": 172800}).
+DEFAULT_ERASE_TIMEOUTS = {
+    "overwrite": 172800,            # 48 hours (large HDDs can take 24h+)
+    "secure_erase": 7200,           # 2 hours
+    "enhanced_secure_erase": 7200,  # 2 hours
+    "crypto": 7200,                 # 2 hours
+    "block": 7200,                  # 2 hours
+}
+
 # High #14: Global generation counter for job interruption.
 # Uses a monotonically increasing counter instead of a boolean flag to avoid
 # the cross-operation reset race (Lesson #101): each operation captures the
@@ -40,6 +50,22 @@ def _check_job_interrupted(generation):
     """Check if job was interrupted by signal since the given generation was captured."""
     with _job_interrupt_lock:
         return _job_interrupt_generation != generation
+
+def _get_erase_timeout(method):
+    """Get erase timeout for the given method, with policy.json override support."""
+    key = f"{method}_seconds"
+    try:
+        policy = load_policy()
+        timeouts = policy.get("erase_timeouts", {})
+        if key in timeouts:
+            val = int(timeouts[key])
+            if val <= 0:
+                logger.warning(f"Invalid erase_timeout value for {key}: {val} (must be positive), using default")
+                return DEFAULT_ERASE_TIMEOUTS.get(method, 7200)
+            return val
+    except Exception as e:
+        logger.warning(f"Invalid erase_timeout value for {key}: {e}")
+    return DEFAULT_ERASE_TIMEOUTS.get(method, 7200)
 
 from common import (
     get_config_dir, get_active_logs_dir, get_failed_logs_dir,
@@ -291,7 +317,7 @@ def poll_nvme_sanitize_progress(device):
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "sprog" in line.lower():
-                        match = re.search(r"sprog\s*[:=]\s*(\d+)", line, re.IGNORECASE)
+                        match = re.search(r"sprog\)?\s*[:=]\s*(\d+)", line, re.IGNORECASE)
                         if match:
                             return int(match.group(1))
     except Exception as e:
@@ -613,6 +639,7 @@ def run_erase_job(job_id):
 
     try:
         estimated_seconds = DEFAULT_SATA_ERASE_ESTIMATE_SECONDS
+        max_erase_seconds = _get_erase_timeout(method)
 
         # Thread sleep telemetry updates loop (contained within individual job context)
         while process.poll() is None:
@@ -638,6 +665,25 @@ def run_erase_job(job_id):
                 return
 
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+
+            # C-JM2: Enforce maximum erase duration to prevent stuck drives from blocking bays forever
+            if elapsed > max_erase_seconds:
+                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) erase timed out after {max_erase_seconds}s (method={method})")
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                with ERASE_JOBS_LOCK:
+                    job = ERASE_JOBS.get(job_id)
+                    if job:
+                        job["_process"] = None
+                if 'log_file' in locals() and not log_file.closed:
+                    log_file.close()
+                finalize_failed_job(job_id, f"erase_timeout: exceeded {max_erase_seconds}s (method={method})")
+                return
+
             progress = 0.0
             phase = "Sanitizing Drive..."
 

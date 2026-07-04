@@ -71,7 +71,7 @@ if (!discoveryModal || !discoverSlotsBtn || !discoveryStatus ||
 // Resets pattern mapping preview and undo state - called on modal open and close
 function resetDiscoveryPreview() {
   if (mappingPreview) {
-    mappingPreview.style.display = 'none';
+    mappingPreview.classList.add('hidden');
     mappingPreview.innerHTML = '';
   }
   window.DiscoveryState.resetDiscoveryPreview();
@@ -85,7 +85,7 @@ function openDiscoveryModal() {
   
   // Restore state if previously discovered (Task 4.3)
   if (discoveryState.lastDiscovered && discoveryState.controllers.length > 0) {
-    discoveryResults.style.display = "block";
+    discoveryResults.classList.remove('hidden');
     renderControllers(discoveryState.controllers);
     renderDevices(discoveryState.devicesByType);
     renderEnclosureSlots(discoveryState.enclosureSlots);
@@ -93,12 +93,12 @@ function openDiscoveryModal() {
     discoveryStatus.textContent = `Last discovered: ${timeAgo} (${discoveryState.totalDevices} devices, ${discoveryState.controllers.length} controllers)`;
     discoveryStatus.style.color = "#888";
   } else {
-    discoveryResults.style.display = "none";
+    discoveryResults.classList.add('hidden');
     discoveryStatus.textContent = "";
     controllersList.innerHTML = "";
     devicesList.innerHTML = "";
     enclosureSlotsList.innerHTML = "";
-    enclosureSlotsSection.style.display = "none";
+    enclosureSlotsSection.classList.add('hidden');
   }
 
   applyMappingBtn.disabled = true;
@@ -146,12 +146,12 @@ const CONTROLLER_CARD_TEMPLATE = (controller, isSelected) => {
   const deviceId = controller.device_id || "Unknown";
 
   return `
-    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px; border-left: 3px solid ${isSelected ? 'var(--color-primary)' : '#555'};">
-      <div style="display: flex; align-items: center; gap: 8px;">
-        <input type="checkbox" class="controller-checkbox" data-pci-address="${escapeHtml(pciAddr)}" ${isSelected ? 'checked' : ''} style="cursor: pointer;">
-        <div style="flex: 1;">
-          <div style="font-weight: bold; color: var(--color-primary);">${escapeHtml(desc)}</div>
-          <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+    <div class="discovery-card discovery-card--${isSelected ? 'selected' : 'selectable'}">
+      <div class="discovery-card-row">
+        <input type="checkbox" class="controller-checkbox discovery-checkbox" data-pci-address="${escapeHtml(pciAddr)}" ${isSelected ? 'checked' : ''}>
+        <div class="discovery-card-flex">
+          <div class="discovery-card-title">${escapeHtml(desc)}</div>
+          <div class="discovery-card-detail">
             <div>Type: ${escapeHtml(type.toUpperCase())}</div>
             <div>PCI: ${escapeHtml(pciAddr)}</div>
             <div>Vendor ID: ${escapeHtml(vendorId)} | Device ID: ${escapeHtml(deviceId)}</div>
@@ -169,9 +169,9 @@ const DEVICE_CARD_TEMPLATE = (device) => {
   const smart = device.smart || {};
 
   return `
-    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
-      <div style="font-weight: bold;">${escapeHtml(name)}</div>
-      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+    <div class="discovery-card">
+      <div class="discovery-card-title">${escapeHtml(name)}</div>
+      <div class="discovery-card-detail">
         <div>Path: ${escapeHtml(path)}</div>
         <div>Controller: ${escapeHtml(controllerPci)}</div>
         ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
@@ -190,9 +190,9 @@ const SLOT_CARD_TEMPLATE = (slot) => {
   const smart = slot.smart || {};
 
   return `
-    <div style="padding: 8px; margin-bottom: 8px; background: #333; border-radius: 4px;">
-      <div style="font-weight: bold;">Enclosure ${escapeHtml(encId)} - Slot ${escapeHtml(slotId)} (#${slotNum})</div>
-      <div style="font-size: 0.75rem; color: #888; margin-top: 4px;">
+    <div class="discovery-card">
+      <div class="discovery-card-title">Enclosure ${escapeHtml(encId)} - Slot ${escapeHtml(slotId)} (#${slotNum})</div>
+      <div class="discovery-card-detail">
         <div>Device: ${escapeHtml(device)}</div>
         ${smart.model ? `<div>Model: ${escapeHtml(smart.model)}</div>` : ""}
         ${smart.serial ? `<div>Serial: ${escapeHtml(smart.serial)}</div>` : ""}
@@ -208,20 +208,20 @@ function renderControllers(controllers) {
   // Type validation (CRITIQUE.md #3)
   if (!Array.isArray(controllers)) {
     console.error("renderControllers: expected array, got", typeof controllers);
-    controllersList.innerHTML = "<div style='color: var(--color-danger);'>Error: Invalid controller data</div>";
+    controllersList.innerHTML = "<div class=\"discovery-error-msg\">Error: Invalid controller data</div>";
     return;
   }
 
   if (controllers.length === 0) {
-    controllersList.innerHTML = "<div style='color: #666; font-style: italic;'>No controllers detected</div>";
+    controllersList.innerHTML = "<div class=\"discovery-empty-msg\">No controllers detected</div>";
     return;
   }
 
   // Add Select All / Deselect All buttons
   let html = `
-    <div style="margin-bottom: 12px; display: flex; gap: 8px;">
-      <button type="button" id="selectAllControllersBtn" style="padding: 4px 12px; font-size: 0.75rem; background: var(--color-primary); border: none; color: #fff; border-radius: 2px; cursor: pointer;">Select All</button>
-      <button type="button" id="deselectAllControllersBtn" style="padding: 4px 12px; font-size: 0.75rem; background: #444; border: none; color: #fff; border-radius: 2px; cursor: pointer;">Deselect All</button>
+    <div class="discovery-btn-row">
+      <button type="button" id="selectAllControllersBtn" class="discovery-btn-small discovery-btn-small--primary">Select All</button>
+      <button type="button" id="deselectAllControllersBtn" class="discovery-btn-small discovery-btn-small--secondary">Deselect All</button>
     </div>
   `;
 
@@ -239,12 +239,12 @@ function renderControllers(controllers) {
   for (const [groupName, groupControllers] of Object.entries(controllerGroups)) {
     // Rule #5: DoS prevention - limit group size
     if (groupControllers.length > 100) {
-      html += `<div style="color: var(--color-danger); padding: 8px;">Group "${escapeHtml(groupName)}" exceeds maximum display limit (100 controllers)</div>`;
+      html += `<div class="discovery-error-msg">Group "${escapeHtml(groupName)}" exceeds maximum display limit (100 controllers)</div>`;
       continue;
     }
 
     if (discoveryState.groupingMode !== 'none') {
-      html += `<div style="margin-bottom: 12px;"><strong style="color: var(--color-primary);">${escapeHtml(groupName.toUpperCase())} (${groupControllers.length})</strong></div>`;
+      html += `<div class="discovery-group-header"><strong class="discovery-group-name">${escapeHtml(groupName.toUpperCase())} (${groupControllers.length})</strong></div>`;
     }
 
     html += groupControllers.map(controller => {
@@ -261,12 +261,12 @@ function renderDevices(devicesByType) {
   // Type validation (CRITIQUE.md #3)
   if (!devicesByType || typeof devicesByType !== "object") {
     console.error("renderDevices: expected object, got", typeof devicesByType);
-    devicesList.innerHTML = "<div style='color: var(--color-danger);'>Error: Invalid device data</div>";
+    devicesList.innerHTML = "<div class=\"discovery-error-msg\">Error: Invalid device data</div>";
     return;
   }
 
   if (Object.keys(devicesByType).length === 0) {
-    devicesList.innerHTML = "<div style='color: #666; font-style: italic;'>No devices detected</div>";
+    devicesList.innerHTML = "<div class=\"discovery-empty-msg\">No devices detected</div>";
     return;
   }
 
@@ -274,7 +274,7 @@ function renderDevices(devicesByType) {
   for (const [type, devices] of Object.entries(devicesByType)) {
     if (!devices || devices.length === 0) continue;
 
-    html += `<div style="margin-bottom: 12px;"><strong style="color: var(--color-primary);">${escapeHtml(type.toUpperCase())} (${devices.length})</strong></div>`;
+    html += `<div class="discovery-group-header"><strong class="discovery-group-name">${escapeHtml(type.toUpperCase())} (${devices.length})</strong></div>`;
 
     devices.forEach(device => {
       html += DEVICE_CARD_TEMPLATE(device);
@@ -288,16 +288,16 @@ function renderEnclosureSlots(slots) {
   // Type validation (CRITIQUE.md #3)
   if (!Array.isArray(slots)) {
     console.error("renderEnclosureSlots: expected array, got", typeof slots);
-    enclosureSlotsSection.style.display = "none";
+    enclosureSlotsSection.classList.add('hidden');
     return;
   }
 
   if (slots.length === 0) {
-    enclosureSlotsSection.style.display = "none";
+    enclosureSlotsSection.classList.add('hidden');
     return;
   }
 
-  enclosureSlotsSection.style.display = "block";
+  enclosureSlotsSection.classList.remove('hidden');
 
   enclosureSlotsList.innerHTML = slots.map(slot => SLOT_CARD_TEMPLATE(slot)).join("");
 }
@@ -350,7 +350,7 @@ async function discoverSlots() {
     });
 
     // Display results
-    discoveryResults.style.display = "block";
+    discoveryResults.classList.remove('hidden');
     renderControllers(data.controllers);
     renderDevices(data.devices_by_type);
     renderEnclosureSlots(data.enclosure_slots);
@@ -361,7 +361,7 @@ async function discoverSlots() {
   } catch (err) {
     discoveryStatus.textContent = `Error: ${err.message}`;
     discoveryStatus.style.color = "var(--color-danger)";
-    discoveryResults.style.display = "none";
+    discoveryResults.classList.add('hidden');
   } finally {
     discoverSlotsBtn.disabled = false;
     discoverSlotsBtn.textContent = "⚡ Discover Slots";
@@ -409,9 +409,15 @@ document.addEventListener('click', (e) => {
       discoveryState.selectedControllers.delete(pciAddr);
     }
     // Only update the border color of the specific controller card
-    const controllerCard = e.target.closest('div[style*="border-left"]');
+    const controllerCard = e.target.closest('.discovery-card--selectable, .discovery-card--selected');
     if (controllerCard) {
-      controllerCard.style.borderLeftColor = e.target.checked ? 'var(--color-primary)' : '#555';
+      if (e.target.checked) {
+        controllerCard.classList.remove('discovery-card--selectable');
+        controllerCard.classList.add('discovery-card--selected');
+      } else {
+        controllerCard.classList.remove('discovery-card--selected');
+        controllerCard.classList.add('discovery-card--selectable');
+      }
     }
   }
 
@@ -474,20 +480,20 @@ if (applyMappingBtn) {
 
 // Sets the mapping preview panel to an error or warning message and shows it
 function setPreviewMessage(message, isWarning = false) {
-  mappingPreview.innerHTML = `<div style="color: ${isWarning ? 'var(--color-warning)' : 'var(--color-danger)'}">${message}</div>`;
-  mappingPreview.style.display = 'block';
+  mappingPreview.innerHTML = `<div class="${isWarning ? 'preview-message--warning' : 'preview-message--error'}">${message}</div>`;
+  mappingPreview.classList.remove('hidden');
 }
 
 // Display validation errors in modal (Task 4.8)
 function showMappingValidationError(message) {
   if (!mappingValidationError) return;
   mappingValidationError.textContent = message;
-  mappingValidationError.style.display = 'block';
+  mappingValidationError.classList.remove('hidden');
 }
 
 function hideMappingValidationError() {
   if (!mappingValidationError) return;
-  mappingValidationError.style.display = 'none';
+  mappingValidationError.classList.add('hidden');
   mappingValidationError.textContent = '';
 }
 
@@ -519,7 +525,7 @@ function renderAvailableDevices() {
   const discoveryState = window.DiscoveryState.getDiscoveryState();
   
   if (!discoveryState.devicesByType || Object.keys(discoveryState.devicesByType).length === 0) {
-    availableDevicesList.innerHTML = '<div style="color: #666; font-style: italic; font-size: 0.75rem;">No devices discovered. Click "Discover Slots" first.</div>';
+    availableDevicesList.innerHTML = '<div class="discovery-empty-msg">No devices discovered. Click "Discover Slots" first.</div>';
     return;
   }
 
@@ -532,12 +538,12 @@ function renderAvailableDevices() {
 
   // Rule #5: DoS prevention - limit display size
   if (filteredDevices.length > 200) {
-    availableDevicesList.innerHTML = '<div style="color: var(--color-danger); font-size: 0.75rem;">Too many devices to display. Use search/filter to narrow results.</div>';
+    availableDevicesList.innerHTML = '<div class="discovery-error-msg-sm">Too many devices to display. Use search/filter to narrow results.</div>';
     return;
   }
 
   if (filteredDevices.length === 0) {
-    availableDevicesList.innerHTML = '<div style="color: #666; font-style: italic; font-size: 0.75rem;">No devices match search/filter criteria.</div>';
+    availableDevicesList.innerHTML = '<div class="discovery-empty-msg">No devices match search/filter criteria.</div>';
     return;
   }
 
@@ -546,14 +552,12 @@ function renderAvailableDevices() {
     const isMapped = Object.values(manualMappings).some(m => m.device_path === device.device_path);
     
     return `
-      <div class="device-item" 
-           data-device-path="${escapeHtml(device.device_path)}"
-           style="padding: 6px; margin-bottom: 4px; background: ${isSelected ? 'var(--color-primary)' : (isMapped ? '#2a2a2a' : '#333')}; 
-                  border-radius: 2px; cursor: pointer; font-size: 0.75rem; border: 1px solid ${isSelected ? 'var(--color-primary)' : '#444'};">
-        <div style="font-weight: bold; color: ${isMapped ? '#666' : '#fff'};">${escapeHtml(device.device_name)}</div>
-        <div style="color: ${isMapped ? '#555' : '#888'}; font-size: 0.7rem;">${escapeHtml(device.device_path)}</div>
-        ${device.smart?.model ? `<div style="color: ${isMapped ? '#555' : '#888'}; font-size: 0.7rem;">${escapeHtml(device.smart.model)}</div>` : ''}
-        ${isMapped ? '<div style="color: var(--color-warning); font-size: 0.7rem;">Already mapped</div>' : ''}
+      <div class="device-item discovery-device-item discovery-device-item--${isSelected ? 'selected' : (isMapped ? 'mapped' : 'default')}"
+           data-device-path="${escapeHtml(device.device_path)}">
+        <div class="discovery-device-name discovery-device-name--${isMapped ? 'mapped' : 'default'}">${escapeHtml(device.device_name)}</div>
+        <div class="discovery-device-path discovery-device-path--${isMapped ? 'mapped' : 'default'}">${escapeHtml(device.device_path)}</div>
+        ${device.smart?.model ? `<div class="discovery-device-path discovery-device-path--${isMapped ? 'mapped' : 'default'}">${escapeHtml(device.smart.model)}</div>` : ''}
+        ${isMapped ? '<div class="discovery-mapped-warning">Already mapped</div>' : ''}
       </div>
     `;
   }).join('');
@@ -583,10 +587,10 @@ function updateSelectedDeviceInfo() {
 
   const smart = selectedDevice.smart || {};
   selectedDeviceInfo.innerHTML = `
-    <div style="font-weight: bold; color: #fff;">${escapeHtml(selectedDevice.device_name)}</div>
-    <div style="color: #888;">${escapeHtml(selectedDevice.device_path)}</div>
-    ${smart.model ? `<div style="color: #888;">${escapeHtml(smart.model)}</div>` : ''}
-    ${smart.serial ? `<div style="color: #888;">S/N: ${escapeHtml(smart.serial)}</div>` : ''}
+    <div class="discovery-selected-info-name">${escapeHtml(selectedDevice.device_name)}</div>
+    <div class="discovery-selected-info-detail">${escapeHtml(selectedDevice.device_path)}</div>
+    ${smart.model ? `<div class="discovery-selected-info-detail">${escapeHtml(smart.model)}</div>` : ''}
+    ${smart.serial ? `<div class="discovery-selected-info-detail">S/N: ${escapeHtml(smart.serial)}</div>` : ''}
   `;
   selectedDeviceInfo.style.color = '#fff';
 }
@@ -596,19 +600,18 @@ function renderManualMappingPreview() {
   const mappingKeys = window.DiscoveryMapping.sortBayIds(Object.keys(manualMappings));
 
   if (mappingKeys.length === 0) {
-    manualMappingPreview.innerHTML = '<div style="color: #666; font-style: italic; font-size: 0.75rem;">No manual mappings created yet.</div>';
+    manualMappingPreview.innerHTML = '<div class="discovery-empty-msg">No manual mappings created yet.</div>';
     return;
   }
 
   manualMappingPreview.innerHTML = mappingKeys.map(bayId => {
     const mapping = manualMappings[bayId];
     return `
-      <div style="padding: 4px; background: #333; border-radius: 2px; margin-bottom: 4px; font-size: 0.75rem; display: flex; justify-content: space-between; align-items: center;">
+      <div class="discovery-mapping-row">
         <div>
-          <strong style="color: var(--color-primary);">${escapeHtml(bayId)}</strong> → ${escapeHtml(mapping.device_name)} (${escapeHtml(mapping.device_path)})
+          <strong class="discovery-mapping-bay">${escapeHtml(bayId)}</strong> → ${escapeHtml(mapping.device_name)} (${escapeHtml(mapping.device_path)})
         </div>
-        <button type="button" class="btn-remove-mapping" data-bay-id="${escapeHtml(bayId)}" 
-                style="padding: 2px 8px; font-size: 0.7rem; background: var(--color-danger); border: none; color: #fff; cursor: pointer; border-radius: 2px;">×</button>
+        <button type="button" class="btn-remove-mapping discovery-remove-btn" data-bay-id="${escapeHtml(bayId)}">×</button>
       </div>
     `;
   }).join('');

@@ -79,10 +79,12 @@ async function checkAndResumeTestPolling(device) {
       testStatusDiv.innerHTML = `
         <p>Test in progress (resumed)...</p>
         <div class="progress-bar">
-          <div class="progress-bar-fill" id="testProgressBar" style="width: ${escapeHtml(pct)}%"></div>
+          <div class="progress-bar-fill" id="testProgressBar"></div>
         </div>
         <p id="testProgressText">${escapeHtml(Math.round(pct))}%</p>
       `;
+      const resumedBar = document.getElementById('testProgressBar');
+      if (resumedBar) resumedBar.style.width = `${pct}%`;
       pollSmartTestStatus(device, testType);
     } else if (data.status === 'completed') {
       testStatusDiv.innerHTML = `
@@ -104,8 +106,8 @@ async function loadSmartDetails(device, serial, interfaceType) {
   try {
     const response = await safeFetch(`/api/admin/drives/${device}/smart-details`);
     if (!response.ok) {
-      const error = await response.json();
-      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(error.error || 'Unknown error')}</p>`;
+      const errorMessage = await parseErrorResponse(response);
+      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(errorMessage)}</p>`;
       return;
     }
 
@@ -853,7 +855,7 @@ async function startSmartTest(device) {
       <p>Test started successfully!</p>
       <p>Estimated time: ${escapeHtml(result.estimated_minutes || 'unknown')} minutes</p>
       <div class="progress-bar">
-        <div class="progress-bar-fill" id="testProgressBar" style="width: 0%"></div>
+        <div class="progress-bar-fill" id="testProgressBar"></div>
       </div>
       <p id="testProgressText">0%</p>
     `;

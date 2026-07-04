@@ -318,7 +318,7 @@ function rowColToBayNumbers(skipPositions, cols, traversal = "top_left_down_then
 }
 
 async function loadTemplateList() {
-  templateList.innerHTML = '<div style="color: #888; font-size: 0.8rem; padding: 8px;">Loading templates...</div>';
+  templateList.innerHTML = '<div class="template-loading-msg">Loading templates...</div>';
 
   // Ensure availableLayoutTemplates is loaded before rendering
   if (availableLayoutTemplates.length === 0) {
@@ -345,7 +345,7 @@ async function loadTemplateList() {
     templateList.innerHTML = "";
 
     if (templates.length === 0) {
-      templateList.innerHTML = '<div style="color: #888; font-size: 0.8rem; padding: 8px;">No custom templates found. Create one to get started.</div>';
+      templateList.innerHTML = '<div class="template-loading-msg">No custom templates found. Create one to get started.</div>';
       return;
     }
 
@@ -353,20 +353,20 @@ async function loadTemplateList() {
       const item = document.createElement("div");
       item.className = "template-item";
       item.innerHTML = `
-        <div style="display: flex; align-items: baseline; gap: 12px;">
-          <div style="font-weight: bold; color: var(--color-primary);">${escapeHtml(template.name)}</div>
-          <div style="font-size: 0.7rem; color: #888;">ID: ${escapeHtml(template.id)} | Bays: ${template.bay_count || 0} | Vendor: ${escapeHtml(template.vendor || "Generic")}</div>
+        <div class="template-item-header">
+          <div class="template-item-name">${escapeHtml(template.name)}</div>
+          <div class="template-item-meta">ID: ${escapeHtml(template.id)} | Bays: ${template.bay_count || 0} | Vendor: ${escapeHtml(template.vendor || "Generic")}</div>
         </div>
-        <div style="display: flex; gap: 8px;">
-          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="preview" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem;">Preview</button>
-          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="edit" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem;">Edit</button>
-          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="delete" class="btn-template-action" style="padding: 4px 8px; font-size: 0.7rem; background: var(--color-danger); border-color: var(--color-danger); border-radius: 4px;">Delete</button>
+        <div class="template-item-actions">
+          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="preview" class="btn-template-action template-action-btn">Preview</button>
+          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="edit" class="btn-template-action template-action-btn">Edit</button>
+          <button type="button" data-template-id="${escapeHtml(template.id)}" data-action="delete" class="btn-template-action template-action-btn--delete">Delete</button>
         </div>
       `;
       templateList.appendChild(item);
     });
   } catch (err) {
-    templateList.innerHTML = `<div style="color: var(--color-danger); font-size: 0.8rem; padding: 8px;">Failed to load templates: ${err.message}</div>`;
+    templateList.innerHTML = `<div class="template-error-msg">Failed to load templates: ${err.message}</div>`;
   }
 }
 
@@ -609,7 +609,7 @@ function renderTemplatePreviewGrid(template) {
 
   // Validate grid dimensions to prevent browser crash (CRITIQUE.md #3)
   if (rows < 1 || rows > 32 || cols < 1 || cols > 32) {
-    templatePreviewGrid.innerHTML = `<div style="color: var(--color-danger); padding: 16px;">Invalid grid dimensions: ${rows} × ${cols}. Maximum is 32 × 32.</div>`;
+    templatePreviewGrid.innerHTML = `<div class="template-preview-error">Invalid grid dimensions: ${rows} × ${cols}. Maximum is 32 × 32.</div>`;
     return;
   }
 
@@ -710,8 +710,8 @@ function renderTemplatePreviewGrid(template) {
       } else {
         // Show both numbers with labels
         cell.innerHTML = `
-          <div style="font-size: 0.6rem; color: #ccc; line-height: 1.1;">Ref: ${refBayNum || "-"}</div>
-          <div style="font-size: 0.8rem; color: #fff; font-weight: bold; line-height: 1.1;">Tr: ${travBayNum || "-"}</div>
+          <div class="template-preview-ref">Ref: ${refBayNum || "-"}</div>
+          <div class="template-preview-tr">Tr: ${travBayNum || "-"}</div>
         `;
       }
       templatePreviewGrid.appendChild(cell);
@@ -728,8 +728,8 @@ function renderTemplatePreviewGrid(template) {
   const legend = document.createElement("div");
   legend.className = "preview-legend";
   legend.innerHTML = `
-    <div><span style="color: #666;">Ref</span> = Reference number (for skip position input)</div>
-    <div><span style="color: var(--color-primary); font-weight: bold;">Tr</span> = Traversal order (actual erasure)</div>
+    <div><span class="template-legend-ref">Ref</span> = Reference number (for skip position input)</div>
+    <div><span class="template-legend-tr">Tr</span> = Traversal order (actual erasure)</div>
   `;
   templatePreviewGrid.parentNode.appendChild(legend);
 }
@@ -805,13 +805,13 @@ function openTemplatePreview(template) {
   const rows = template.rows || 1;
   const skipBayNumbers = template.skip_positions ? rowColToBayNumbers(template.skip_positions, cols, "top_left_across_then_down", rows) : [];
   templatePreviewInfo.innerHTML = `
-    <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; font-size: 0.8rem;">
+    <div class="template-info-grid">
       <div><strong>Vendor:</strong> ${escapeHtml(template.vendor || "Generic")}</div>
       <div><strong>Bays:</strong> ${template.bay_count || 0}</div>
       <div><strong>Grid:</strong> ${template.rows || 1} × ${template.cols || 1}</div>
       <div><strong>Traversal:</strong> ${escapeHtml(template.traversal_preset || "top_left_down_then_across")}</div>
-      <div style="grid-column: span 2;"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? skipBayNumbers.join(", ") : "None"}</div>
-      <div style="grid-column: span 2;"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? template.hybrid_slots.join(", ") : "None"}</div>
+      <div class="template-info-grid--full"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? skipBayNumbers.join(", ") : "None"}</div>
+      <div class="template-info-grid--full"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? template.hybrid_slots.join(", ") : "None"}</div>
     </div>
   `;
 

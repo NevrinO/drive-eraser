@@ -74,7 +74,7 @@ def _centralized_signal_handler(signum, frame):
 # Critical #3: Add CSP HTTP header
 @app.after_request
 def add_security_headers(response):
-    csp_header = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self';"
+    csp_header = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';"
     response.headers['Content-Security-Policy'] = csp_header
     return response
 

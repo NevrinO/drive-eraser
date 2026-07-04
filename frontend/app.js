@@ -25,26 +25,55 @@ let socket = null;
 let currentDetailDrive = null;
 
 // Tab switching
-mainTabs.addEventListener("click", (event) => {
-  const btn = event.target.closest(".tab-button");
-  if (!btn) return;
-  
+function switchTab(btn) {
   // Clear bulk selection when leaving audit tab (CRITIQUE.md #6)
   if (btn.dataset.tab !== "auditPanel" && typeof clearBulkSelectionState === "function") {
     clearBulkSelectionState();
   }
-  
-  document.querySelectorAll(".tab-button").forEach(b => b.classList.remove("active"));
+
+  document.querySelectorAll(".tab-button").forEach(b => {
+    b.classList.remove("active");
+    b.setAttribute("aria-selected", "false");
+    b.setAttribute("tabindex", "-1");
+  });
   document.querySelectorAll(".tab-panel").forEach(p => p.classList.remove("active"));
+
   btn.classList.add("active");
+  btn.setAttribute("aria-selected", "true");
+  btn.setAttribute("tabindex", "0");
   document.getElementById(btn.dataset.tab).classList.add("active");
-  
+
   if (btn.dataset.tab === "auditPanel") {
     loadHistoryIndex();
   } else if (btn.dataset.tab === "adminPanel") {
     loadAdminMetrics();
     loadBayMappingConfig();
   }
+}
+
+mainTabs.addEventListener("click", (event) => {
+  const btn = event.target.closest(".tab-button");
+  if (!btn) return;
+  switchTab(btn);
+});
+
+mainTabs.addEventListener("keydown", (event) => {
+  if (!event.target.classList.contains("tab-button")) return;
+  const tabs = Array.from(mainTabs.querySelectorAll(".tab-button"));
+  const currentIndex = tabs.indexOf(event.target);
+  let newIndex;
+
+  if (event.key === "ArrowRight") {
+    newIndex = (currentIndex + 1) % tabs.length;
+  } else if (event.key === "ArrowLeft") {
+    newIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+  } else {
+    return;
+  }
+
+  event.preventDefault();
+  tabs[newIndex].focus();
+  switchTab(tabs[newIndex]);
 });
 
 // Help modal

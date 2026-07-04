@@ -89,7 +89,8 @@ class TestSecurityHeaders:
         csp = result.headers['Content-Security-Policy']
         assert "default-src 'self'" in csp
         assert "script-src 'self'" in csp
-        assert "style-src 'self' 'unsafe-inline'" in csp
+        assert "style-src 'self'" in csp
+        assert "unsafe-inline" not in csp
 
 
 class TestDatabaseInitialization:

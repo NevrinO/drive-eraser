@@ -62,7 +62,7 @@ function renderEnclosureList(enclosures) {
       <div class="enclosure-header">
         <div class="enclosure-title">
           <strong>${escapeHtml(enc.name || enc.id)}</strong>
-          <small style="color: #888;">ID: ${escapeHtml(enc.id)}</small>
+          <small class="enclosure-id-text">ID: ${escapeHtml(enc.id)}</small>
         </div>
         <div class="enclosure-actions">
           <button type="button" class="btn btn--secondary btn-sm enclosure-edit-btn" data-enclosure-id="${escapeHtml(enc.id)}">Edit</button>

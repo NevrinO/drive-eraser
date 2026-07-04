@@ -8,6 +8,16 @@ const apiStatus = document.getElementById("apiStatus");
 const lastUpdated = document.getElementById("lastUpdated");
 
 // Enclosure data for workbench grouping
+
+// Apply dynamic styles via DOM API (CSP-safe) after innerHTML insertion
+function applyDynamicStyles(container) {
+  container.querySelectorAll('[data-width]').forEach(el => {
+    el.style.width = el.getAttribute('data-width') + '%';
+  });
+  container.querySelectorAll('[data-grid-cols]').forEach(el => {
+    el.style.gridTemplateColumns = `repeat(${el.getAttribute('data-grid-cols')}, minmax(0, 1fr))`;
+  });
+}
 let workbenchEnclosures = {};
 let workbenchEnclosuresFetchedAt = 0;
 let workbenchEnclosuresPromise = null;
@@ -234,9 +244,9 @@ function _skeletonCardHtml(bayId, conf) {
 function _blockedCardHtml(row, col) {
   return `
     <article class="bay-card blocked" data-bay="blocked-${row}-${col}">
-      <div class="bay-banner" style="background: transparent; color: #444;"></div>
+      <div class="bay-banner bay-banner--blocked"></div>
       <div class="bay-header-row">
-        <div class="bay-number" style="color: #444;"></div>
+        <div class="bay-number bay-number--blocked"></div>
       </div>
     </article>
   `;
@@ -322,10 +332,10 @@ function _renderSkeletonByEnclosure(bayEntries) {
     gridHtml += `
       <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
         <div class="enclosure-section-header">
-          <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-primary);">${escapeHtml(enclosure.name || enclosureId)}</h3>
-          <small style="color: #888;">${enclosureBays.length} slots</small>
+          <h3 class="enclosure-section-title enclosure-section-title--primary">${escapeHtml(enclosure.name || enclosureId)}</h3>
+          <small class="enclosure-section-count">${enclosureBays.length} slots</small>
         </div>
-        <div class="enclosure-bays-grid" style="grid-template-columns: repeat(${templateCols}, minmax(0, 1fr));">
+        <div class="enclosure-bays-grid" data-grid-cols="${templateCols}">
     `;
 
     for (let row = 0; row < templateRows; row++) {
@@ -354,8 +364,8 @@ function _renderSkeletonByEnclosure(bayEntries) {
     gridHtml += `
       <div class="enclosure-section">
         <div class="enclosure-section-header">
-          <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-warning);">Unassigned Drives</h3>
-          <small style="color: #888;">${unassigned.length} drives</small>
+          <h3 class="enclosure-section-title enclosure-section-title--warning">Unassigned Drives</h3>
+          <small class="enclosure-section-count">${unassigned.length} drives</small>
         </div>
         <div class="enclosure-bays-grid">
     `;
@@ -370,6 +380,7 @@ function _renderSkeletonByEnclosure(bayEntries) {
 
   baysGrid.innerHTML = gridHtml;
   baysGrid.style.display = 'block';
+  applyDynamicStyles(baysGrid);
 }
 
 function _renderSkeletonLegacy(bayEntries) {
@@ -416,6 +427,7 @@ function _renderSkeletonLegacy(bayEntries) {
   }
 
   baysGrid.innerHTML = gridHtml;
+  applyDynamicStyles(baysGrid);
 }
 
 function renderBays(drives) {
@@ -482,10 +494,10 @@ function renderBaysByEnclosure(drives) {
     gridHtml += `
       <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
         <div class="enclosure-section-header">
-          <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-primary);">${escapeHtml(enclosure.name || enclosureId)}</h3>
-          <small style="color: #888;">${enclosureDrives.length} slots</small>
+          <h3 class="enclosure-section-title enclosure-section-title--primary">${escapeHtml(enclosure.name || enclosureId)}</h3>
+          <small class="enclosure-section-count">${enclosureDrives.length} slots</small>
         </div>
-        <div class="enclosure-bays-grid" style="grid-template-columns: repeat(${templateCols}, minmax(0, 1fr));">
+        <div class="enclosure-bays-grid" data-grid-cols="${templateCols}">
     `;
 
     // Generate grid cells based on template dimensions
@@ -516,8 +528,8 @@ function renderBaysByEnclosure(drives) {
     gridHtml += `
       <div class="enclosure-section">
         <div class="enclosure-section-header">
-          <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-warning);">Unassigned Drives</h3>
-          <small style="color: #888;">${unassignedDrives.length} drives</small>
+          <h3 class="enclosure-section-title enclosure-section-title--warning">Unassigned Drives</h3>
+          <small class="enclosure-section-count">${unassignedDrives.length} drives</small>
         </div>
         <div class="enclosure-bays-grid">
     `;
@@ -566,8 +578,8 @@ function renderBaysByEnclosure(drives) {
       gridHtml += `
         <div class="enclosure-section">
           <div class="enclosure-section-header">
-            <h3 style="margin: 0; font-size: 1.1rem; color: var(--color-warning);">Drives with Invalid Positions</h3>
-            <small style="color: #888;">${filteredDrives.length} drives</small>
+            <h3 class="enclosure-section-title enclosure-section-title--warning">Drives with Invalid Positions</h3>
+            <small class="enclosure-section-count">${filteredDrives.length} drives</small>
           </div>
           <div class="enclosure-bays-grid">
       `;
@@ -592,6 +604,7 @@ function renderBaysByEnclosure(drives) {
 
   baysGrid.innerHTML = gridHtml;
   baysGrid.style.display = 'block';
+  applyDynamicStyles(baysGrid);
 }
 
 function renderBaysLegacy(drives) {
@@ -658,6 +671,7 @@ function renderBaysLegacy(drives) {
   }
 
   baysGrid.innerHTML = gridHtml;
+  applyDynamicStyles(baysGrid);
 }
 
 function getZeroCheckStateClass(drive) {
@@ -840,7 +854,7 @@ function renderBayCard(drive) {
 
   return `
     <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
-      <input type="checkbox" class="card-checkbox" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""} ${isBatchMode && isReady ? 'style="display: block;"' : ""}>
+      <input type="checkbox" class="card-checkbox ${isBatchMode && isReady ? 'card-checkbox--visible' : ''}" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""}>
       <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
       ${subBannerHtml}
       <div class="bay-header-row">
@@ -848,9 +862,9 @@ function renderBayCard(drive) {
           ${escapeHtml(bayPrimaryText)}
         </div>
         ${isEmpty ? "" : `
-          <div style="display: flex; gap: 4px; align-items: center;">
+          <div class="bay-card-badges">
             <div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>
-            ${driveTypeLabel ? `<div class="drive-type-badge ${driveTypeClass}" style="font-size: 0.65rem;">${escapeHtml(driveTypeLabel)}</div>` : ""}
+            ${driveTypeLabel ? `<div class="drive-type-badge ${driveTypeClass} drive-type-badge--xs">${escapeHtml(driveTypeLabel)}</div>` : ""}
             ${isUnconfigured ? `<div class="unconfigured-badge" title="This bay has no device path configured in bay_map.json">⚠️ Unconfigured</div>` : ""}
           </div>
         `}
@@ -861,35 +875,35 @@ function renderBayCard(drive) {
 
         ${isRunning ? `
           <div class="health-label">
-            <span style="color: var(--color-primary); font-weight: bold;">${escapeHtml(phaseLabel)}</span>
-            <span style="color: var(--color-primary); font-weight: bold;">${progressPercent}%</span>
+            <span class="health-label-running">${escapeHtml(phaseLabel)}</span>
+            <span class="health-label-running">${progressPercent}%</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill fill-blue" style="width: ${progressPercent}%"></div>
+            <div class="health-bar-fill fill-blue" data-width="${progressPercent}"></div>
           </div>
         ` : drive.smart && drive.smart.smart_polling ? `
           <div class="health-label">
-            <span style="color: var(--color-warning);">Loading SMART...</span>
-            <span style="color: var(--color-warning);">⏳</span>
+            <span class="health-label-loading">Loading SMART...</span>
+            <span class="health-label-loading">⏳</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
+            <div class="health-bar-fill fill-gray health-bar-fill--full"></div>
           </div>
         ` : drive.health_score === null && drive.smart && String(drive.smart.status).toUpperCase() === "UNKNOWN" ? `
           <div class="health-label">
-            <span style="color: var(--color-text-card-muted);">Life Expectancy</span>
-            <span style="color: var(--color-text-card-muted);">N/A</span>
+            <span class="health-label-na">Life Expectancy</span>
+            <span class="health-label-na">N/A</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
+            <div class="health-bar-fill fill-gray health-bar-fill--full"></div>
           </div>
         ` : healthScore === null ? `
           <div class="health-label">
-            <span style="color: var(--color-text-card-muted);">Life Expectancy</span>
-            <span style="color: var(--color-text-card-muted);">Calculating...</span>
+            <span class="health-label-na">Life Expectancy</span>
+            <span class="health-label-na">Calculating...</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill fill-gray" style="width: 100%"></div>
+            <div class="health-bar-fill fill-gray health-bar-fill--full"></div>
           </div>
         ` : `
           <div class="health-label">
@@ -897,7 +911,7 @@ function renderBayCard(drive) {
             <span>${healthScore}%</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill ${healthScore > 75 ? 'fill-green' : healthScore > 40 ? 'fill-yellow' : 'fill-red'}" style="width: ${healthScore}%"></div>
+            <div class="health-bar-fill ${healthScore > 75 ? 'fill-green' : healthScore > 40 ? 'fill-yellow' : 'fill-red'}" data-width="${healthScore}"></div>
           </div>
         `}
 
@@ -1011,10 +1025,10 @@ async function renderBatchModalForm() {
     return `
       <div class="batch-config-row">
         <span>${escapeHtml(displayLabel)}</span>
-        <small style="color: var(--color-text-muted); text-overflow: ellipsis; overflow: hidden; white-space: nowrap;">
+        <small class="batch-config-drive-info">
           ${escapeHtml(drive?.model || "Generic")} (S/N: ${escapeHtml(drive?.serial || "-")})
         </small>
-        <select class="batch-drive-method-select" data-bay="${escapeHtml(bay)}" style="padding: 6px; font-size: 0.75rem;">
+        <select class="batch-drive-method-select" data-bay="${escapeHtml(bay)}">
           ${optionsHtml}
         </select>
       </div>

@@ -589,6 +589,197 @@ class TestProgressPolling:
         result = poll_sata_sanitize_progress("/dev/sda")
         assert result is None
 
+    # --- A-JM12: Edge case tests for poll functions ---
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sata_no_progress_in_output(self, mock_run, mock_resolve):
+        """Test SATA polling returns None when output has no percentage."""
+        mock_resolve.return_value = "/sbin/hdparm"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Sanitize feature supported\nNo progress information available\n"
+        )
+        result = poll_sata_sanitize_progress("/dev/sda")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sata_subprocess_failure(self, mock_run, mock_resolve):
+        """Test SATA polling returns None on non-zero return code."""
+        mock_resolve.return_value = "/sbin/hdparm"
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="Device not found\n"
+        )
+        result = poll_sata_sanitize_progress("/dev/sda")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sata_subprocess_exception(self, mock_run, mock_resolve):
+        """Test SATA polling returns None on subprocess exception."""
+        mock_resolve.return_value = "/sbin/hdparm"
+        mock_run.side_effect = Exception("Command timed out")
+        result = poll_sata_sanitize_progress("/dev/sda")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sata_realistic_multiline_output(self, mock_run, mock_resolve):
+        """Test SATA polling with realistic hdparm --sanitize-status output."""
+        mock_resolve.return_value = "/sbin/hdparm"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "\n/dev/sda:\n\n"
+                "ATA Sanitize feature set\n"
+                "Sanitize command: supported\n"
+                "Sanitize freeze locked: not supported\n"
+                "Sanitize progress: 42.5%\n"
+                "Estimated time remaining: 300 seconds\n"
+            )
+        )
+        result = poll_sata_sanitize_progress("/dev/sda")
+        assert result == 42.5
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sata_percent_keyword(self, mock_run, mock_resolve):
+        """Test SATA polling matches 'percent' keyword in addition to 'progress'."""
+        mock_resolve.return_value = "/sbin/hdparm"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Sanitize percent complete: 90%\n"
+        )
+        result = poll_sata_sanitize_progress("/dev/sda")
+        assert result == 90.0
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sas_no_progress_in_output(self, mock_run, mock_resolve):
+        """Test SAS polling returns None when output has no percentage."""
+        mock_resolve.return_value = "/usr/bin/sg_requests"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="No sanitize operation in progress\n"
+        )
+        result = poll_sas_sanitize_progress("/dev/sdb")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sas_subprocess_failure(self, mock_run, mock_resolve):
+        """Test SAS polling returns None on non-zero return code."""
+        mock_resolve.return_value = "/usr/bin/sg_requests"
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="SG_IO: bad host\n"
+        )
+        result = poll_sas_sanitize_progress("/dev/sdb")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sas_subprocess_exception(self, mock_run, mock_resolve):
+        """Test SAS polling returns None on subprocess exception."""
+        mock_resolve.return_value = "/usr/bin/sg_requests"
+        mock_run.side_effect = Exception("Permission denied")
+        result = poll_sas_sanitize_progress("/dev/sdb")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_sas_realistic_multiline_output(self, mock_run, mock_resolve):
+        """Test SAS polling with realistic sg_requests --progress output."""
+        mock_resolve.return_value = "/usr/bin/sg_requests"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "Sanitize progress:\n"
+                "  progress: 15.0%\n"
+                "  estimated time: 600 seconds\n"
+            )
+        )
+        result = poll_sas_sanitize_progress("/dev/sdb")
+        assert result == 15.0
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_no_sprog_in_output(self, mock_run, mock_resolve):
+        """Test NVMe polling returns None when output has no sprog value."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Sanitize Log Entry\nNo progress data\n"
+        )
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_subprocess_failure(self, mock_run, mock_resolve):
+        """Test NVMe polling returns None on non-zero return code."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.return_value = MagicMock(
+            returncode=1,
+            stdout="",
+            stderr="NVMe controller error\n"
+        )
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_subprocess_exception(self, mock_run, mock_resolve):
+        """Test NVMe polling returns None on subprocess exception."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.side_effect = FileNotFoundError("nvme not found")
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result is None
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_realistic_multiline_output(self, mock_run, mock_resolve):
+        """Test NVMe polling with realistic nvme sanitize-log output."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=(
+                "Sanitize Log (SLOG)\n"
+                "  sprog = 100\n"
+                "  sstat = 0x101\n"
+            )
+        )
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result == 100
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_sprog_with_colon(self, mock_run, mock_resolve):
+        """Test NVMe polling parses sprog with colon separator."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="SPROG: 37\n"
+        )
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result == 37
+
+    @patch('job_management.resolve_verify_command_path')
+    @patch('job_management.subprocess.run')
+    def test_poll_nvme_sprog_real_format(self, mock_run, mock_resolve):
+        """Test NVMe polling parses real nvme-cli (SPROG): output format."""
+        mock_resolve.return_value = "/usr/bin/nvme"
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout="Sanitize Progress (SPROG): 100\n"
+        )
+        result = poll_nvme_sanitize_progress("/dev/nvme0n1")
+        assert result == 100
+
 
 class TestGetDeviceSectorsWritten:
     """Test get_device_sectors_written function."""
@@ -612,6 +803,114 @@ class TestGetDeviceSectorsWritten:
         """Test handling of IO errors."""
         result = get_device_sectors_written("/dev/sda")
         assert result is None
+
+
+class TestGetEraseTimeout:
+    """Test _get_erase_timeout for default values, policy overrides, and invalid values."""
+
+    def test_default_overwrite(self):
+        """Test default timeout for overwrite method."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', return_value={}):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_default_secure_erase(self):
+        """Test default timeout for secure_erase method."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', return_value={}):
+            assert _get_erase_timeout("secure_erase") == 7200
+
+    def test_default_crypto(self):
+        """Test default timeout for crypto method."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', return_value={}):
+            assert _get_erase_timeout("crypto") == 7200
+
+    def test_default_block(self):
+        """Test default timeout for block method."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', return_value={}):
+            assert _get_erase_timeout("block") == 7200
+
+    def test_policy_override(self):
+        """Test that policy.json overrides default timeouts."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {"overwrite_seconds": 3600}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 3600
+
+    def test_policy_override_all_methods(self):
+        """Test policy override for each method."""
+        from job_management import _get_erase_timeout
+        policy = {
+            "erase_timeouts": {
+                "overwrite_seconds": 100,
+                "secure_erase_seconds": 200,
+                "enhanced_secure_erase_seconds": 300,
+                "crypto_seconds": 400,
+                "block_seconds": 500,
+            }
+        }
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 100
+            assert _get_erase_timeout("secure_erase") == 200
+            assert _get_erase_timeout("enhanced_secure_erase") == 300
+            assert _get_erase_timeout("crypto") == 400
+            assert _get_erase_timeout("block") == 500
+
+    def test_invalid_non_numeric_value(self):
+        """Test that non-numeric policy value falls back to default with warning."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {"overwrite_seconds": "172800s"}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_invalid_negative_value(self):
+        """Test that negative policy value is rejected and falls back to default."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {"overwrite_seconds": -1}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_zero_value(self):
+        """Test that zero is rejected as invalid timeout and falls back to default."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {"overwrite_seconds": 0}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_unknown_method_default(self):
+        """Test that unknown method returns the global default of 7200."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', return_value={}):
+            assert _get_erase_timeout("nonexistent") == 7200
+
+    def test_unknown_method_with_policy(self):
+        """Test that unknown method not in policy returns global default."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {"overwrite_seconds": 100}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("nonexistent") == 7200
+
+    def test_policy_load_failure(self):
+        """Test that policy load failure falls back to defaults."""
+        from job_management import _get_erase_timeout
+        with patch('job_management.load_policy', side_effect=FileNotFoundError("no policy.json")):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_empty_erase_timeouts_key(self):
+        """Test that empty erase_timeouts dict falls back to defaults."""
+        from job_management import _get_erase_timeout
+        policy = {"erase_timeouts": {}}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 172800
+
+    def test_missing_erase_timeouts_key(self):
+        """Test that missing erase_timeouts key in policy falls back to defaults."""
+        from job_management import _get_erase_timeout
+        policy = {"other_setting": True}
+        with patch('job_management.load_policy', return_value=policy):
+            assert _get_erase_timeout("overwrite") == 172800
 
 
 if __name__ == "__main__":
