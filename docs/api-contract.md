@@ -52,7 +52,7 @@ Starts validated asynchronous erase job.
 - `technician` string required
 - `ticket_number` string required
 - `bays` string[] required
-- `confirmation_text` string required, format: `erase <bay>` or `erase <count> drives`
+- `confirmation_text` string required, format: `erase BAY <display_number>` (single bay) or `erase <count> drives` (multiple bays). Uses the bay's `display_number` from `bay_map.json`, not the raw bay ID.
 - `methods` object optional (map of bay IDs to selected wipe methods)
 
 ### Success 202
@@ -202,16 +202,26 @@ Exposes and safely updates system rules and writes changes back to `/config/poli
 Writable operational fields include:
 - `station_id` — station identifier used in notifications and certificates
 - `slack_webhook_url` — Slack webhook URL for notifications
+- `wipe_passphrase` — passphrase for wipe confirmation (write-only, redacted in GET)
+- `lan_passphrase` — passphrase for LAN access authentication (write-only, redacted in GET)
+- `strict_audit_mode` — enable/disable strict audit mode (requires wipe_passphrase ≥ 8 chars)
 - `prewipe_zero_detection_enabled` — enable/disable automatic pre-wipe zero detection
 - `post_erase_marker` — enable/disable post-erase marker writing
 - `allow_method_override` — allow technicians to override the recommended erase method
+- `method_priority` — object mapping interface types (`nvme`, `sas`, `sata`) to ordered method arrays (e.g. `["crypto", "block", "overwrite"]`)
+- `crypto_fail_retry_block` — retry with block erase if crypto erase fails
+- `health_soft_stop` — soft-stop on health issues during discovery
 - `secondary_verification_mode` — `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)
 - `discovery_max_workers` — parallel SMART query threads during discovery
 - `max_concurrent_wipes` — maximum simultaneous erase jobs
+- `triage_thresholds` — nested object with triage scoring thresholds (ssd/hdd Poh, health score, FDW, SAS defect thresholds)
+- `certificate_retention_days` — days to retain certificates
+- `max_logo_size_mb` — maximum logo file size in MB
+- `max_bulk_cert_batch_size` — maximum batch size for bulk certificate generation
 - `blockdev_post_wipe_retries` — retry attempts for post-wipe `blockdev --getsize64`
 - `blockdev_post_wipe_retry_delay` — seconds between post-wipe blockdev retries
 
-**Note on GET requests:** The backend currently redacts `"lan_passphrase"` from the payload. `"wipe_passphrase"` and `"slack_webhook_url"` are included in the response and should be treated as sensitive values by the admin UI.
+**Note on GET requests:** The backend redacts both `"lan_passphrase"` and `"wipe_passphrase"` to empty strings in the response. `"slack_webhook_url"` is included and should be treated as a sensitive value by the admin UI.
 
 ## GET /api/status
 Returns system status information. Currently exposes the security/audit configuration used by the frontend badge.
@@ -223,7 +233,7 @@ Returns system status information. Currently exposes the security/audit configur
 }
 ```
 
-**Note:** `strict_audit_mode` will be added to this response as part of the secure-mode badge fix (Issue 10). The badge will reflect `strict_audit_mode` rather than `passphrase_enabled`.
+The response also includes `strict_audit_mode` (boolean) from `policy.json`, which the frontend uses for the secure-mode badge.
 
 ## POST /api/erase/jobs/<job_id>/cancel
 Cancels a running or queued erase job.
@@ -493,6 +503,240 @@ Applies a certificate layout template to a job.
 }
 ```
 
+## POST /api/admin/jobs/kill-all
+Force-kills all running erase jobs and processes.
+
+### Success 200
+```json
+{
+  "status": "success",
+  "message": "Killed N running job(s)"
+}
+```
+
+## POST /api/drives/<bay>/zero-check
+Starts a zero-check verification job for the specified bay's drive.
+
+### Success 202
+```json
+{
+  "status": "accepted",
+  "message": "Zero check started"
+}
+```
+
+### Error responses
+- `404` bay not found or no drive present
+- `409` zero check already running for this bay
+
+## DELETE /api/drives/<bay>/zero-check
+Cancels a running zero-check job for the specified bay.
+
+### Success 200
+```json
+{
+  "status": "cancelled",
+  "message": "Zero check cancelled"
+}
+```
+
+## GET /api/admin/drives/<device>/smart-export
+Exports raw SMART data for a specific device as a JSON file download.
+
+### Success 200
+Returns JSON file attachment with raw SMART attributes.
+
+## GET /api/admin/drives/<device>/smart-details
+Returns deep-dive SMART data for a specific device, including parsed attributes, thresholds, and vendor-specific data.
+
+### Success 200
+```json
+{
+  "device": "/dev/sda",
+  "smart_data": { ... },
+  "attributes": [ ... ],
+  "health_score": 85
+}
+```
+
+## POST /api/admin/drives/<device>/smart-test
+Starts a SMART self-test on the specified device.
+
+### Request body
+- `test_type` string required — `short`, `long`, or `conveyance`
+
+### Success 202
+```json
+{
+  "status": "started",
+  "test_type": "short"
+}
+```
+
+## GET /api/admin/drives/<device>/smart-test-status
+Returns the status of a running or completed SMART self-test.
+
+### Success 200
+```json
+{
+  "status": "running",
+  "progress": 50,
+  "test_type": "short"
+}
+```
+
+## GET /api/admin/drive-models
+Returns the configured drive model risk profiles from `config/drive_models.json`.
+
+### Success 200
+```json
+{
+  "drive_models": {
+    "SEAGATE,ST4000NM0023,0003": {
+      "vendor": "SEAGATE",
+      "product": "ST4000NM0023",
+      "revision": "0003",
+      "trip_temperature": 60,
+      "nme_normal_range_max": 100000000
+    }
+  }
+}
+```
+
+## GET /api/admin/master-slot-map
+Returns the master physical slot map generated from hardware scanning (SAS expanders, PCIe NVMe slots).
+
+### Success 200
+```json
+{
+  "enclosures": [ ... ],
+  "pcie_slots": [ ... ],
+  "generated_at": "ISO-8601"
+}
+```
+
+## GET /api/admin/hardware-enclosure-info
+Returns hardware enclosure information detected via SAS expander scanning.
+
+### Success 200
+```json
+{
+  "expanders": [ ... ],
+  "enclosures": [ ... ]
+}
+```
+
+## GET / POST /api/admin/enclosures
+List all enclosures (GET) or create a new enclosure (POST).
+
+### GET Success 200
+```json
+[
+  {
+    "id": "enc1",
+    "name": "Main Enclosure",
+    "slot_count": 8,
+    "slots": [ ... ]
+  }
+]
+```
+
+### POST Request body
+- `name` string required
+- `slot_count` number required
+- `traversal_preset` string optional
+
+### POST Success 201
+```json
+{
+  "status": "success",
+  "enclosure_id": "enc1"
+}
+```
+
+## GET / PUT / DELETE /api/admin/enclosures/<enclosure_id>
+Retrieve (GET), update (PUT), or delete (DELETE) a specific enclosure.
+
+### GET Success 200
+```json
+{
+  "id": "enc1",
+  "name": "Main Enclosure",
+  "slot_count": 8,
+  "slots": [ ... ]
+}
+```
+
+### DELETE Success 200
+```json
+{
+  "status": "success",
+  "message": "Enclosure deleted"
+}
+```
+
+## POST /api/admin/enclosures/<enclosure_id>/slots
+Add a new slot to an enclosure.
+
+### Request body
+- `slot_num` number required
+- `type` string optional (e.g. `sas_sata`, `nvme`)
+
+### Success 201
+```json
+{
+  "status": "success",
+  "message": "Slot added"
+}
+```
+
+## PUT / DELETE /api/admin/enclosures/<enclosure_id>/slots/<slot_num>
+Update (PUT) or remove (DELETE) a specific slot in an enclosure.
+
+### DELETE Success 200
+```json
+{
+  "status": "success",
+  "message": "Slot removed"
+}
+```
+
+## PUT / DELETE /api/admin/enclosures/<enclosure_id>/slots/<slot_num>/mappings/<mapping_type>
+Update or remove a specific slot mapping (e.g. `sas`, `sata`, `nvme`) for a slot in an enclosure.
+
+### PUT Success 200
+```json
+{
+  "status": "success",
+  "message": "Mapping updated"
+}
+```
+
+## GET / POST /api/admin/templates
+List all enclosure templates (GET) or create a new enclosure template (POST).
+
+### GET Success 200
+```json
+[
+  {
+    "id": "dell_r320_4bay",
+    "name": "Dell R320 4-Bay",
+    "slot_count": 4
+  }
+]
+```
+
+## PUT / DELETE /api/admin/templates/<template_id>
+Update (PUT) or delete (DELETE) a specific enclosure template.
+
+### DELETE Success 200
+```json
+{
+  "status": "success",
+  "message": "Template deleted"
+}
+```
+
 ## GET /docs/<path:path>
 Serves documentation files from the docs directory.
 
@@ -501,8 +745,7 @@ The frontend includes a Help modal (accessed via the Help button in the header) 
 - Quick start guide for common tasks
 - Links to documentation files served via `/docs/`:
   - `/docs/SOP_technician_guide.md` - Technician SOP
-  - `/docs/troubleshooting.md` - Troubleshooting guide
-  - `/docs/runbook.md` - Operational runbook
+  - `/docs/operations.md` - Operations and troubleshooting guide
 - Common system administration commands
 
 The Help modal is a purely frontend UI element and does not require a separate API endpoint.
@@ -520,3 +763,4 @@ Serves static frontend assets (CSS, JS, images).
 - `running`
 - `completed`
 - `failed`
+- `cancelled`

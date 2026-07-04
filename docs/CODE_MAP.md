@@ -7,6 +7,11 @@
 - `README.md` - Quickstart and installation instructions
 - `docs/api-contract.md` - API endpoint specifications
 - `docs/SOP_technician_guide.md` - Operational procedures for technicians
+- `docs/admin-guide.md` - System Administration features guide
+- `docs/enclosure-mapping-guide.md` - Enclosure setup and slot configuration guide
+- `docs/deployment.md` - Installation, releases, validation, and rollback
+- `docs/operations.md` - Service operations and troubleshooting
+- `docs/lifecycle.md` - Erase job lifecycle states and transitions
 
 ---
 
@@ -17,66 +22,157 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 ```text
 ./
 ├── backend/                    # Core Python application logic (modular)
-│   ├── app.py                  # Application entry point, imports all modules
-│   ├── app_config.py            # Flask app initialization, logging, security middleware
-│   ├── system_metrics.py        # System monitoring (RAM, CPU, uptime)
-│   ├── job_management.py       # Erase job lifecycle management
-│   ├── api_routes.py           # Flask route handlers
+│   ├── app.py                  # Application entry point, create_app() factory
+│   ├── app_config.py           # Flask app initialization, logging, security middleware
+│   ├── wsgi.py                 # WSGI entry point for Gunicorn deployment
+│   ├── api_routes.py           # Non-blueprint routes (erase, auth, static serving)
+│   ├── system_metrics.py       # System monitoring (RAM, CPU, uptime)
+│   ├── job_management.py       # Erase job lifecycle, health gate, progress polling
+│   ├── job_validation.py       # Bay validation, method override checks
+│   ├── erase_commands.py       # Erase command builders (nvme, hdparm, sg, dd)
 │   ├── disk_utils.py           # Command resolution, disk utilities, marker operations
-│   ├── smart_parsing.py        # SMART data parsing, health scoring, recommendations
 │   ├── disk_capabilities.py    # Drive capability detection (SATA/NVMe/SAS)
-│   ├── disk_ops.py             # OS drive detection, discovery engine
+│   ├── disk_ops.py             # Re-export shim → os_detection, discovery, device_resolution, etc.
+│   ├── os_detection.py         # OS drive detection (get_os_parent_device, get_os_by_path)
+│   ├── discovery.py            # Drive discovery engine (discover_drives, enclosure/legacy modes)
+│   ├── discovery_state.py      # Discovery interrupt generation, thread state, shutdown events
+│   ├── discovery_diag.py       # Discovery diagnostics and troubleshooting
+│   ├── device_discovery.py     # Low-level device discovery helpers
+│   ├── device_resolution.py    # Enclosure slot → device path resolution
+│   ├── drive_collection.py     # Drive payload building, caching, extended SMART collection
+│   ├── extended_smart.py       # Background SMART pool executor, WebSocket updates
+│   ├── enclosure_discovery.py  # Hardware enclosure scanning (SAS expanders, PCIe NVMe)
+│   ├── pci_controllers.py      # PCI controller enumeration and mapping
+│   ├── sas_expander.py         # SAS expander discovery and PHY scanning
+│   ├── slot_mapping.py         # Physical slot mapping, master slot map generation
+│   ├── udev_listener.py        # udev event listener for hot-plug detection
+│   ├── smart_parsing.py        # Re-export shim → smart_utils, smart_data_parsing, smart_health, etc.
+│   ├── smart_utils.py          # Interface classification, SSD detection, raw SMART diagnostics
+│   ├── smart_constants.py      # SMART attribute ID constants, threshold defaults
+│   ├── smart_data_parsing.py   # SMART data extraction, triage thresholds, drive model loading
+│   ├── smart_health.py         # Health score calculation, drive recommendations
+│   ├── smart_health_gate.py    # Pre-wipe health gate evaluation
+│   ├── smart_test_runner.py    # SMART self-test execution and status tracking
+│   ├── smart_db.py             # SMART test result persistence (SQLite)
 │   ├── certificates.py         # Render engine & HMAC-SHA256 signature generator
-│   ├── common.py               # Shared path resolvers, JSON policy loader
-│   ├── crypto_verification.py  # Sampled zero check, before/after hash comparison, crypto probe
+│   ├── bulk_cert.py            # Bulk certificate generation
+│   ├── layout_templates.py     # Certificate layout template engine
+│   ├── common.py               # Shared path resolvers, JSON policy loader, config helpers
+│   ├── crypto_verification.py  # Sampled zero check, hash comparison, crypto probe
+│   ├── zero_check_manager.py   # Zero-check job lifecycle (start, cancel, progress)
 │   ├── database.py             # Schema initialization, PRAGMA alterations, SQLite writes
-│   ├── health_monitor.py       # [Planned] I/O error / stall detection for failing-drive mitigation
 │   ├── notifier.py             # Webhook alerting dispatcher
-│   └── verification.py         # Resilient firmware sanitize status checkers & marker logic
-│                                 # See "NVMe Sanitize Log Reference" section below for SSTAT/SPROG values
+│   ├── verification.py         # Firmware sanitize status checkers & marker logic
+│   │                           # See "NVMe Sanitize Log Reference" section below for SSTAT/SPROG values
+│   └── routes/                 # Flask blueprints organized by feature area
+│       ├── __init__.py         # Blueprint registration (register_blueprints)
+│       ├── _shared.py          # Shared route utilities, validation helpers
+│       ├── admin_routes.py     # Kill-all-jobs endpoint
+│       ├── drive_routes.py     # /api/drives, /api/status, zero-check endpoints
+│       ├── certificate_routes.py # Certificate retrieval, bulk HTML, bulk cert creation
+│       ├── bay_mapping_routes.py # Bay map CRUD, unmapped drives, auto-detect
+│       ├── discovery_routes.py # Slot discovery, slot mapping apply
+│       ├── enclosure_routes.py # Enclosure CRUD, slot CRUD, templates, master slot map
+│       ├── policy_routes.py    # Policy GET/POST, triage config GET/POST
+│       ├── smart_routes.py     # SMART export, details, self-test, drive models
+│       ├── support_routes.py   # Metrics, webhook test, CSV export, support bundle, logo
+│       └── template_routes.py  # Layout template CRUD, import/export, apply
 ├── config/                     # Static operational profiles
-│   ├── bay_map.json            # Enclosure-based physical slot mapping (templates, enclosures, slot mappings)
-│   └── policy.json             # System rule configurations, methods priority, passphrase
-├── data/                       # Persistent runtime assets (Ignored by Git except .gitkeep)
-│   ├── wipes.db                # SQLite database (stores all jobs, results, certificates)
-│   └── certs/                  # Generated JSON and HTML certificates
-├── docs/                       # Technical runbooks, SOPs, and design specifications
+│   ├── bay_map.json            # Bay configuration (roles, labels, by-path, display numbers)
+│   ├── policy.json             # System rules, method priority, passphrases, triage thresholds
+│   └── drive_models.json       # Per-model risk profiles (vendor, trip temp, NME thresholds)
+├── data/                       # Persistent runtime assets (gitignored except .gitkeep)
+│   ├── wipes.db                # SQLite database (jobs, results, certificates, SMART tests)
+│   ├── certs/                  # Generated JSON and HTML certificates
+│   └── logs/                   # Application logs (active/, failed/)
+├── docs/                       # Technical documentation and guides
+│   ├── admin-guide.md          # System Administration features guide
 │   ├── api-contract.md         # Endpoint input/output shapes
+│   ├── ARCHITECTURE.md         # Architectural decisions and design rationale
 │   ├── change-log.md           # Engineering development timeline
-│   ├── runbook.md              # Deployment and operational instructions
+│   ├── CODE_MAP.md             # This file — high-level architectural index
+│   ├── deployment.md           # Installation, GitHub releases, validation, rollback
+│   ├── enclosure-mapping-guide.md # Enclosure setup, slot config, worked examples
+│   ├── lifecycle.md            # Erase job lifecycle states and transitions
+│   ├── operations.md           # Service ops, config paths, troubleshooting by symptom
+│   ├── roadmap.md              # Feature roadmap and status
+│   ├── SECURITY_DEVIATIONS.md  # Documented security deviations
 │   ├── SOP_technician_guide.md # Step-by-step physical drive handling guidelines
-│   └── troubleshooting.md      # Hardware error codes and debug workflows
+│   └── test-plan.md            # Test coverage plan
 ├── frontend/                   # UI Assets (modular)
-│   ├── app.js                  # Frontend entry point, imports all modules
+│   ├── app.js                  # Frontend entry point, tab switching, initialization
+│   ├── index.html              # UI template (single-page app)
+│   ├── styles.css              # CSS entry point (imports all split CSS files)
 │   ├── utils.js                # Utility functions (escapeHtml, formatting, clipboard)
 │   ├── auth.js                 # Authentication overlay and passphrase verification
-│   ├── driveManagement.js      # Drive discovery, rendering, batch operations
+│   ├── driveManagement.js      # Drive discovery, bay selection, batch operations
+│   ├── driveRendering.js       # Bay card rendering, status display, health indicators
+│   ├── smartRenderers.js       # SMART data rendering, health badges, attribute tables
+│   ├── smartDeepDive.js        # SMART deep-dive modal, raw attribute viewer
 │   ├── auditLedger.js          # Audit history display, certificate management
-│   ├── admin/                  # Admin panel modules (modular)
-│   │   ├── adminUtilities.js   # Shared admin utilities and helpers
-│   │   ├── bayMapping.js       # Bay mapping configuration and management
-│   │   ├── discoveryModal.js       # Discovery modal UI and event handlers
-│   │   ├── discoveryMapping.js     # Pattern/manual mapping business logic
-│   │   ├── discoveryValidation.js  # Validation functions (regex, device paths, mapping)
-│   │   └── discoveryState.js       # State management and undo functionality
-│   │   ├── templateManagement.js # Certificate template management
-│   │   ├── logoManagement.js   # Custom logo upload and management
-│   │   └── triageConfig.js     # Triage threshold configuration
-│   ├── index.html              # UI Template
-│   └── styles.css              # 15-foot state colors, dashboard grids
+│   ├── batchWipe.js            # Batch wipe UI, multi-bay selection, method assignment
+│   ├── modals.js               # Modal framework, help modal, confirmation dialogs
+│   ├── triageReport.js         # Batch intake triage report rendering
+│   ├── socket.io.min.js        # Socket.IO client library (WebSocket real-time updates)
+│   ├── favicon.ico             # Application favicon
+│   ├── css/                    # Split CSS modules
+│   │   ├── base.css            # Reset, variables, root element styles
+│   │   ├── layout.css          # Grid layout, header, tab navigation
+│   │   ├── bay-card.css        # Bay card visual states, health indicators
+│   │   ├── buttons.css         # Button styles and variants
+│   │   ├── audit.css           # Audit ledger table styles
+│   │   ├── modal.css           # Modal overlay and dialog styles
+│   │   ├── admin.css           # Admin panel layout and forms
+│   │   ├── auth.css            # Authentication overlay styles
+│   │   ├── enclosure.css       # Enclosure management UI styles
+│   │   ├── utilities.css       # Utility classes, helpers, responsive
+│   │   ├── triage.css          # Triage report and threshold styles
+│   │   ├── legend.css          # Color legend, status indicators
+│   │   ├── discovery.css       # Discovery modal and mapping UI styles
+│   │   ├── certificate.css     # Certificate print layout styles
+│   │   └── print-window.css    # Print window styles
+│   └── admin/                  # Admin panel modules
+│       ├── adminUtilities.js   # Shared admin utilities and helpers
+│       ├── bayMapping.js       # Bay mapping configuration and management
+│       ├── discoveryModal.js   # Discovery modal UI and event handlers
+│       ├── discoveryMapping.js # Pattern/manual mapping business logic
+│       ├── discoveryValidation.js # Validation functions (regex, device paths, mapping)
+│       ├── discoveryState.js   # State management and undo functionality
+│       ├── templateManagement.js # Certificate template management
+│       ├── logoManagement.js   # Custom logo upload and management
+│       ├── triageConfig.js     # Triage threshold configuration
+│       ├── driveModels.js      # Drive model risk profile management
+│       ├── enclosureList.js    # Enclosure list view and CRUD UI
+│       ├── enclosureSave.js    # Enclosure save/form handling
+│       ├── enclosureWizard.js  # Enclosure setup wizard, slot editor
+│       └── systemConfig.js     # System config panel (policy, station ID, toggles)
 ├── scripts/                    # Automation and lifecycle shell wrappers
 │   ├── install.sh              # Host setup and package requirements script
-│   ├── seed_test_data.sh       # Mock population helper for offline staging
+│   ├── update.sh               # Production deployment script (copies to /opt, restarts service)
 │   ├── start.sh                # Local manual daemon run wrapper
-│   └── export-logs.sh          # Log export utility
+│   ├── seed_test_data.sh       # Mock population helper for offline staging
+│   ├── export-logs.sh          # Log export utility
+│   ├── kill-all-jobs.sh        # Force-kill all running wipe processes
+│   ├── tests-install.sh        # Install test dependencies
+│   ├── tests-run.sh            # Run test suite
+│   └── build-release.ps1       # Windows PowerShell release build script
 ├── systemd/                    # Service manager configuration
 │   └── drive-eraser.service    # Systemd unit definition for background execution
+├── triage/                     # Code concern triage utilities
+│   └── triage_concerns.py      # Parse and group code concerns
+├── tests/                      # Test suite (pytest + JS)
+│   ├── conftest.py             # Pytest fixtures and configuration
+│   ├── fixtures/               # Test fixtures (SMART samples, mock data)
+│   ├── test_*.py               # 30+ Python test modules
+│   └── test_*.js               # 4 JavaScript test modules
 ├── .gitignore                  # Environment-specific exclude profiles
-├── requirements.txt            # Python dependencies index
-├── AGENTS.md                   # Multi-agent collaboration manifest
-├── docs/CODE_MAP.md            # High-level architectural index and dependency map
+├── .productionignore           # Production deployment exclude patterns
+├── .windsurfignore             # Windsurf IDE exclude patterns
+├── requirements.txt            # Python dependencies
+├── requirements-test.txt       # Python test dependencies
+├── LICENSE                     # MIT license
+├── progress.txt                # Development progress notes
 └── README.md                   # Quickstart installation instructions
-
 ```
 
 ---
@@ -85,31 +181,74 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 
 | If you want to modify... | Look in this file | Key Functions / Definitions to Inspect |
 | :--- | :--- | :--- |
-| **Application Entry Point** | `backend/app.py` | Imports all modules, initializes Flask app |
-| **Flask App Configuration** | `backend/app_config.py` | `app`, `logger`, `get_config_dir()`, `load_policy()` |
+| **Application Entry Point** | `backend/app.py` | `create_app()` — Flask app + Socket.IO initialization |
+| **WSGI Entry Point** | `backend/wsgi.py` | `app`, `socketio` — Gunicorn deployment entry point |
+| **Flask App Configuration** | `backend/app_config.py` | `app`, `logger`, `get_config_dir()`, `load_policy()`, `limiter`, `calculate_session_token()` |
 | **System Monitoring** | `backend/system_metrics.py` | `get_ram_usage()`, `get_cpu_usage()`, `get_system_uptime()` |
-| **Job Lifecycle Management** | `backend/job_management.py` | `validate_single_bay()`, `create_erase_job()`, `run_erase_job()`, `prepare_erase_command()` |
-| **HTTP Route Handlers** | `backend/api_routes.py` | All `@app.route()` definitions, API endpoints |
+| **Job Lifecycle Management** | `backend/job_management.py` | `validate_single_bay()`, `create_erase_job()`, `run_erase_job()`, `prepare_erase_command()`, `check_health_gate_sync()` |
+| **Job Validation** | `backend/job_validation.py` | Bay validation logic, method override checks |
+| **Erase Command Builders** | `backend/erase_commands.py` | Command builders for nvme sanitize, hdparm, sg, dd |
+| **Non-Blueprint Routes** | `backend/api_routes.py` | `register_routes()` — erase start/cancel, job status, history, auth, static serving |
+| **Route Blueprints** | `backend/routes/__init__.py` | `register_blueprints()` — registers all 10 blueprints |
+| **Shared Route Utilities** | `backend/routes/_shared.py` | Shared validation helpers used across route modules |
+| **Drive Routes** | `backend/routes/drive_routes.py` | `/api/drives`, `/api/status`, zero-check start/cancel |
+| **Admin Routes** | `backend/routes/admin_routes.py` | `/api/admin/jobs/kill-all` |
+| **Certificate Routes** | `backend/routes/certificate_routes.py` | `/api/certificates/<id>`, bulk HTML, bulk cert creation |
+| **Bay Mapping Routes** | `backend/routes/bay_mapping_routes.py` | Bay map CRUD, unmapped drives, auto-detect |
+| **Discovery Routes** | `backend/routes/discovery_routes.py` | Slot discovery, slot mapping apply |
+| **Enclosure Routes** | `backend/routes/enclosure_routes.py` | Enclosure CRUD, slot CRUD, templates, master slot map |
+| **Policy Routes** | `backend/routes/policy_routes.py` | Policy GET/POST, triage config GET/POST |
+| **SMART Routes** | `backend/routes/smart_routes.py` | SMART export, details, self-test, drive models |
+| **Support Routes** | `backend/routes/support_routes.py` | Metrics, webhook test, CSV export, support bundle, logo |
+| **Template Routes** | `backend/routes/template_routes.py` | Layout template CRUD, import/export, apply |
 | **Command Resolution & Utilities** | `backend/disk_utils.py` | `resolve_command_path()`, `run_command()`, `execute_erase_method()`, `read_marker_status()` |
-| **SMART Data Parsing** | `backend/smart_parsing.py` | `get_smart_data()`, `classify_interface_from_smart()`, `calculate_drive_health_score()`, `get_drive_recommendation()` |
+| **SMART Data Parsing (shim)** | `backend/smart_parsing.py` | Re-exports from `smart_utils`, `smart_data_parsing`, `smart_health`, `smart_test_runner`, `smart_health_gate` |
+| **SMART Utils** | `backend/smart_utils.py` | `classify_interface_from_smart()`, `detect_interface_type()`, `is_drive_ssd()`, `get_raw_smart_diagnostics()` |
+| **SMART Constants** | `backend/smart_constants.py` | SMART attribute ID constants, threshold defaults |
+| **SMART Data Parsing** | `backend/smart_data_parsing.py` | `get_smart_data()`, `get_smart_identity()`, `get_triage_thresholds()`, `_load_drive_models()` |
+| **SMART Health** | `backend/smart_health.py` | `calculate_drive_health_score()`, `get_drive_recommendation()` |
+| **SMART Health Gate** | `backend/smart_health_gate.py` | `pre_wipe_health_gate()` — pre-wipe SMART/I/O error check |
+| **SMART Test Runner** | `backend/smart_test_runner.py` | `run_smart_test()`, `get_smart_test_status()` |
+| **SMART DB** | `backend/smart_db.py` | SMART test result persistence in SQLite |
 | **Drive Capability Detection** | `backend/disk_capabilities.py` | `detect_drive_capabilities()`, `detect_sata_capabilities()`, `detect_nvme_capabilities()`, `detect_sas_capabilities()` |
-| **OS Drive Detection & Discovery** | `backend/disk_ops.py` | `get_os_parent_device()`, `get_os_by_path()`, `discover_drives()`, `generate_master_slot_map()`, `resolve_multipath_parent()` |
+| **Disk Ops (shim)** | `backend/disk_ops.py` | Re-exports from `os_detection`, `discovery`, `device_resolution`, `drive_collection`, `extended_smart`, `discovery_state` |
+| **OS Drive Detection** | `backend/os_detection.py` | `get_os_parent_device()`, `get_os_by_path()` |
+| **Drive Discovery Engine** | `backend/discovery.py` | `discover_drives()`, `invalidate_drive_cache()`, `get_discovery_max_workers()` |
+| **Discovery State** | `backend/discovery_state.py` | Discovery interrupt generation, thread state, shutdown events |
+| **Discovery Diagnostics** | `backend/discovery_diag.py` | Discovery troubleshooting and diagnostics |
+| **Device Discovery** | `backend/device_discovery.py` | Low-level device discovery helpers |
+| **Device Resolution** | `backend/device_resolution.py` | Enclosure slot → device path resolution |
+| **Drive Collection** | `backend/drive_collection.py` | Drive payload building, caching, extended SMART collection |
+| **Extended SMART Pool** | `backend/extended_smart.py` | Background SMART executor, WebSocket updates, `set_websocket_manager()` |
+| **Enclosure Discovery** | `backend/enclosure_discovery.py` | Hardware enclosure scanning (SAS expanders, PCIe NVMe) |
+| **PCI Controllers** | `backend/pci_controllers.py` | PCI controller enumeration and mapping |
+| **SAS Expander** | `backend/sas_expander.py` | SAS expander discovery and PHY scanning |
+| **Slot Mapping** | `backend/slot_mapping.py` | Physical slot mapping, `generate_master_slot_map()` |
+| **udev Listener** | `backend/udev_listener.py` | udev event listener for hot-plug detection |
 | **CLI Progress Telemetry (Pollers)** | `backend/job_management.py` | `poll_nvme_sanitize_progress()`, `poll_sata_sanitize_progress()`, `poll_sas_sanitize_progress()` |
 | **Common Directory Paths** | `backend/common.py` | `get_data_dir()`, `get_db_path()`, `get_cert_dir()`, `get_config_dir()` |
-| **Policy JSON Loader** | `backend/common.py` | `load_policy()` |
+| **Policy JSON Loader** | `backend/common.py` | `load_policy()`, `save_policy()` |
 | **SQLite Schema & DB Writes** | `backend/database.py` | `init_wipe_db()`, `persist_job()`, `ensure_column()` |
 | **Direct Command Verification** | `backend/verification.py` | `verify_overwrite()`, `verify_nvme_sanitize()`, `verify_sata_sanitize()`, `verify_sas_block()`, `verify_sata_secure_erase()` |
 | **Command Verification Orchestrator**| `backend/verification.py` | `verification_for_method()`, `run_verification_command()` |
 | **Post-wipe Disk Markers** | `backend/verification.py` | `write_marker_and_verify()`, `build_marker_payload()` |
-| **Sampled Zero / Hash Comparison Verification** | `backend/crypto_verification.py` | `verify_sampled_zero_check()`, `verify_crypto_hash_comparison()`, `verify_crypto_probe()` |
-| **Drive Health / I/O Stall Monitoring** | `backend/health_monitor.py` | [Planned] I/O error monitoring, stall detection, failing-drive blacklist |
+| **Sampled Zero / Hash Comparison** | `backend/crypto_verification.py` | `verify_sampled_zero_check()`, `verify_crypto_hash_comparison()`, `verify_crypto_probe()` |
+| **Zero-Check Manager** | `backend/zero_check_manager.py` | Zero-check job lifecycle (start, cancel, progress tracking) |
 | **Cryptographic Certificates** | `backend/certificates.py` | `build_certificate()`, `build_certificate_html()`, `calculate_certificate_hash()` |
+| **Bulk Certificates** | `backend/bulk_cert.py` | Bulk certificate generation logic |
+| **Layout Templates** | `backend/layout_templates.py` | Certificate layout template engine |
 | **Slack Webhooks / Chat Alerts** | `backend/notifier.py` | `send_slack_notification()` |
-| **Frontend Entry Point** | `frontend/app.js` | Imports all modules, tab switching, initialization |
+| **Frontend Entry Point** | `frontend/app.js` | Tab switching, initialization, Socket.IO setup |
 | **Frontend Utilities** | `frontend/utils.js` | `escapeHtml()`, `formatIsoDate()`, `calculateDriveHealthScore()`, `copyTextToClipboard()`, `classifyError()`, `handleError()` |
 | **Authentication** | `frontend/auth.js` | `showAuthOverlay()`, `hideAuthOverlay()`, `loadSecurityStatus()` |
 | **Drive Management** | `frontend/driveManagement.js` | `loadDrives()`, `renderBays()`, `pollActiveWipes()`, `toggleBaySelection()` |
+| **Drive Rendering** | `frontend/driveRendering.js` | Bay card rendering, status display, health indicators |
+| **SMART Renderers** | `frontend/smartRenderers.js` | SMART data rendering, health badges, attribute tables |
+| **SMART Deep-Dive** | `frontend/smartDeepDive.js` | SMART deep-dive modal, raw attribute viewer |
 | **Audit Ledger** | `frontend/auditLedger.js` | `loadHistoryIndex()`, `renderAuditLedger()`, `renderExpandedAuditRow()` |
+| **Batch Wipe** | `frontend/batchWipe.js` | Batch wipe UI, multi-bay selection, method assignment |
+| **Modals** | `frontend/modals.js` | Modal framework, help modal, confirmation dialogs |
+| **Triage Report** | `frontend/triageReport.js` | Batch intake triage report rendering |
 | **Admin Utilities** | `frontend/admin/adminUtilities.js` | Shared admin helpers, modal management, common admin functions |
 | **Bay Mapping** | `frontend/admin/bayMapping.js` | `loadBayMappingConfig()`, `saveBayMappingConfiguration()`, `renderBayMappingUI()`, enclosure management, slot mapping editor |
 | **Discovery Modal UI** | `frontend/admin/discoveryModal.js` | `openDiscoveryModal()`, `renderControllers()`, `renderDevices()` |
@@ -119,6 +258,11 @@ All core Python logic resides in the modular `/backend` directory. Frontend file
 | **Template Management** | `frontend/admin/templateManagement.js` | `loadTemplates()`, `createTemplate()`, `applyTemplate()`, `exportTemplate()`, `importTemplate()` |
 | **Logo Management** | `frontend/admin/logoManagement.js` | `uploadLogo()`, `deleteLogo()`, `previewLogo()` |
 | **Triage Config** | `frontend/admin/triageConfig.js` | `loadTriageConfig()`, `saveTriageConfig()`, `renderTriageThresholds()` |
+| **Drive Models** | `frontend/admin/driveModels.js` | Drive model risk profile management UI |
+| **Enclosure List** | `frontend/admin/enclosureList.js` | Enclosure list view and CRUD UI |
+| **Enclosure Save** | `frontend/admin/enclosureSave.js` | Enclosure save/form handling |
+| **Enclosure Wizard** | `frontend/admin/enclosureWizard.js` | Enclosure setup wizard, slot editor |
+| **System Config** | `frontend/admin/systemConfig.js` | System config panel (policy, station ID, toggles) |
 
 ---
 
@@ -159,19 +303,19 @@ When an AI is modifying the job pipeline, trace your changes through this sequen
 When an AI is modifying the discovery system, trace your changes through this sequence:
 
 ```text
-1. [disk_ops.py] `generate_master_slot_map(force_refresh=False)` scans sysfs
+1. [slot_mapping.py] `generate_master_slot_map(force_refresh=False)` scans sysfs
     │
-2. [disk_ops.py] Parses SAS phy links, saves HBA addresses and expander WWNs
+2. [sas_expander.py] Parses SAS phy links, saves HBA addresses and expander WWNs
     │
-3. [disk_ops.py] Reads `/sys/bus/pci/slots/` for PCIe NVMe mapping
+3. [pci_controllers.py] Reads `/sys/bus/pci/slots/` for PCIe NVMe mapping
     │
-4. [disk_ops.py] Caches topology mappings for 60 seconds with thread-safe lock
+4. [slot_mapping.py] Caches topology mappings for 60 seconds with thread-safe lock
     │
-5. [disk_ops.py] `discover_drives()` resolves logical drive paths from physical slot mappings
+5. [discovery.py] `discover_drives()` resolves logical drive paths from physical slot mappings
     │
-6. [disk_ops.py] `resolve_multipath_parent()` consolidates dual-port paths to single `/dev/mapper/mpathX`
+6. [device_resolution.py] Resolves enclosure slot → device path, consolidates multipath
     │
-7. [api_routes.py] GET /api/drives returns enclosure-grouped drive inventory
+7. [routes/drive_routes.py] GET /api/drives returns enclosure-grouped drive inventory
     │
 8. [frontend/admin/bayMapping.js] Enclosure management UI uses master map for auto-detection
 ```
@@ -181,40 +325,68 @@ When an AI is modifying the discovery system, trace your changes through this se
 ## 4. Module Dependency Graph
 
 ```
-backend/app.py (entry point)
+backend/app.py (entry point — create_app())
 ├── app_config.py
 ├── system_metrics.py
 ├── job_management.py
 │   ├── disk_utils.py
-│   ├── smart_parsing.py
-│   └── verification.py
-├── api_routes.py
+│   ├── erase_commands.py
+│   ├── smart_health_gate.py
+│   ├── verification.py
+│   └── zero_check_manager.py
+├── api_routes.py (non-blueprint routes)
 │   ├── app_config.py
-│   ├── system_metrics.py
 │   ├── job_management.py
 │   ├── common.py
 │   ├── database.py
-│   ├── disk_ops.py
-│   ├── disk_utils.py
-│   ├── smart_parsing.py
+│   ├── discovery.py (via disk_ops shim)
+│   └── routes/admin_routes.py (require_admin_auth)
+├── routes/ (10 blueprints via register_blueprints)
+│   ├── _shared.py
+│   ├── admin_routes.py       # Kill-all-jobs
+│   ├── drive_routes.py       # /api/drives, /api/status, zero-check
+│   ├── certificate_routes.py # Certificates, bulk HTML, bulk cert
+│   ├── bay_mapping_routes.py # Bay map CRUD, unmapped drives, auto-detect
+│   ├── discovery_routes.py   # Slot discovery, slot mapping apply
+│   ├── enclosure_routes.py   # Enclosure CRUD, slot CRUD, templates, master slot map
+│   ├── policy_routes.py      # Policy GET/POST, triage config
+│   ├── smart_routes.py       # SMART export, details, self-test, drive models
+│   ├── support_routes.py     # Metrics, webhook, CSV, support bundle, logo
+│   └── template_routes.py    # Layout template CRUD, import/export, apply
+├── discovery.py (drive discovery engine)
+│   ├── os_detection.py
+│   ├── device_resolution.py
+│   ├── drive_collection.py
+│   ├── extended_smart.py
+│   ├── enclosure_discovery.py
+│   └── slot_mapping.py
+│       ├── sas_expander.py
+│       └── pci_controllers.py
+├── smart_data_parsing.py
+│   ├── smart_utils.py
+│   ├── smart_constants.py
+│   └── smart_health.py
+├── certificates.py
 │   └── layout_templates.py
-├── routes/
-│   ├── admin_routes.py       # Enclosure CRUD, slot mapping APIs
-│   ├── bay_mapping_routes.py  # Bay mapping configuration endpoints
-│   ├── discovery_routes.py    # Hardware discovery and master map endpoints
-│   └── certificate_routes.py  # Certificate generation and retrieval
-└── disk_ops.py
-    ├── disk_utils.py
-    ├── smart_parsing.py
-    └── disk_capabilities.py
+├── crypto_verification.py
+├── database.py
+├── common.py
+└── notifier.py
 
 frontend/app.js (entry point)
 ├── utils.js
 ├── auth.js
 ├── driveManagement.js
+│   ├── driveRendering.js
 │   └── utils.js
+├── smartRenderers.js
+│   └── smartDeepDive.js
 ├── auditLedger.js
 │   └── utils.js
+├── batchWipe.js
+├── modals.js
+├── triageReport.js
+├── socket.io.min.js
 └── admin/
     ├── adminUtilities.js
     │   └── utils.js
@@ -229,7 +401,14 @@ frontend/app.js (entry point)
     │   └── adminUtilities.js
     ├── logoManagement.js
     │   └── adminUtilities.js
-    └── triageConfig.js
+    ├── triageConfig.js
+    │   └── adminUtilities.js
+    ├── driveModels.js
+    ├── enclosureList.js
+    ├── enclosureSave.js
+    ├── enclosureWizard.js
+    │   └── adminUtilities.js
+    └── systemConfig.js
         └── adminUtilities.js
 ```
 

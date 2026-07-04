@@ -6,7 +6,7 @@ This guide provides step-by-step instructions for configuring physical enclosure
 - [admin-guide.md](admin-guide.md) — All admin panel features
 - [lifecycle.md](lifecycle.md) — Drive wipe lifecycle and policy configuration
 - [ARCHITECTURE.md](ARCHITECTURE.md) — Architectural decisions and design rationale
-- [troubleshooting.md](troubleshooting.md) — Physical slot mapping troubleshooting
+- [operations.md](operations.md) — Operations and troubleshooting
 
 ---
 

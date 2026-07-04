@@ -84,15 +84,15 @@ The deprecated alias `crypto_verification_mode` is still accepted for backward c
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `discovery_max_workers` | Maximum parallel threads for drive discovery (1-32) | `8` |
-| `max_concurrent_wipes` | Maximum simultaneous erase jobs (1-256) | `64` |
+| `discovery_max_workers` | Maximum parallel threads for drive discovery (1-64) | `8` |
+| `max_concurrent_wipes` | Maximum simultaneous erase jobs (1-32) | `64` |
 
 ### Post-Wipe Retry Settings
 
 | Setting | Description | Default |
 |---------|-------------|---------|
 | `blockdev_post_wipe_retries` | Retry attempts for post-wipe `blockdev --getsize64` (0-10) | `3` |
-| `blockdev_post_wipe_retry_delay` | Seconds between retries (0-60) | `5` |
+| `blockdev_post_wipe_retry_delay` | Seconds between retries (0-300) | `5` |
 
 These settings handle transient bus resets after hardware-level sanitize commands (e.g., SATA SSDs that drop the link during secure erase).
 
@@ -113,13 +113,13 @@ The health gate prevents starting wipes on drives with critical health issues. W
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `prewipe_health_gate_enabled` | Enable/disable the health gate | `false` |
+| `prewipe_health_gate_enabled` | Enable/disable the health gate | `true` |
 | `prewipe_health_gate_strict_mode` | When enabled, blocks cannot be overridden even in non-strict audit mode | `false` |
 | `prewipe_health_gate_block_destroy` | Block wipes on drives with DESTROY recommendation | `true` |
 | `prewipe_health_gate_block_scratch` | Block wipes on drives with SCRATCH recommendation | `false` (warning only) |
 | `prewipe_health_gate_block_failed_smart` | Block wipes on drives with SMART status FAILED | `true` |
-| `prewipe_health_gate_max_pending_sectors` | Threshold for pending sectors (0-1000) | `10` |
-| `prewipe_health_gate_max_reallocated_sectors` | Threshold for reallocated sectors (0-1000) | `5` |
+| `prewipe_health_gate_max_pending_sectors` | Threshold for pending sectors (0-100000) | `10` |
+| `prewipe_health_gate_max_reallocated_sectors` | Threshold for reallocated sectors (0-100000) | `5` |
 | `prewipe_health_gate_max_interface_errors` | Threshold for interface errors (0-100000) | `100` |
 | `prewipe_health_gate_max_health_score_drop` | Health score drop threshold for intake history comparison (0-100) | `20` |
 
@@ -146,8 +146,8 @@ Background, non-blocking, visual-only check that runs after discovery for intern
 | `log_retention_days` | How long to keep operational logs | — |
 | `max_logo_size_mb` | Maximum logo file size | `1` |
 | `max_bulk_cert_batch_size` | Maximum certificates per bulk export | `100` |
-| `discovery_diag` | Enable discovery diagnostic logging | `false` |
-| `background_smart_max_workers` | Maximum parallel workers for background SMART collection | — |
+| `discovery_diag` | Enable discovery diagnostic logging | `true` |
+| `background_smart_max_workers` | Maximum parallel workers for background SMART collection (1-32) | `4` |
 
 ---
 
