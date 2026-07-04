@@ -27,7 +27,7 @@ class TestE2EEraseWorkflow:
                 json.dump(policy, f)
             yield tmpdir
 
-    @patch('job_management.get_os_by_path')
+    @patch('job_validation.get_os_by_path')
     def test_validate_single_bay_success(self, mock_os_path, test_config_dir):
         """Test validate_single_bay with valid input."""
         from job_management import validate_single_bay
@@ -60,7 +60,7 @@ class TestE2EEraseWorkflow:
         assert validated["technician"] == "Test Tech"
         assert validated["ticket_number"] == "TICKET-001"
 
-    @patch('job_management.get_os_by_path')
+    @patch('job_validation.get_os_by_path')
     def test_validate_single_bay_os_drive_protection(self, mock_os_path, test_config_dir):
         """Test that OS drive protection blocks erase workflow."""
         from job_management import validate_single_bay
@@ -91,7 +91,7 @@ class TestE2EEraseWorkflow:
         assert "OS drive" in error["error"]
         assert status == 403
 
-    @patch('job_management.get_os_by_path')
+    @patch('job_validation.get_os_by_path')
     def test_validate_single_bay_strict_audit_validation(self, mock_os_path, test_config_dir):
         """Test that strict audit mode enforces technician and ticket requirements."""
         from job_management import validate_single_bay

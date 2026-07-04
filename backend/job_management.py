@@ -3,7 +3,6 @@ import os
 import re
 import subprocess
 import time
-import uuid
 import threading
 import logging
 import json
@@ -14,7 +13,6 @@ from datetime import datetime, timezone
 
 # Constants
 DEFAULT_SATA_ERASE_ESTIMATE_SECONDS = 600  # Default estimated seconds for SATA erase progress calculation
-SATA_SECURITY_PASSWORD = "wipestation"  # Used for hdparm security-erase commands
 
 # C-JM2: Per-method erase timeouts (in seconds) to prevent stuck drives from blocking bays forever.
 # Overridable via policy.json "erase_timeouts" key (e.g. {"overwrite_seconds": 172800}).
@@ -86,333 +84,27 @@ from verification import (
 )
 from certificates import build_certificate
 from notifier import send_slack_notification
-from disk_ops import get_os_by_path, invalidate_drive_cache
-from disk_utils import validate_device_path
+from disk_ops import invalidate_drive_cache
 from zero_check_manager import get_manager as get_zero_check_manager
 from smart_parsing import get_raw_smart_diagnostics, get_smart_data
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
-
-def build_recommended_method(drive, policy):
-    interface_type = (drive.get("interface_type") or "unknown").lower()
-    supported_methods = drive.get("supported_methods") or []
-    method_priority = policy.get("method_priority") or {}
-    prioritized = method_priority.get(interface_type, [])
-    for method in prioritized:
-        if method in supported_methods:
-            return method
-    if "overwrite" in supported_methods:
-        return "overwrite"
-    return supported_methods[0] if supported_methods else None
-
-def check_health_gate_sync(device, interface_type, policy, health_gate_override=False):
-    """Synchronous health gate check for use by API routes before starting a job.
-
-    Returns a dict:
-        {"blocked": False} if not blocked or override accepted.
-        {"blocked": True, "error_code": "pre_wipe_health_check_failed",
-         "block_reason": "...", "override_available": bool} if blocked.
-    """
-    health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
-    if not health_gate_result.get("blocked"):
-        return {"blocked": False}
-
-    block_reason = health_gate_result.get("block_reason")
-    strict_mode = policy.get("prewipe_health_gate_strict_mode", False)
-    strict_audit_mode = policy.get("strict_audit_mode", False)
-    override_allowed = not strict_mode and not strict_audit_mode
-
-    if health_gate_override and override_allowed:
-        return {"blocked": False, "override_accepted": True, "block_reason": block_reason}
-
-    return {
-        "blocked": True,
-        "error_code": "pre_wipe_health_check_failed",
-        "block_reason": block_reason,
-        "override_available": override_allowed,
-    }
-
-def validate_single_bay(technician, ticket_number, bay, method_override, drives, policy):
-    selected_drive = None
-    for drive in drives:
-        if str(drive.get("bay") or "").strip().lower() == bay:
-            selected_drive = drive
-            break
-
-    if not selected_drive:
-        return None, {"error": f"bay not found: {bay}"}, 404
-    if selected_drive.get("locked"):
-        return None, {"error": f"bay is protected and cannot be erased: {bay}"}, 403
-    if selected_drive.get("role") in {"os", "reserved"}:
-        return None, {"error": f"bay role is not erasable: {bay}"}, 403
-    if not selected_drive.get("present"):
-        return None, {"error": f"no drive present in bay: {bay}"}, 409
-    if selected_drive.get("sas_secondary_path"):
-        return None, {"error": f"Cannot wipe secondary path of dual-port SAS drive: {bay}"}, 403
-
-    # Validate secure mode requirements before proceeding
-    strict_audit = policy.get("strict_audit_mode", False)
-    if strict_audit:
-        if not technician or technician.strip() == "" or technician == "System Operator":
-            return None, {"error": "Strict audit mode requires a valid technician name (cannot be empty or 'System Operator')"}, 400
-        if not ticket_number or ticket_number.strip() == "" or ticket_number == "INTERNAL":
-            return None, {"error": "Strict audit mode requires a valid ticket number (cannot be empty or 'INTERNAL')"}, 400
-
-    device = selected_drive.get("device")
-    if not device:
-        return None, {"error": f"drive device could not be resolved for bay: {bay}"}, 409
-
-    # Absolute dynamic hard-stop backend safety locks
-    os_path_result = get_os_by_path()
-    if os_path_result is None:
-        os_dev_node, os_by_path = None, None
-    else:
-        os_dev_node, os_by_path = os_path_result
-    configured_path = selected_drive.get("configured_by_path")
-    resolved_path = selected_drive.get("resolved_by_path")
-    configured_path_nvme = selected_drive.get("configured_by_path_nvme")
-    resolved_path_nvme = selected_drive.get("resolved_by_path_nvme")
-
-    if os_dev_node and device and os.path.realpath(device) == os.path.realpath(os_dev_node):
-        return None, {"error": f"Device {device} is the active host OS drive and cannot be erased!"}, 403
-
-    for path in [configured_path, resolved_path, configured_path_nvme, resolved_path_nvme]:
-        if path and os_by_path and (path == os_by_path or os.path.basename(path) == os.path.basename(os_by_path)):
-            return None, {"error": f"Device path {path} is the active host OS drive and cannot be erased!"}, 403
-
-    supported_methods = selected_drive.get("supported_methods") or []
-    recommended_method = build_recommended_method(selected_drive, policy)
-    chosen_method = str(method_override).strip().lower() if method_override else None
-
-    if chosen_method:
-        if chosen_method not in supported_methods:
-            return None, {"error": f"method not supported by drive in {bay}: {chosen_method}"}, 400
-        if not policy.get("allow_method_override", True) and recommended_method and chosen_method != recommended_method:
-            return None, {"error": "method override is disabled by policy"}, 403
-    else:
-        chosen_method = recommended_method
-
-    if not chosen_method:
-        return None, {"error": f"no supported erase method available for bay: {bay}"}, 409
-
-    return {
-        "technician": technician,
-        "ticket_number": ticket_number,
-        "bay": bay,
-        "device": device,
-        "method": chosen_method,
-        "recommended_method": recommended_method,
-        "supported_methods": supported_methods,
-        "drive": selected_drive,
-    }, None, None
-
-def create_erase_job(validated):
-    now = datetime.now(timezone.utc).isoformat()
-    return {
-        "id": str(uuid.uuid4()),
-        "friendly_id": None,
-        "status": "queued",
-        "created_at": now,
-        "started_at": None,
-        "finished_at": None,
-        "error": None,
-        "result": None,
-        "verification": None,
-        "marker": None,
-        "certificate": None,
-        "progress_percent": 0.0,
-        "current_phase": "Queued in Line",
-        "job_type": "erase",
-        "request": {
-            "technician": validated["technician"],
-            "ticket_number": validated["ticket_number"],
-            "bay": validated["bay"],
-            "device": validated["device"],
-            "method": validated["method"],
-            "recommended_method": validated["recommended_method"],
-            "supported_methods": validated["supported_methods"],
-            "interface_type": validated["drive"].get("interface_type"),
-            "serial": validated["drive"].get("serial"),
-            "model": validated["drive"].get("model"),
-            "capacity_bytes": validated["drive"].get("smart", {}).get("capacity_bytes") or get_device_capacity_bytes(validated["device"]) or (100 * 1024 * 1024 * 1024),
-            "data_written_at_wipe": None,
-        },
-    }
-
-def get_device_logical_block_size(device):
-    """Read logical block size from sysfs. Falls back to 512 if unavailable."""
-    try:
-        dev_name = os.path.basename(device)
-        bs_path = f"/sys/block/{dev_name}/queue/logical_block_size"
-        with open(bs_path, "r") as f:
-            return int(f.read().strip())
-    except Exception:
-        return 512
-
-def get_device_capacity_bytes(device):
-    """Get real device capacity in bytes via blockdev or sysfs. Returns None if unavailable."""
-    try:
-        result = subprocess.run(
-            ["blockdev", "--getsize64", device],
-            capture_output=True, text=True, timeout=10
-        )
-        if result.returncode == 0:
-            return int(result.stdout.strip())
-    except Exception:
-        pass
-    try:
-        dev_name = os.path.basename(device)
-        size_path = f"/sys/block/{dev_name}/size"
-        with open(size_path, "r") as f:
-            sectors = int(f.read().strip())
-            return sectors * 512
-    except Exception:
-        return None
-
-def calculate_firmware_progress(interface_type, method, device, sprog_val=None, parsed_pct=None):
-    """Calculate firmware sanitize progress for NVMe/SATA/SAS interfaces.
-
-    Returns (progress_pct, phase_text) or (None, None) if no progress data available.
-    """
-    if interface_type == "nvme" and sprog_val is not None:
-        pct = min(99.9, (sprog_val / 65535.0) * 100)
-        return pct, f"NVMe controller sanitize ({pct:.1f}%)"
-
-    if interface_type == "sas":
-        if parsed_pct is not None:
-            pct = min(99.9, parsed_pct)
-            return pct, f"SAS firmware sanitizing ({pct:.1f}%)"
-        prog_val = poll_sas_sanitize_progress(device)
-        if prog_val is not None:
-            pct = min(99.9, prog_val)
-            return pct, f"SAS firmware sanitizing ({pct:.1f}%)"
-
-    if interface_type == "sata" and parsed_pct is not None:
-        pct = min(99.9, parsed_pct)
-        return pct, f"SATA sanitize active ({pct:.1f}%)"
-    prog_val = poll_sata_sanitize_progress(device)
-    if prog_val is not None:
-        pct = min(99.9, prog_val)
-        return pct, f"SATA sanitize active ({pct:.1f}%)"
-
-    return None, None
-
-def get_device_sectors_written(device):
-    try:
-        dev_name = os.path.basename(device)
-        stat_path = f"/sys/block/{dev_name}/stat"
-        if not os.path.exists(stat_path):
-            return None
-        with open(stat_path, "r") as f:
-            content = f.read().strip()
-        parts = content.split()
-        if len(parts) >= 7:
-            return int(parts[6])
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for sectors written on {device}: {e}")
-    return None
-
-def poll_nvme_sanitize_progress(device):
-    try:
-        nvme_path = resolve_verify_command_path("nvme")
-        if nvme_path:
-            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "sprog" in line.lower():
-                        match = re.search(r"sprog\)?\s*[:=]\s*(\d+)", line, re.IGNORECASE)
-                        if match:
-                            return int(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for NVMe sanitize on {device}: {e}")
-    return None
-
-def poll_sas_sanitize_progress(device):
-    try:
-        sg_req_path = resolve_verify_command_path("sg_requests")
-        if sg_req_path:
-            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "progress" in line.lower():
-                        match = re.search(r"(\d+\.?\d*)\s*%", line)
-                        if match:
-                            return float(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for SAS sanitize on {device}: {e}")
-    return None
-
-def poll_sata_sanitize_progress(device):
-    try:
-        hdparm_path = resolve_verify_command_path("hdparm")
-        if hdparm_path:
-            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False)
-            if result.returncode == 0:
-                for line in result.stdout.splitlines():
-                    if "progress" in line.lower() or "percent" in line.lower():
-                        match = re.search(r"(\d+\.?\d*)\s*%", line)
-                        if match:
-                            return float(match.group(1))
-    except Exception as e:
-        logging.getLogger(__name__).debug(f"poll failed for SATA sanitize on {device}: {e}")
-    return None
-
-def prepare_erase_command(device, interface_type, method):
-    selected_method = str(method or "").strip().lower()
-    iface = str(interface_type or "").strip().lower()
-
-    # Validate interface type is one of the supported types
-    supported_interfaces = {"sata", "sas", "nvme"}
-    if iface and iface not in supported_interfaces:
-        return {"ok": False, "error": f"unsupported_interface:{iface}"}
-
-    if selected_method == "overwrite":
-        dd_cmd = resolve_verify_command_path("dd")
-        if not dd_cmd:
-            return {"ok": False, "error": "dd_not_available"}
-        return {"ok": True, "command": [dd_cmd, "if=/dev/zero", f"of={device}", "bs=16M", "status=none", "conv=fdatasync"]}
-
-    if selected_method in {"secure_erase", "enhanced_secure_erase"}:
-        hdparm_cmd = resolve_verify_command_path("hdparm")
-        if not hdparm_cmd:
-            return {"ok": False, "error": "hdparm_not_available"}
-        user_password = SATA_SECURITY_PASSWORD
-        erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
-        erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
-        return {"ok": True, "command": erase_cmd}
-
-    if selected_method in {"block", "crypto"}:
-        if iface == "nvme":
-            nvme_cmd = resolve_verify_command_path("nvme")
-            if not nvme_cmd:
-                return {"ok": False, "error": "nvme_not_available"}
-            # NVMe sanitize must be run on the controller device (/dev/nvmeX), not namespace (/dev/nvmeXnY)
-            sanitize_device = device
-            if device and re.match(r'^/dev/nvme\d+n\d+\Z', device):
-                # Extract controller from namespace (e.g., /dev/nvme0n1 -> /dev/nvme0)
-                match = re.match(r'^(/dev/nvme\d+)n\d+\Z', device)
-                if match:
-                    sanitize_device = match.group(1)
-                    # Validate extracted controller path before use (lesson-learned #9)
-                    if not validate_device_path(sanitize_device):
-                        return {"ok": False, "error": "invalid_extracted_device_path"}
-            # --sanact expects decimal value: 4=crypto erase, 2=block erase
-            sanact_value = "4" if selected_method == "crypto" else "2"
-            return {"ok": True, "command": [nvme_cmd, "sanitize", sanitize_device, "--sanact", sanact_value]}
-            
-        if iface == "sata":
-            hdparm_cmd = resolve_verify_command_path("hdparm")
-            if not hdparm_cmd:
-                return {"ok": False, "error": "hdparm_not_available"}
-            action = "--sanitize-crypto-scramble" if selected_method == "crypto" else "--sanitize-block-erase"
-            return {"ok": True, "command": [hdparm_cmd, "--yes-i-know-what-i-am-doing", action, device]}
-
-        if iface == "sas":
-            sg_sanitize_cmd = resolve_verify_command_path("sg_sanitize")
-            if not sg_sanitize_cmd:
-                return {"ok": False, "error": "sg_sanitize_not_available"}
-            return {"ok": True, "command": [sg_sanitize_cmd, "--block", device]}
-
-    return {"ok": False, "error": f"unsupported_method_or_interface:{selected_method}:{iface}"}
+from erase_commands import (
+    SATA_SECURITY_PASSWORD,
+    get_device_logical_block_size,
+    get_device_capacity_bytes,
+    calculate_firmware_progress,
+    get_device_sectors_written,
+    poll_nvme_sanitize_progress,
+    poll_sas_sanitize_progress,
+    poll_sata_sanitize_progress,
+    prepare_erase_command,
+)
+from job_validation import (
+    build_recommended_method,
+    check_health_gate_sync,
+    validate_single_bay,
+    create_erase_job,
+)
 
 def finalize_failed_job(job_id, error_message):
     # Phase 1: Update job status and persist inside the lock

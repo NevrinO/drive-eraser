@@ -310,7 +310,7 @@ class TestGetSmartTestStatus:
 class TestSmartTestDatabaseFunctions:
     """Test SMART test database functions."""
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_record_smart_test_run(self, mock_get_db_path):
         """Test recording a SMART test run."""
         from database import record_smart_test_run
@@ -350,7 +350,7 @@ class TestSmartTestDatabaseFunctions:
                 assert row[3] == "short"
                 assert row[6] == "started"
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_record_smart_test_run_invalid_device(self, mock_get_db_path):
         """Test that invalid device path is rejected."""
         from database import record_smart_test_run
@@ -363,7 +363,7 @@ class TestSmartTestDatabaseFunctions:
 
             assert record_id is None
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_update_smart_test_run(self, mock_get_db_path):
         """Test updating a SMART test run."""
         from database import record_smart_test_run, update_smart_test_run
@@ -404,7 +404,7 @@ class TestSmartTestDatabaseFunctions:
                 assert row[7] == "passed"
                 assert row[5] is not None  # finished_at should be set
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_get_smart_test_history(self, mock_get_db_path):
         """Test getting SMART test history."""
         from database import record_smart_test_run, get_smart_test_history
@@ -440,7 +440,7 @@ class TestSmartTestDatabaseFunctions:
             assert history[0]["device"] == "/dev/sda"
             assert history[0]["serial"] == "TEST123"
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_get_smart_test_history_invalid_device(self, mock_get_db_path):
         """Test that invalid device path is rejected."""
         from database import get_smart_test_history
@@ -453,7 +453,7 @@ class TestSmartTestDatabaseFunctions:
 
             assert history == []
 
-    @patch('database.get_db_path')
+    @patch('smart_db.get_db_path')
     def test_get_smart_test_history_limit_enforcement(self, mock_get_db_path):
         """Test that limit parameter is enforced (DoS prevention)."""
         from database import get_smart_test_history
