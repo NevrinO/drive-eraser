@@ -7,6 +7,9 @@ const mainTabs = document.getElementById("mainTabs");
 const helpButton = document.getElementById("helpButton");
 const helpModal = document.getElementById("helpModal");
 const helpClose = document.getElementById("helpClose");
+const legendButton = document.getElementById("legendButton");
+const legendModal = document.getElementById("legendModal");
+const legendClose = document.getElementById("legendClose");
 
 // State variables
 let currentDrives = [];
@@ -54,6 +57,19 @@ if (helpButton && helpModal) {
 if (helpClose && helpModal) {
   helpClose.addEventListener("click", () => {
     closeModal(helpModal);
+  });
+}
+
+// Legend modal
+if (legendButton && legendModal) {
+  legendButton.addEventListener("click", () => {
+    openModal(legendModal);
+  });
+}
+
+if (legendClose && legendModal) {
+  legendClose.addEventListener("click", () => {
+    closeModal(legendModal);
   });
 }
 

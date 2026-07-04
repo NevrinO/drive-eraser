@@ -16,6 +16,7 @@
       <div class="header-actions">
         <div id="securityBadge" class="reliability-badge">SECURE MODE</div>
         <button id="helpButton" type="button" class="btn btn--secondary">Help</button>
+        <button id="legendButton" type="button" class="btn btn--secondary">Legend</button>
         <button id="refreshButton" type="button" class="btn btn--secondary">Refresh Bays</button>
       </div>
     </header>
@@ -455,6 +456,263 @@
           <li><strong>View Logs:</strong> <code>sudo journalctl -u drive-eraser -f</code></li>
           <li><strong>Restart Service:</strong> <code>sudo systemctl restart drive-eraser</code></li>
         </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- LEGEND MODAL -->
+  <div id="legendModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="legendTitle">
+      <header class="modal-header">
+        <h3 id="legendTitle">Visual Legend</h3>
+        <button type="button" id="legendClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+
+        <h4 class="legend-section-header">Bay Card States</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch sw-ready legend-swatch--banner"></div>
+            <div class="legend-label">Ready</div>
+            <div class="legend-desc">Drive present, no wipe started. Default dark surface.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-running legend-swatch--banner"></div>
+            <div class="legend-label">Wiping</div>
+            <div class="legend-desc">Wipe or SMART test in progress. Pulsing animation, blue border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-completed legend-swatch--banner"></div>
+            <div class="legend-label">Sanitized</div>
+            <div class="legend-desc">Wipe complete, compliance marker verified. Green border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-completed-no-marker legend-swatch--banner"></div>
+            <div class="legend-label">Sanitized (No Marker)</div>
+            <div class="legend-desc">Wipe complete but marker disabled per policy or request.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-failed legend-swatch--banner"></div>
+            <div class="legend-label">Critical Failure</div>
+            <div class="legend-desc">Wipe failed. Red border, needs attention.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-written legend-swatch--banner"></div>
+            <div class="legend-label">Post-Wipe Writes</div>
+            <div class="legend-desc">Data written after wipe. Compliance risk — yellow banner.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-empty legend-swatch--banner"></div>
+            <div class="legend-label">Empty Bay</div>
+            <div class="legend-desc">No drive detected. Dashed border, faded.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-unconfigured legend-swatch--banner"></div>
+            <div class="legend-label">Unconfigured</div>
+            <div class="legend-desc">Bay has no device path in bay_map.json. Dashed amber border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-locked legend-swatch--banner"></div>
+            <div class="legend-label">Locked / OS Drive</div>
+            <div class="legend-desc">Protected from all operations. Purple border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-selected"></div>
+            <div class="legend-label">Selected</div>
+            <div class="legend-desc">Selected for bulk sanitization. Red glow border.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Sub-Banners &amp; Recommendations</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-danger legend-swatch--sub-banner"></div>
+            <div class="legend-label">Destroy Recommended</div>
+            <div class="legend-desc">SMART indicates drive should be physically destroyed.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-warning legend-swatch--sub-banner"></div>
+            <div class="legend-label">Scratch Recommended</div>
+            <div class="legend-desc">Drive suitable for scratch/recycling only.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-warning legend-swatch--sub-banner"></div>
+            <div class="legend-label">Used Heavy</div>
+            <div class="legend-desc">Heavy wear, limited remaining life.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-success legend-swatch--sub-banner"></div>
+            <div class="legend-label">Used Good / New Stock</div>
+            <div class="legend-desc">Good condition, reusable. Green sub-banner.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-danger legend-swatch--sub-banner"></div>
+            <div class="legend-label">SMART Failed</div>
+            <div class="legend-desc">SMART health check failed. Red sub-banner.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-info legend-swatch--sub-banner"></div>
+            <div class="legend-label">SMART Loading</div>
+            <div class="legend-desc">SMART data being polled. Blue sub-banner.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-sub-neutral legend-swatch--sub-banner"></div>
+            <div class="legend-label">SMART Unavailable</div>
+            <div class="legend-desc">SMART data not available for this drive. Gray sub-banner.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Recommendation Background Tints</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch sw-rec-destroy"></div>
+            <div class="legend-label">Destroy Tint</div>
+            <div class="legend-desc">Dark red card background — destroy recommended.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-rec-scratch"></div>
+            <div class="legend-label">Scratch Tint</div>
+            <div class="legend-desc">Dark brown card background — scratch/recycling recommended.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-rec-heavy"></div>
+            <div class="legend-label">Used Heavy Tint</div>
+            <div class="legend-desc">Dark olive card background — heavy wear.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-rec-good"></div>
+            <div class="legend-label">Used Good Tint</div>
+            <div class="legend-desc">Green card background — good condition or new stock.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Zero Check States</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch sw-zc-zeroed legend-swatch--banner"></div>
+            <div class="legend-label">Zeroed</div>
+            <div class="legend-desc">Verification confirmed drive is empty. Teal border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-zc-data legend-swatch--banner"></div>
+            <div class="legend-label">Data Present</div>
+            <div class="legend-desc">Data found on drive. Warning border — needs wipe.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-zc-inconclusive legend-swatch--banner"></div>
+            <div class="legend-label">Inconclusive / Failed</div>
+            <div class="legend-desc">Verification could not complete. Default border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-zc-running legend-swatch--banner"></div>
+            <div class="legend-label">Zero Check Running</div>
+            <div class="legend-desc">Verification scan in progress. Pulsing, blue border.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Drive Type Badges</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--badge sw-badge-nvme">NVME</div>
+            <div class="legend-label">NVMe</div>
+            <div class="legend-desc">PCIe NVMe interface. Blue badge.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--badge sw-badge-sas">SAS</div>
+            <div class="legend-label">SAS</div>
+            <div class="legend-desc">Serial Attached SCSI. Purple badge.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--badge sw-badge-sata">SATA</div>
+            <div class="legend-label">SATA</div>
+            <div class="legend-desc">Serial ATA interface. Green badge.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--badge sw-badge-ssd">SSD</div>
+            <div class="legend-label">SSD</div>
+            <div class="legend-desc">Solid state drive. Yellow badge.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--badge sw-badge-hdd">HDD</div>
+            <div class="legend-label">HDD</div>
+            <div class="legend-desc">Hard disk drive. Gray badge.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Health Bars</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--bar sw-bar-green"></div>
+            <div class="legend-label">Green (&gt;75%)</div>
+            <div class="legend-desc">Good health. Drive life expectancy is high.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--bar sw-bar-yellow"></div>
+            <div class="legend-label">Yellow (40-75%)</div>
+            <div class="legend-desc">Moderate wear. Drive is usable but aging.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--bar sw-bar-red"></div>
+            <div class="legend-label">Red (&lt;40%)</div>
+            <div class="legend-desc">Poor health. Drive near end of life.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--bar sw-bar-blue"></div>
+            <div class="legend-label">Blue</div>
+            <div class="legend-desc">Wipe progress bar. Shows percentage of sanitization complete.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--bar sw-bar-gray"></div>
+            <div class="legend-label">Gray</div>
+            <div class="legend-desc">Loading or N/A. SMART data not yet available.</div>
+          </div>
+        </div>
+
+        <h4 class="legend-section-header">Audit Status Badges</h4>
+        <div class="legend-grid">
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-complete">Complete</div>
+            <div class="legend-label">Complete</div>
+            <div class="legend-desc">Wipe job finished successfully. Green pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-failed">Failed</div>
+            <div class="legend-label">Failed</div>
+            <div class="legend-desc">Wipe job failed. Red pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-running">Running</div>
+            <div class="legend-label">Running</div>
+            <div class="legend-desc">Wipe currently in progress. Blue pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-queued">Queued</div>
+            <div class="legend-label">Queued</div>
+            <div class="legend-desc">Wipe job waiting to start. Gray pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-ready">Ready</div>
+            <div class="legend-label">Ready</div>
+            <div class="legend-desc">Drive ready for processing. Teal pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-view">View Only</div>
+            <div class="legend-label">View Only</div>
+            <div class="legend-desc">Read-only access, no operations permitted. Purple pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-warning">Warning</div>
+            <div class="legend-label">Warning</div>
+            <div class="legend-desc">Job completed with warnings. Yellow pill.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch legend-swatch--pill sw-audit-empty">Empty</div>
+            <div class="legend-label">Empty</div>
+            <div class="legend-desc">No drive in bay. Gray pill.</div>
+          </div>
+        </div>
+
       </div>
     </div>
   </div>

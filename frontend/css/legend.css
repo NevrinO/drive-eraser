@@ -1,0 +1,192 @@
+/* Legend modal styles */
+
+.legend-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 4px;
+  border-radius: var(--radius-sm);
+}
+
+.legend-row:hover {
+  background: var(--color-surface-1);
+}
+
+.legend-swatch {
+  flex-shrink: 0;
+  width: 48px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  border: 2px solid var(--color-border);
+  position: relative;
+  overflow: hidden;
+}
+
+.legend-swatch--banner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 8px;
+}
+
+.legend-swatch--sub-banner::after {
+  content: "";
+  position: absolute;
+  top: 9px;
+  left: 0;
+  right: 0;
+  height: 6px;
+}
+
+.legend-swatch--badge {
+  width: auto;
+  min-width: 48px;
+  height: 20px;
+  border-radius: 4px;
+  border: none;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 3px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.legend-swatch--bar {
+  width: 60px;
+  height: 8px;
+  border-radius: 3px;
+  border: none;
+}
+
+.legend-swatch--pill {
+  width: auto;
+  min-width: 48px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 0.6rem;
+  font-weight: 800;
+  padding: 3px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+}
+
+.legend-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--color-white);
+  white-space: nowrap;
+  min-width: 120px;
+}
+
+.legend-desc {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  line-height: 1.4;
+}
+
+.legend-section-header {
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  color: var(--color-primary);
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.legend-section-header:first-child {
+  margin-top: 0;
+}
+
+/* Card state swatches */
+.sw-ready { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-running { background: var(--color-bay-running); border-color: var(--color-primary); }
+.sw-completed { background: var(--color-bay-completed); border-color: var(--color-success); }
+.sw-completed-no-marker { background: var(--color-bay-completed); border-color: var(--color-success); }
+.sw-failed { background: var(--color-bay-failed); border-color: var(--color-danger); }
+.sw-written { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-written::before { background: var(--color-warning); }
+.sw-empty { background: var(--color-surface-3); border-color: var(--color-border); border-style: dashed; opacity: 0.5; }
+.sw-unconfigured { background: var(--color-bay-unconfigured); border-color: var(--color-warning); border-style: dashed; }
+.sw-unconfigured::before { background: var(--color-warning); }
+.sw-locked { background: #2d1f3d; border-color: var(--color-purple); }
+.sw-locked::before { background: var(--color-purple); }
+.sw-selected { background: var(--color-surface-1); border-color: var(--color-danger); box-shadow: 0 0 0 2px var(--color-danger); }
+
+/* Running banner variants */
+.sw-running::before { background: var(--color-primary); }
+.sw-completed::before { background: var(--color-success); }
+.sw-failed::before { background: var(--color-danger); }
+.sw-completed-no-marker::before { background: var(--color-success); }
+
+/* Sub-banner swatches */
+.sw-sub-danger { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-sub-danger::before { background: var(--color-border); }
+.sw-sub-danger::after { background: var(--color-danger); }
+.sw-sub-warning { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-sub-warning::before { background: var(--color-border); }
+.sw-sub-warning::after { background: var(--color-warning); }
+.sw-sub-success { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-sub-success::before { background: var(--color-border); }
+.sw-sub-success::after { background: var(--color-success); }
+.sw-sub-info { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-sub-info::before { background: var(--color-border); }
+.sw-sub-info::after { background: var(--color-primary); }
+.sw-sub-neutral { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-sub-neutral::before { background: var(--color-border); }
+.sw-sub-neutral::after { background: var(--color-border); }
+
+/* Recommendation tint swatches */
+.sw-rec-destroy { background: #2a0a0a; border-color: var(--color-border); }
+.sw-rec-scratch { background: #3c270f; border-color: var(--color-border); }
+.sw-rec-heavy { background: #63520D; border-color: var(--color-border); }
+.sw-rec-good { background: var(--color-bay-completed); border-color: var(--color-border); }
+
+/* Zero check swatches */
+.sw-zc-zeroed { background: rgba(6, 182, 212, 0.14); border-color: var(--color-teal); }
+.sw-zc-zeroed::before { background: var(--color-teal); }
+.sw-zc-data { background: var(--color-bay-warning); border-color: var(--color-warning); }
+.sw-zc-data::before { background: var(--color-warning); }
+.sw-zc-inconclusive { background: var(--color-surface-1); border-color: var(--color-border); }
+.sw-zc-inconclusive::before { background: var(--color-border); }
+.sw-zc-running { background: var(--color-bay-running); border-color: var(--color-primary); }
+.sw-zc-running::before { background: var(--color-primary); }
+
+/* Drive type badge swatches */
+.sw-badge-nvme { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); }
+.sw-badge-sas { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); }
+.sw-badge-sata { background: rgba(16, 185, 129, 0.15); color: var(--color-success); }
+.sw-badge-ssd { background: rgba(245, 158, 11, 0.15); color: var(--color-yellow); }
+.sw-badge-hdd { background: rgba(107, 114, 128, 0.15); color: var(--color-gray); }
+
+/* Health bar swatches */
+.sw-bar-green { background: var(--color-success); }
+.sw-bar-yellow { background: var(--color-warning); }
+.sw-bar-red { background: var(--color-danger); }
+.sw-bar-blue { background: var(--color-primary); }
+.sw-bar-gray { background: var(--color-gray); }
+
+/* Audit badge swatches */
+.sw-audit-complete { background: rgba(16, 185, 129, 0.15); color: var(--color-success); border: 1px solid var(--color-success); }
+.sw-audit-failed { background: rgba(239, 68, 68, 0.15); color: var(--color-danger); border: 1px solid var(--color-danger); }
+.sw-audit-running { background: rgba(59, 130, 246, 0.15); color: var(--color-primary); border: 1px solid var(--color-primary); }
+.sw-audit-queued { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-text-muted); }
+.sw-audit-ready { background: rgba(6, 182, 212, 0.15); color: var(--color-teal); border: 1px solid var(--color-teal); }
+.sw-audit-view { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
+.sw-audit-warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
+.sw-audit-empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
