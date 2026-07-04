@@ -709,11 +709,14 @@ function renderBayCard(drive) {
   const driveStatus = (drive.status || "READY").toUpperCase();
   const isCritical = driveStatus === "FAILED";
   const isRunning = driveStatus === "RUNNING";
-  const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted" && drive.marker.status !== "written_since_wipe";
+  const isCompletedSecure = drive.marker && drive.marker.status === "pristine_secure";
+  const isCompletedInsecure = drive.marker && drive.marker.status === "pristine_insecure";
+  const isMarkerError = drive.marker && drive.marker.status === "marker_error";
   const isWrittenSinceWipe = drive.marker && drive.marker.status === "written_since_wipe";
   const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
   const isUnconfigured = isBayUnconfigured(drive);
   const isSmartTestRunning = drive.smart_test_status === "running" || drive.smart_test_status === "in_progress";
+  const isCompleted = isCompletedSecure || isCompletedInsecure || isMarkerError;
   const zeroCheckClass = (!isEmpty && !isRunning && !isSmartTestRunning && !isCompleted && !isWrittenSinceWipe && !isMarkerDisabled && !drive.locked && drive.role !== "os" && drive.role !== "reserved") ? getZeroCheckStateClass(drive) : null;
   const zeroCheckLabel = zeroCheckClass ? getZeroCheckBannerLabel(drive) : null;
 
@@ -744,9 +747,15 @@ function renderBayCard(drive) {
   } else if (isWrittenSinceWipe) {
     stateClass = "written-since-wipe";
     bannerLabel = "⚠️ POST-WIPE WRITES";
-  } else if (isCompleted) {
+  } else if (isCompletedSecure) {
     stateClass = "completed";
-    bannerLabel = "SANITIZED (PRISTINE)";
+    bannerLabel = "SANITIZED (MARKER AUTHENTICATED)";
+  } else if (isCompletedInsecure) {
+    stateClass = "completed";
+    bannerLabel = "SANITIZED (MARKER UNAUTHENTICATED)";
+  } else if (isMarkerError) {
+    stateClass = "completed";
+    bannerLabel = "SANITIZED (MARKER ERROR)";
   } else if (zeroCheckClass) {
     stateClass = zeroCheckClass;
     bannerLabel = zeroCheckLabel;

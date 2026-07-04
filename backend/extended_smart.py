@@ -127,7 +127,8 @@ def _process_single_drive_extended_smart(item, passphrase):
                     'slot_number': slot_number,
                     'smart': payload.get('smart'),
                     'health_score': payload.get('health_score'),
-                    'recommendation': payload.get('recommendation')
+                    'recommendation': payload.get('recommendation'),
+                    'marker': payload.get('marker')
                 })
                 logger.info(f"Broadcasted SMART data update for {dev_node}")
             except Exception as e:

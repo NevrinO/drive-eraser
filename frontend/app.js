@@ -136,7 +136,7 @@ function initWebSocket() {
 
 // Handle SMART data update from WebSocket
 function handleSmartDataUpdate(data) {
-  const { device, enclosure_id, slot_number, smart, health_score, recommendation } = data || {};
+  const { device, enclosure_id, slot_number, smart, health_score, recommendation, marker } = data || {};
 
   // Find and update the drive in currentDrives
   const driveIndex = currentDrives.findIndex(d => d.device === device);
@@ -144,6 +144,9 @@ function handleSmartDataUpdate(data) {
     currentDrives[driveIndex].smart = smart;
     currentDrives[driveIndex].health_score = health_score;
     currentDrives[driveIndex].recommendation = recommendation;
+    if (marker !== undefined) {
+      currentDrives[driveIndex].marker = marker;
+    }
 
     // Re-render the workbench if on workbench tab
     if (document.getElementById('workbenchPanel').classList.contains('active')) {

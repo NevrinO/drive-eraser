@@ -485,13 +485,23 @@
           </div>
           <div class="legend-row">
             <div class="legend-swatch sw-completed legend-swatch--banner"></div>
-            <div class="legend-label">Sanitized</div>
-            <div class="legend-desc">Wipe complete, compliance marker verified. Green border.</div>
+            <div class="legend-label">Sanitized (Marker Authenticated)</div>
+            <div class="legend-desc">Wipe complete, compliance marker verified with HMAC. Green border.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-completed legend-swatch--banner"></div>
+            <div class="legend-label">Sanitized (Marker Unauthenticated)</div>
+            <div class="legend-desc">Wipe complete, marker checksum valid but HMAC not verified. Green border.</div>
           </div>
           <div class="legend-row">
             <div class="legend-swatch sw-completed-no-marker legend-swatch--banner"></div>
             <div class="legend-label">Sanitized (No Marker)</div>
             <div class="legend-desc">Wipe complete but marker disabled per policy or request.</div>
+          </div>
+          <div class="legend-row">
+            <div class="legend-swatch sw-completed legend-swatch--banner"></div>
+            <div class="legend-label">Sanitized (Marker Error)</div>
+            <div class="legend-desc">Wipe verified but marker write or read failed. Green border.</div>
           </div>
           <div class="legend-row">
             <div class="legend-swatch sw-failed legend-swatch--banner"></div>
