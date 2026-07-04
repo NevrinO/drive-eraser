@@ -1,0 +1,368 @@
+/* Discovery Modal Styles */
+
+.discovery-toolbar {
+  margin-bottom: 16px;
+}
+
+.discovery-status-text {
+  margin-left: 12px;
+  color: #888;
+}
+
+.discovery-group-box {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #222;
+  border-radius: 4px;
+}
+
+.discovery-group-label {
+  font-size: 0.8rem;
+  font-weight: bold;
+  display: block;
+  margin-bottom: 8px;
+}
+
+.discovery-group-buttons {
+  display: flex;
+  gap: 8px;
+}
+
+.discovery-group-buttons .btn {
+  flex: 1;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+}
+
+.discovery-list-container {
+  margin-bottom: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+  background: #222;
+  border-radius: 4px;
+  padding: 12px;
+}
+
+.discovery-list-container--tall {
+  max-height: 500px;
+}
+
+.discovery-mapping-panel {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #1a1a1a;
+  border-radius: 4px;
+}
+
+.discovery-mapping-label {
+  font-size: 0.8rem;
+  font-weight: bold;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.discovery-mapping-select,
+.discovery-mapping-input {
+  width: 100%;
+  padding: 6px;
+  background: #222;
+  border: 1px solid #444;
+  color: #fff;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.discovery-preview-btn {
+  width: 100%;
+  padding: 8px;
+  background: #444;
+  border: 1px solid #666;
+  color: #fff;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.discovery-preview-btn:hover {
+  background: #555;
+}
+
+.discovery-mapping-preview {
+  margin-top: 12px;
+  max-height: 300px;
+  overflow-y: auto;
+  background: #222;
+  border-radius: 4px;
+  padding: 8px;
+}
+
+.discovery-manual-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.discovery-manual-list {
+  max-height: 500px;
+  overflow-y: auto;
+  background: #222;
+  border-radius: 4px;
+  padding: 8px;
+  min-height: 150px;
+}
+
+.discovery-manual-list--short {
+  max-height: 200px;
+  min-height: 50px;
+}
+
+.discovery-manual-bay-label {
+  font-size: 0.75rem;
+  color: #888;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.discovery-manual-info {
+  padding: 8px;
+  background: #333;
+  border-radius: 4px;
+  min-height: 40px;
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.discovery-action-btn {
+  width: 100%;
+  padding: 8px;
+  background: #444;
+  border: 1px solid #666;
+  color: #fff;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+
+.discovery-action-btn:hover {
+  background: #555;
+}
+
+.discovery-action-btn--secondary {
+  background: #333;
+  border-color: #555;
+}
+
+.discovery-action-btn--secondary:hover {
+  background: #3d3d3d;
+}
+
+.discovery-validation-error {
+  margin-top: 12px;
+  padding: 8px;
+  background: #3d1a1a;
+  border: 1px solid var(--color-danger);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #ffcccc;
+}
+
+.preview-message--warning {
+  color: var(--color-warning);
+}
+
+.preview-message--error {
+  color: var(--color-danger);
+}
+
+/* JS-generated card/list components */
+.discovery-card {
+  padding: 8px;
+  margin-bottom: 8px;
+  background: #333;
+  border-radius: 4px;
+}
+
+.discovery-card--selectable {
+  border-left: 3px solid #555;
+}
+
+.discovery-card--selected {
+  border-left: 3px solid var(--color-primary);
+}
+
+.discovery-card-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.discovery-card-title {
+  font-weight: bold;
+  color: var(--color-primary);
+}
+
+.discovery-card-detail {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 4px;
+}
+
+.discovery-card-flex {
+  flex: 1;
+}
+
+.discovery-checkbox {
+  cursor: pointer;
+}
+
+.discovery-btn-row {
+  margin-bottom: 12px;
+  display: flex;
+  gap: 8px;
+}
+
+.discovery-btn-small {
+  padding: 4px 12px;
+  font-size: 0.75rem;
+  border: none;
+  color: #fff;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.discovery-btn-small--primary {
+  background: var(--color-primary);
+}
+
+.discovery-btn-small--secondary {
+  background: #444;
+}
+
+.discovery-group-header {
+  margin-bottom: 12px;
+}
+
+.discovery-group-name {
+  color: var(--color-primary);
+}
+
+.discovery-error-msg {
+  color: var(--color-danger);
+  padding: 8px;
+}
+
+.discovery-empty-msg {
+  color: #666;
+  font-style: italic;
+  font-size: 0.75rem;
+}
+
+.discovery-error-msg-sm {
+  color: var(--color-danger);
+  font-size: 0.75rem;
+}
+
+.discovery-device-item {
+  padding: 6px;
+  margin-bottom: 4px;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  border: 1px solid #444;
+}
+
+.discovery-device-item--selected {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+}
+
+.discovery-device-item--mapped {
+  background: #2a2a2a;
+}
+
+.discovery-device-item--default {
+  background: #333;
+}
+
+.discovery-device-name {
+  font-weight: bold;
+}
+
+.discovery-device-name--mapped {
+  color: #666;
+}
+
+.discovery-device-name--default {
+  color: #fff;
+}
+
+.discovery-device-path {
+  font-size: 0.7rem;
+}
+
+.discovery-device-path--mapped {
+  color: #555;
+}
+
+.discovery-device-path--default {
+  color: #888;
+}
+
+.discovery-mapped-warning {
+  color: var(--color-warning);
+  font-size: 0.7rem;
+}
+
+.discovery-selected-info-name {
+  font-weight: bold;
+  color: #fff;
+}
+
+.discovery-selected-info-detail {
+  color: #888;
+}
+
+.discovery-mapping-row {
+  padding: 4px;
+  background: #333;
+  border-radius: 2px;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.discovery-mapping-bay {
+  color: var(--color-primary);
+}
+
+.discovery-remove-btn {
+  padding: 2px 8px;
+  font-size: 0.7rem;
+  background: var(--color-danger);
+  border: none;
+  color: #fff;
+  cursor: pointer;
+  border-radius: 2px;
+}
+
+.discovery-preview-summary {
+  font-size: 0.75rem;
+  color: #888;
+  margin-bottom: 8px;
+}
+
+.discovery-preview-row {
+  padding: 4px;
+  background: #333;
+  border-radius: 2px;
+  margin-bottom: 4px;
+  font-size: 0.75rem;
+}
+
+.discovery-preview-more {
+  color: #888;
+  font-size: 0.7rem;
+  margin-top: 4px;
+}

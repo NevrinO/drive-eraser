@@ -1,0 +1,13 @@
+{
+  "attributes": [],
+  "self_test_logs": [
+    {"type": "Short offline", "status": "Completed without error", "passed": true, "remaining": "null", "lba": null, "hours": 5000, "corrected_hours": 5000, "rollover_corrected": false, "ambiguous": false, "log_index": 0}
+  ],
+  "current_power_on_hours": 70000,
+  "error_logs": null,
+  "device_statistics": [],
+  "sas_specific": null,
+  "nvme_specific": null,
+  "truncated": false,
+  "audit_history": []
+}

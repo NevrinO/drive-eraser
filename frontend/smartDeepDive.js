@@ -4,7 +4,6 @@
 let smartDeepDiveModal = null;
 let smartDeepDiveContent = null;
 let smartTestPollingInterval = null;
-let currentTestDevice = null;
 
 // Initialize the modal on load
 document.addEventListener('DOMContentLoaded', () => {
@@ -35,27 +34,17 @@ document.addEventListener('DOMContentLoaded', () => {
     elem.addEventListener('click', closeSmartDeepDive);
   });
 
-  // Event delegation for SMART test buttons
+  // Event delegation for SMART test and refresh buttons
   smartDeepDiveModal.addEventListener('click', (event) => {
     if (event.target.matches('[data-start-smart-test]')) {
-      const button = event.target;
-      const device = button.dataset.device;
-      startSmartTest(device);
-    }
-  });
-
-  // Event delegation for refresh SMART details buttons
-  smartDeepDiveModal.addEventListener('click', (event) => {
-    if (event.target.matches('[data-refresh-smart-details]')) {
-      const button = event.target;
-      const device = button.dataset.device;
-      loadSmartDetails(device, '', '');
+      startSmartTest(event.target.dataset.device);
+    } else if (event.target.matches('[data-refresh-smart-details]')) {
+      loadSmartDetails(event.target.dataset.device, '', '');
     }
   });
 });
 
 async function openSmartDeepDiveModal(device, serial, interfaceType) {
-  currentTestDevice = device;
   smartDeepDiveContent.innerHTML = '<p>Loading SMART data...</p>';
   openModal(smartDeepDiveModal);
   await loadSmartDetails(device, serial, interfaceType);
@@ -71,7 +60,6 @@ function closeSmartDeepDive() {
     smartTestPollingInterval = null;
   }
   closeModal(smartDeepDiveModal);
-  currentTestDevice = null;
 }
 
 async function checkAndResumeTestPolling(device) {
@@ -87,13 +75,16 @@ async function checkAndResumeTestPolling(device) {
     if (data.status === 'in_progress') {
       // Test is still running, resume polling
       const testType = data.test_type || 'short';
+      const pct = typeof data.percentage === 'number' && isFinite(data.percentage) ? data.percentage : 0;
       testStatusDiv.innerHTML = `
         <p>Test in progress (resumed)...</p>
         <div class="progress-bar">
-          <div class="progress-bar-fill" id="testProgressBar" style="width: ${data.percentage || 0}%"></div>
+          <div class="progress-bar-fill" id="testProgressBar"></div>
         </div>
-        <p id="testProgressText">${Math.round(data.percentage || 0)}%</p>
+        <p id="testProgressText">${escapeHtml(Math.round(pct))}%</p>
       `;
+      const resumedBar = document.getElementById('testProgressBar');
+      if (resumedBar) resumedBar.style.width = `${pct}%`;
       pollSmartTestStatus(device, testType);
     } else if (data.status === 'completed') {
       testStatusDiv.innerHTML = `
@@ -115,8 +106,8 @@ async function loadSmartDetails(device, serial, interfaceType) {
   try {
     const response = await safeFetch(`/api/admin/drives/${device}/smart-details`);
     if (!response.ok) {
-      const error = await response.json();
-      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${error.error || 'Unknown error'}</p>`;
+      const errorMessage = await parseErrorResponse(response);
+      smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(errorMessage)}</p>`;
       return;
     }
 
@@ -124,690 +115,14 @@ async function loadSmartDetails(device, serial, interfaceType) {
     renderSmartDetails(data, device, serial, interfaceType);
   } catch (error) {
     console.error('Failed to load SMART details:', error);
-    smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${error.message}</p>`;
+    smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(error.message)}</p>`;
   }
 }
 
-function renderSmartDetails(data, device, serial, interfaceType) {
-  const isSas = interfaceType && interfaceType.toLowerCase() === 'sas';
-  const isNvme = interfaceType && interfaceType.toLowerCase() === 'nvme';
-
-  let html = `
-    <div class="detail-section">
-      <div class="detail-head">
-        <strong>${escapeHtml(serial || 'Unknown')}</strong>
-        <span class="status-chip status-view-only">${escapeHtml(interfaceType?.toUpperCase() || 'UNKNOWN')}</span>
-      </div>
-      <div class="kv"><span>Device:</span><span>${escapeHtml(device)}</span></div>
-    </div>
-  `;
-
-  // Attributes tab (only for non-SAS drives - SAS uses different log structure)
-  if (!isSas) {
-    html += `
-      <div class="detail-section">
-        <h4>SMART Attributes</h4>
-        ${renderAttributesTable(data.attributes)}
-      </div>
-    `;
-  }
-
-  // Self-test logs tab
-  html += `
-    <div class="detail-section">
-      <h4>Self-Test History</h4>
-      ${renderAuditHistory(data.audit_history, data.self_test_logs, data.current_power_on_hours, device)}
-    </div>
-  `;
-
-  // Test runner section
-  html += `
-    <div class="detail-section">
-      <h4>SMART Test Runner</h4>
-      <div class="test-runner-controls">
-        <select id="testTypeSelect">
-          <option value="short">Short Test (~2 min)</option>
-          <option value="extended">Extended Test (~2 hours)</option>
-          <option value="offline">Offline Immediate Test (~5 min)</option>
-          ${!isSas && !isNvme ? '<option value="conveyance">Conveyance Test (~5 min)</option>' : ''}
-        </select>
-        <button type="button" class="btn btn--primary" data-start-smart-test data-device="${escapeHtml(device)}">Run Test</button>
-      </div>
-      <div id="testStatus" class="test-status"></div>
-    </div>
-  `;
-
-  // SAS-specific section
-  if (isSas && data.sas_specific) {
-    html += `
-      <div class="detail-section">
-        <h4>SAS-Specific Logs</h4>
-        ${renderSasSpecific(data.sas_specific)}
-      </div>
-    `;
-  }
-
-  // NVMe-specific section
-  if (isNvme && data.nvme_specific) {
-    html += `
-      <div class="detail-section">
-        <h4>NVMe-Specific Logs</h4>
-        ${renderNvmeSpecific(data.nvme_specific)}
-      </div>
-    `;
-  }
-
-  // Device statistics
-  if (data.device_statistics && data.device_statistics.length > 0) {
-    html += `
-      <div class="detail-section">
-        <h4>Device Statistics</h4>
-        ${renderDeviceStatistics(data.device_statistics)}
-      </div>
-    `;
-  }
-
-  // Error logs
-  if (data.error_logs) {
-    html += `
-      <div class="detail-section">
-        <h4>Error Logs</h4>
-        <pre class="terminal-pre">${escapeHtml(JSON.stringify(data.error_logs, null, 2))}</pre>
-      </div>
-    `;
-  }
-
-  smartDeepDiveContent.innerHTML = html;
-}
-
-function renderAttributesTable(attributes) {
-  if (!attributes || attributes.length === 0) {
-    return '<p>No SMART attributes available.</p>';
-  }
-
-  let rows = attributes.map(attr => {
-    const rawValue = attr.raw !== undefined ? attr.raw : '-';
-    const value = attr.value !== undefined ? attr.value : '-';
-    const worst = attr.worst !== undefined ? attr.worst : '-';
-    const thresh = attr.thresh !== undefined ? attr.thresh : '-';
-    const name = attr.name || 'Unknown';
-
-    // Flag attributes with concerning values
-    const rowClass = (attr.thresh && attr.value && attr.value < attr.thresh) ? 'row-warning' : '';
-
-    return `
-      <tr class="${rowClass}">
-        <td>${attr.id}</td>
-        <td>${escapeHtml(name)}</td>
-        <td>${value}</td>
-        <td>${worst}</td>
-        <td>${thresh}</td>
-        <td>${rawValue}</td>
-      </tr>
-    `;
-  }).join('');
-
-  return `
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>ID</th>
-          <th>Attribute</th>
-          <th>Value</th>
-          <th>Worst</th>
-          <th>Threshold</th>
-          <th>Raw</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderAuditHistory(auditHistory, liveSelfTestLogs, currentPoh, device) {
-  let html = '';
-
-  // Display current POH for context
-  if (currentPoh !== undefined && currentPoh !== null) {
-    html += `<p class="info-text">Current Power-On Hours: ${currentPoh.toLocaleString()}</p>`;
-  }
-
-  // Display live drive self-test logs
-  html += '<h5>Self-Test Log (Drive)</h5>';
-  if (liveSelfTestLogs && Array.isArray(liveSelfTestLogs) && liveSelfTestLogs.length > 0) {
-    let liveRows = liveSelfTestLogs.map(test => {
-      const status = test.status || 'Unknown';
-      const statusLower = status.toLowerCase();
-      const passed = test.passed === true;
-      const statusClass = passed || statusLower.includes('passed') || statusLower.includes('completed without error') ? 'status-complete' :
-                         statusLower.includes('failed') ? 'status-failed' :
-                         statusLower.includes('in progress') ? 'status-ready' : 'status-view-only';
-
-      // Display hours with rollover thresholds based on current POH
-      let hoursDisplay;
-      if (test.hours !== undefined) {
-        const hours = test.hours;
-        const ROLLOVER_LIMIT = 65535;
-        
-        // Start with the raw hours value
-        let displayStr = hours.toLocaleString();
-        
-        // Add rollover thresholds in parentheses if current POH exceeds them
-        if (currentPoh !== undefined && currentPoh !== null) {
-          const rolloverCount = Math.floor(currentPoh / ROLLOVER_LIMIT);
-          
-          for (let i = 1; i <= rolloverCount; i++) {
-            const threshold = ROLLOVER_LIMIT * i;
-            const adjustedValue = threshold + hours;
-            displayStr += ` <span class="info-text">(${adjustedValue.toLocaleString()})</span>`;
-          }
-        }
-        
-        hoursDisplay = displayStr;
-      } else {
-        hoursDisplay = '-';
-      }
-
-      // Format test type for better readability
-      let testType = test.type || 'Unknown';
-      if (test.type === 'scsi_ie') {
-        testType = 'SCSI Informational Exceptions';
-      } else if (typeof test.type === 'number') {
-        // NVMe self-test_num values
-        const nvmeTestTypes = {
-          0: 'Short Operation',
-          1: 'Extended Operation',
-          2: 'Vendor Specific'
-        };
-        testType = nvmeTestTypes[test.type] || `Test ${test.type}`;
-      }
-
-      return `
-        <tr>
-          <td>${escapeHtml(testType)}</td>
-          <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
-          <td>${test.remaining !== undefined && test.remaining !== null && test.remaining !== 'null' ? test.remaining + '%' : '-'}</td>
-          <td>${test.lba || '-'}</td>
-          <td>${hoursDisplay}</td>
-        </tr>
-      `;
-    }).join('');
-
-    html += `
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Remaining</th>
-            <th>LBA</th>
-            <th>Hours</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${liveRows}
-        </tbody>
-      </table>
-    `;
-  } else {
-    html += '<p class="info-text">No drive self-test log available.</p>';
-  }
-
-  return html;
-}
-
-function renderSasSpecific(sasData) {
-  let html = '';
-
-  if (sasData.grown_defect_list !== undefined) {
-    html += `<div class="kv"><span>Grown Defect List:</span><span>${sasData.grown_defect_list}</span></div>`;
-  }
-
-  if (sasData.non_medium_errors !== undefined) {
-    html += `<div class="kv"><span>Non-Medium Errors:</span><span>${sasData.non_medium_errors}</span></div>`;
-  }
-
-  // Display start/stop cycle counter
-  if (sasData.start_stop_cycle_counter) {
-    html += renderSasStartStopCounter(sasData.start_stop_cycle_counter);
-  }
-
-  // Display SAS port PHY information
-  if (sasData.sas_port_0) {
-    html += renderSasPortInfo(sasData.sas_port_0, "Port 0");
-  }
-  if (sasData.sas_port_1) {
-    html += renderSasPortInfo(sasData.sas_port_1, "Port 1");
-  }
-
-  // Parse and display error counter log as a table
-  if (sasData.error_counter_log) {
-    html += renderSasErrorCounterLog(sasData.error_counter_log);
-  }
-
-  // Parse and display background scan log
-  if (sasData.background_scan_log) {
-    html += renderSasBackgroundScanLog(sasData.background_scan_log);
-  }
-
-  return html || '<p>No SAS-specific data available.</p>';
-}
-
-function renderSasStartStopCounter(counterData) {
-  if (!counterData || typeof counterData !== 'object') {
-    return '<p class="info-text">Start/Stop Cycle Counter: Not available</p>';
-  }
-
-  let html = '<h5>Start/Stop Cycle Counter</h5>';
-
-  const year = counterData.year_of_manufacture;
-  const week = counterData.week_of_manufacture;
-  if (year && week) {
-    html += `<div class="kv"><span>Manufactured:</span><span>Week ${week} of ${year}</span></div>`;
-  }
-
-  const specifiedCycles = counterData.specified_cycle_count_over_device_lifetime;
-  const accumulatedCycles = counterData.accumulated_start_stop_cycles;
-  if (specifiedCycles !== undefined && accumulatedCycles !== undefined) {
-    const percentage = specifiedCycles > 0 ? ((accumulatedCycles / specifiedCycles) * 100).toFixed(1) : 'N/A';
-    html += `<div class="kv"><span>Start/Stop Cycles:</span><span>${accumulatedCycles.toLocaleString()} / ${specifiedCycles.toLocaleString()} (${percentage}%)</span></div>`;
-  }
-
-  const specifiedLoadUnload = counterData.specified_load_unload_count_over_device_lifetime;
-  const accumulatedLoadUnload = counterData.accumulated_load_unload_cycles;
-  if (specifiedLoadUnload !== undefined && accumulatedLoadUnload !== undefined) {
-    const percentage = specifiedLoadUnload > 0 ? ((accumulatedLoadUnload / specifiedLoadUnload) * 100).toFixed(1) : 'N/A';
-    html += `<div class="kv"><span>Load/Unload Cycles:</span><span>${accumulatedLoadUnload.toLocaleString()} / ${specifiedLoadUnload.toLocaleString()} (${percentage}%)</span></div>`;
-  }
-
-  return html;
-}
-
-function renderSasPortInfo(portData, portName) {
-  if (!portData || typeof portData !== 'object') {
-    return '';
-  }
-
-  let html = `<h5>SAS ${portName}</h5>`;
-
-  const phyData = portData.phy_0;
-  if (!phyData) {
-    html += '<p class="info-text">No PHY data available</p>';
-    return html;
-  }
-
-  const linkRate = phyData.negotiated_logical_link_rate || 'Unknown';
-  const deviceType = phyData.attached_device_type || 'Unknown';
-  const sasAddress = phyData.sas_address || 'Unknown';
-  const invalidDwordCount = phyData.invalid_dword_count !== undefined ? phyData.invalid_dword_count : '-';
-  const runningDisparityErrorCount = phyData.running_disparity_error_count !== undefined ? phyData.running_disparity_error_count : '-';
-  const lossOfDwordSyncCount = phyData.loss_of_dword_synchronization_count !== undefined ? phyData.loss_of_dword_synchronization_count : '-';
-  const phyResetProblemCount = phyData.phy_reset_problem_count !== undefined ? phyData.phy_reset_problem_count : '-';
-
-  html += `
-    <div class="kv"><span>Link Rate:</span><span>${escapeHtml(linkRate)}</span></div>
-    <div class="kv"><span>Attached Device:</span><span>${escapeHtml(deviceType)}</span></div>
-    <div class="kv"><span>SAS Address:</span><span>${escapeHtml(sasAddress)}</span></div>
-  `;
-
-  html += '<h6>PHY Error Counters</h6>';
-  html += `
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Invalid DWords</th>
-          <th>Running Disparity Errors</th>
-          <th>Loss of DWord Sync</th>
-          <th>PHY Reset Problems</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td class="${invalidDwordCount > 0 ? 'row-warning' : ''}">${invalidDwordCount}</td>
-          <td class="${runningDisparityErrorCount > 0 ? 'row-warning' : ''}">${runningDisparityErrorCount}</td>
-          <td class="${lossOfDwordSyncCount > 0 ? 'row-warning' : ''}">${lossOfDwordSyncCount}</td>
-          <td class="${phyResetProblemCount > 0 ? 'row-warning' : ''}">${phyResetProblemCount}</td>
-        </tr>
-      </tbody>
-    </table>
-  `;
-
-  return html;
-}
-
-function renderSasErrorCounterLog(errorLog) {
-  if (!errorLog || typeof errorLog !== 'object') {
-    return '<p class="info-text">Error Counter Log: Not available</p>';
-  }
-
-  const sections = ['read', 'write', 'verify'];
-  let hasData = false;
-  let rows = '';
-
-  sections.forEach(section => {
-    const data = errorLog[section];
-    if (data && typeof data === 'object') {
-      hasData = true;
-      const errorsEccFast = data.errors_corrected_by_eccfast !== undefined ? data.errors_corrected_by_eccfast : '-';
-      const errorsEccDelayed = data.errors_corrected_by_eccdelayed !== undefined ? data.errors_corrected_by_eccdelayed : '-';
-      const errorsRereadsRewrites = data.errors_corrected_by_rereads_rewrites !== undefined ? data.errors_corrected_by_rereads_rewrites : '-';
-      const totalErrorsCorrected = data.total_errors_corrected !== undefined ? data.total_errors_corrected : '-';
-      const gigabytesProcessed = data.gigabytes_processed !== undefined ? data.gigabytes_processed : '-';
-      const totalUncorrectable = data.total_uncorrectable_errors !== undefined ? data.total_uncorrectable_errors : '-';
-
-      rows += `
-        <tr>
-          <td><strong>${section.toUpperCase()}</strong></td>
-          <td>${errorsEccFast}</td>
-          <td>${errorsEccDelayed}</td>
-          <td>${errorsRereadsRewrites}</td>
-          <td>${totalErrorsCorrected}</td>
-          <td>${gigabytesProcessed}</td>
-          <td class="${totalUncorrectable > 0 ? 'row-warning' : ''}">${totalUncorrectable}</td>
-        </tr>
-      `;
-    }
-  });
-
-  if (!hasData) {
-    return '<p class="info-text">Error Counter Log: No data available</p>';
-  }
-
-  return `
-    <h5>Error Counter Log</h5>
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Operation</th>
-          <th>Errors Corrected (ECC Fast)</th>
-          <th>Errors Corrected (ECC Delayed)</th>
-          <th>Errors Corrected (Rereads/Rewrites)</th>
-          <th>Total Errors Corrected</th>
-          <th>GB Processed</th>
-          <th>Total Uncorrectable Errors</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${rows}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderSasBackgroundScanLog(scanLog) {
-  if (!scanLog || typeof scanLog !== 'object') {
-    return '<p class="info-text">Background Scan Log: Not available</p>';
-  }
-
-  let html = '<h5>Background Scan Log</h5>';
-
-  // Parse scan status
-  const statusObj = scanLog.status;
-  let scanStatus = 'Unknown';
-  let scanProgress = '-';
-  let numScans = '-';
-  let numMediumScans = '-';
-
-  if (typeof statusObj === 'string') {
-    scanStatus = statusObj;
-  } else if (statusObj && typeof statusObj === 'object') {
-    scanStatus = statusObj.string || 'Unknown';
-    scanProgress = statusObj.scan_progress !== undefined ? statusObj.scan_progress : '-';
-    numScans = statusObj.number_scans_performed !== undefined ? statusObj.number_scans_performed : '-';
-    numMediumScans = statusObj.number_medium_scans_performed !== undefined ? statusObj.number_medium_scans_performed : '-';
-  }
-
-  // Also check for these fields at the top level (some smartctl versions put them there)
-  if (scanProgress === '-' && scanLog.scan_progress !== undefined) {
-    scanProgress = scanLog.scan_progress;
-  }
-  if (numScans === '-' && scanLog.number_scans_performed !== undefined) {
-    numScans = scanLog.number_scans_performed;
-  }
-
-  // Format progress as percentage if it's a number
-  if (typeof scanProgress === 'number') {
-    scanProgress = scanProgress + '%';
-  }
-
-  html += `
-    <div class="kv"><span>Scan Status:</span><span>${escapeHtml(scanStatus)}</span></div>
-    <div class="kv"><span>Scan Progress:</span><span>${escapeHtml(scanProgress)}</span></div>
-    <div class="kv"><span>Total Scans Performed:</span><span>${numScans}</span></div>
-  `;
-  if (numMediumScans !== '-') {
-    html += `<div class="kv"><span>Medium Scans Performed:</span><span>${numMediumScans}</span></div>`;
-  }
-
-  // Parse scan event table if present
-  const scanTable = scanLog.table;
-  if (scanTable && Array.isArray(scanTable) && scanTable.length > 0) {
-    html += '<h6>Scan Events</h6>';
-    html += '<table class="data-table">';
-    html += '<thead><tr><th>LBA</th><th>Status</th></tr></thead>';
-    html += '<tbody>';
-
-    scanTable.forEach(entry => {
-      const lba = entry.lba !== undefined ? entry.lba : '-';
-      const status = entry.status || 'Unknown';
-      const statusLower = String(status).toLowerCase();
-      const rowClass = (statusLower.includes('failed') || statusLower.includes('error')) ? 'row-warning' : '';
-
-      html += `
-        <tr class="${rowClass}">
-          <td>${lba}</td>
-          <td>${escapeHtml(status)}</td>
-        </tr>
-      `;
-    });
-
-    html += '</tbody></table>';
-  }
-
-  return html;
-}
-
-function renderNvmeSpecific(nvmeData) {
-  let html = '';
-
-  // Parse and display health information log
-  if (nvmeData.health_log) {
-    html += renderNvmeHealthLog(nvmeData.health_log);
-  }
-
-  // Parse and display error log
-  if (nvmeData.error_log) {
-    html += renderNvmeErrorLog(nvmeData.error_log);
-  }
-
-  return html || '<p>No NVMe-specific data available.</p>';
-}
-
-function renderNvmeHealthLog(healthLog) {
-  if (!healthLog || typeof healthLog !== 'object') {
-    return '<p class="info-text">NVMe Health Log: Not available</p>';
-  }
-
-  let html = '<h5>NVMe Health Information</h5>';
-
-  // Critical warning is a bitmask
-  const criticalWarning = healthLog.critical_warning !== undefined ? healthLog.critical_warning : 0;
-  const warningBits = [];
-  if (criticalWarning & 0x01) warningBits.push('Available Spare Space');
-  if (criticalWarning & 0x02) warningBits.push('Temperature');
-  if (criticalWarning & 0x04) warningBits.push('Device Reliability');
-  if (criticalWarning & 0x08) warningBits.push('Read-Only');
-  if (criticalWarning & 0x10) warningBits.push('Volatile Memory Backup');
-  
-  const warningDisplay = warningBits.length > 0 ? warningBits.join(', ') : 'None';
-  const warningClass = criticalWarning > 0 ? 'row-warning' : '';
-
-  html += `<div class="kv"><span>Critical Warning:</span><span class="${warningClass}">${warningDisplay} (0x${criticalWarning.toString(16).padStart(2, '0')})</span></div>`;
-
-  // Temperature sensors
-  const temperature = healthLog.temperature !== undefined ? healthLog.temperature + '°C' : '-';
-  const tempSensors = healthLog.temperature_sensors;
-  let tempSensorDisplay = '-';
-  if (tempSensors && Array.isArray(tempSensors) && tempSensors.length > 0) {
-    tempSensorDisplay = tempSensors.map(s => s + '°C').join(', ');
-  }
-  html += `<div class="kv"><span>Temperature:</span><span>${escapeHtml(temperature)}</span></div>`;
-  if (tempSensorDisplay !== '-') {
-    html += `<div class="kv"><span>Temperature Sensors:</span><span>${escapeHtml(tempSensorDisplay)}</span></div>`;
-  }
-
-  // Available spare
-  const availableSpare = healthLog.available_spare !== undefined ? healthLog.available_spare + '%' : '-';
-  const availableSpareThreshold = healthLog.available_spare_threshold !== undefined ? healthLog.available_spare_threshold + '%' : '-';
-  const spareClass = (healthLog.available_spare !== undefined && healthLog.available_spare_threshold !== undefined && 
-                      healthLog.available_spare < healthLog.available_spare_threshold) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Available Spare:</span><span class="${spareClass}">${availableSpare} (threshold: ${availableSpareThreshold})</span></div>`;
-
-  // Percentage used
-  const percentageUsed = healthLog.percentage_used !== undefined ? healthLog.percentage_used + '%' : '-';
-  const usedClass = (healthLog.percentage_used !== undefined && healthLog.percentage_used > 90) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Percentage Used:</span><span class="${usedClass}">${percentageUsed}</span></div>`;
-
-  // Data units read/written
-  const dataUnitsRead = healthLog.data_units_read !== undefined ? formatDataUnits(healthLog.data_units_read) : '-';
-  const dataUnitsWritten = healthLog.data_units_written !== undefined ? formatDataUnits(healthLog.data_units_written) : '-';
-  html += `<div class="kv"><span>Data Read:</span><span>${escapeHtml(dataUnitsRead)}</span></div>`;
-  html += `<div class="kv"><span>Data Written:</span><span>${escapeHtml(dataUnitsWritten)}</span></div>`;
-
-  // Media and data integrity errors
-  const mediaErrors = healthLog.media_errors !== undefined ? healthLog.media_errors.toLocaleString() : '-';
-  const numErrLogEntries = healthLog.num_err_log_entries !== undefined ? healthLog.num_err_log_entries.toLocaleString() : '-';
-  const mediaErrorsClass = (healthLog.media_errors !== undefined && healthLog.media_errors > 0) ? 'row-warning' : '';
-  html += `<div class="kv"><span>Media Errors:</span><span class="${mediaErrorsClass}">${mediaErrors}</span></div>`;
-  html += `<div class="kv"><span>Error Log Entries:</span><span>${numErrLogEntries}</span></div>`;
-
-  // Power cycles and power on hours
-  const powerCycles = healthLog.power_cycles !== undefined ? healthLog.power_cycles.toLocaleString() : '-';
-  const powerOnHours = healthLog.power_on_hours !== undefined ? healthLog.power_on_hours.toLocaleString() : '-';
-  html += `<div class="kv"><span>Power Cycles:</span><span>${powerCycles}</span></div>`;
-  html += `<div class="kv"><span>Power-On Hours:</span><span>${powerOnHours}</span></div>`;
-
-  // Controller busy time
-  const controllerBusyTime = healthLog.controller_busy_time !== undefined ? formatMinutes(healthLog.controller_busy_time) : '-';
-  html += `<div class="kv"><span>Controller Busy Time:</span><span>${escapeHtml(controllerBusyTime)}</span></div>`;
-
-  return html;
-}
-
-function renderNvmeErrorLog(errorLog) {
-  if (!errorLog || typeof errorLog !== 'object') {
-    return '<p class="info-text">NVMe Error Log: Not available</p>';
-  }
-
-  // Check if it's an array of error entries
-  if (Array.isArray(errorLog)) {
-    if (errorLog.length === 0) {
-      return '<p class="info-text">NVMe Error Log: No entries</p>';
-    }
-
-    let html = '<h5>NVMe Error Log Entries</h5>';
-    html += '<table class="data-table">';
-    html += '<thead><tr><th>Entry</th><th>Error Count</th><th>SQID</th><th>CID</th><th>Status</th><th>LBA</th><th>NSID</th><th>Command</th></tr></thead>';
-    html += '<tbody>';
-
-    errorLog.forEach((entry, idx) => {
-      const errorCount = entry.error_count !== undefined ? entry.error_count.toLocaleString() : '-';
-      const sqid = entry.sqid !== undefined ? entry.sqid : '-';
-      const cid = entry.cid !== undefined ? entry.cid : '-';
-      const status = entry.status !== undefined ? '0x' + entry.status.toString(16) : '-';
-      const lba = entry.lba !== undefined ? entry.lba : '-';
-      const nsid = entry.nsid !== undefined ? entry.nsid : '-';
-      const command = entry.command_name || entry.command || '-';
-
-      html += `
-        <tr>
-          <td>${idx + 1}</td>
-          <td>${errorCount}</td>
-          <td>${sqid}</td>
-          <td>${cid}</td>
-          <td>${status}</td>
-          <td>${lba}</td>
-          <td>${nsid}</td>
-          <td>${escapeHtml(command)}</td>
-        </tr>
-      `;
-    });
-
-    html += '</tbody></table>';
-    return html;
-  }
-
-  // If it's a single object or unknown format, display as raw JSON
-  return `
-    <h5>NVMe Error Log</h5>
-    <pre class="terminal-pre">${escapeHtml(JSON.stringify(errorLog, null, 2))}</pre>
-  `;
-}
-
-function formatDataUnits(units) {
-  // smartctl reports data units in 512-byte units
-  // Convert to human-readable format
-  if (units === undefined || units === null) return '-';
-  
-  const bytes = units * 512;
-  const gb = bytes / (1024 * 1024 * 1024);
-  const tb = gb / 1024;
-  
-  if (tb >= 1) {
-    return tb.toFixed(2) + ' TB';
-  } else if (gb >= 1) {
-    return gb.toFixed(2) + ' GB';
-  } else {
-    return bytes.toLocaleString() + ' bytes';
-  }
-}
-
-function formatMinutes(minutes) {
-  if (minutes === undefined || minutes === null) return '-';
-  
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-  const remainingHours = hours % 24;
-  
-  if (days > 0) {
-    return `${days}d ${remainingHours}h`;
-  } else if (hours > 0) {
-    return `${hours}h`;
-  } else {
-    return `${minutes}m`;
-  }
-}
-
-function renderDeviceStatistics(deviceStats) {
-  let html = '';
-
-  deviceStats.forEach(page => {
-    html += `<h5>Page ${page.number}</h5>`;
-    html += '<table class="data-table">';
-    html += '<thead><tr><th>Name</th><th>Value</th><th>Offset</th></tr></thead>';
-    html += '<tbody>';
-
-    if (page.table && Array.isArray(page.table)) {
-      page.table.forEach(item => {
-        html += `
-          <tr>
-            <td>${escapeHtml(item.name)}</td>
-            <td>${item.value}</td>
-            <td>${item.offset}</td>
-          </tr>
-        `;
-      });
-    } else {
-      html += '<tr><td colspan="3">No table data available</td></tr>';
-    }
-
-    html += '</tbody></table>';
-  });
-
-  return html;
-}
+// Rendering functions (renderSmartDetails, renderAttributesTable, renderAuditHistory,
+// renderSasSpecific, renderSasStartStopCounter, renderSasPortInfo, renderSasErrorCounterLog,
+// renderSasBackgroundScanLog, renderNvmeSpecific, renderNvmeHealthLog, renderNvmeErrorLog,
+// formatDataUnits, formatMinutes, renderDeviceStatistics) have been extracted to smartRenderers.js
 
 async function parseErrorResponse(response) {
   let errorMessage = 'Unknown error';
@@ -849,22 +164,22 @@ async function startSmartTest(device) {
 
     if (!response.ok) {
       const errorMessage = await parseErrorResponse(response);
-      testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${errorMessage}</p>`;
+      testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${escapeHtml(errorMessage)}</p>`;
       return;
     }
 
     const result = await response.json();
 
     if (!result || result.status !== 'started') {
-      testStatusDiv.innerHTML = `<p class="error">Unexpected response from server: ${JSON.stringify(result)}</p>`;
+      testStatusDiv.innerHTML = `<p class="error">Unexpected response from server: ${escapeHtml(JSON.stringify(result))}</p>`;
       return;
     }
 
     testStatusDiv.innerHTML = `
       <p>Test started successfully!</p>
-      <p>Estimated time: ${result.estimated_minutes || 'unknown'} minutes</p>
+      <p>Estimated time: ${escapeHtml(result.estimated_minutes || 'unknown')} minutes</p>
       <div class="progress-bar">
-        <div class="progress-bar-fill" id="testProgressBar" style="width: 0%"></div>
+        <div class="progress-bar-fill" id="testProgressBar"></div>
       </div>
       <p id="testProgressText">0%</p>
     `;
@@ -873,7 +188,7 @@ async function startSmartTest(device) {
     pollSmartTestStatus(device, testType);
   } catch (error) {
     console.error('Failed to start SMART test:', error);
-    testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${error.message}</p>`;
+    testStatusDiv.innerHTML = `<p class="error">Failed to start test: ${escapeHtml(error.message)}</p>`;
   }
 }
 

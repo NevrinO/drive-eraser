@@ -25,9 +25,17 @@ def _process_marker_status(marker_status, interface_type, smart):
     """Check marker status and update is_pristine/state fields in-place.
 
     Shared by _collect_drive_data and _process_single_drive_extended_smart.
+    When data_written_raw is None (identity-only mode during SMART polling),
+    default to pristine — the extended SMART collection will re-evaluate
+    write tolerance with full data and correct the status if needed.
     """
     if marker_status.get("status") == "checksum_valid":
-        is_pristine = check_write_tolerance(interface_type, smart.get("data_written_raw"), marker_status.get("details", {}).get("data_written_at_wipe"))
+        current_writes = smart.get("data_written_raw")
+        stored_writes = marker_status.get("details", {}).get("data_written_at_wipe")
+        if current_writes is None:
+            is_pristine = True
+        else:
+            is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
         marker_status["is_pristine"] = is_pristine
         marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
 

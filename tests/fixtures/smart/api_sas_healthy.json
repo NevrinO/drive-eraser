@@ -1,0 +1,71 @@
+{
+  "attributes": [],
+  "self_test_logs": [
+    {"type": "scsi_ie", "status": "Hard Drive Healthy", "passed": true, "remaining": 0, "lba": null, "hours": null, "corrected_hours": null, "rollover_corrected": false, "ambiguous": false, "log_index": 0}
+  ],
+  "current_power_on_hours": 10000,
+  "error_logs": null,
+  "device_statistics": [],
+  "sas_specific": {
+    "grown_defect_list": 0,
+    "non_medium_errors": 5,
+    "start_stop_cycle_counter": {
+      "year_of_manufacture": "2020",
+      "week_of_manufacture": "15",
+      "specified_cycle_count_over_device_lifetime": 10000,
+      "accumulated_start_stop_cycles": 500,
+      "specified_load_unload_count_over_device_lifetime": 300000,
+      "accumulated_load_unload_cycles": 1000
+    },
+    "sas_port_0": {
+      "phy_0": {
+        "negotiated_logical_link_rate": "12.0 Gb/s",
+        "attached_device_type": "SAS device",
+        "sas_address": "0x5000cca01a123456",
+        "invalid_dword_count": 0,
+        "running_disparity_error_count": 0,
+        "loss_of_dword_synchronization_count": 0,
+        "phy_reset_problem_count": 0
+      }
+    },
+    "error_counter_log": {
+      "read": {
+        "errors_corrected_by_eccfast": 100,
+        "errors_corrected_by_eccdelayed": 0,
+        "errors_corrected_by_rereads_rewrites": 0,
+        "total_errors_corrected": 100,
+        "gigabytes_processed": "500.0",
+        "total_uncorrectable_errors": 0
+      },
+      "write": {
+        "errors_corrected_by_eccfast": 50,
+        "errors_corrected_by_eccdelayed": 0,
+        "errors_corrected_by_rereads_rewrites": 0,
+        "total_errors_corrected": 50,
+        "gigabytes_processed": "500.0",
+        "total_uncorrectable_errors": 0
+      },
+      "verify": {
+        "errors_corrected_by_eccfast": 0,
+        "errors_corrected_by_eccdelayed": 0,
+        "errors_corrected_by_rereads_rewrites": 0,
+        "total_errors_corrected": 0,
+        "gigabytes_processed": "500.0",
+        "total_uncorrectable_errors": 0
+      }
+    },
+    "background_scan_log": {
+      "status": "Background scan completed successfully",
+      "scan_progress": 100,
+      "number_scans_performed": 5,
+      "number_medium_scans_performed": 2,
+      "table": [
+        {"lba": 1000, "status": "Completed without error"},
+        {"lba": 2000, "status": "Scan failed"}
+      ]
+    }
+  },
+  "nvme_specific": null,
+  "truncated": false,
+  "audit_history": []
+}

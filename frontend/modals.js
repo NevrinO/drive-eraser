@@ -71,7 +71,7 @@ function renderLiveDetails(drive) {
   
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
-  const hasValidMarker = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted" && drive.marker.status !== "written_since_wipe";
+  const hasValidMarker = drive.marker && (drive.marker.status === "pristine_secure" || drive.marker.status === "pristine_insecure" || drive.marker.status === "marker_error");
   const isCompleted = hasValidMarker;
   
   let displayStatus = "IDLE / READY";
@@ -87,7 +87,13 @@ function renderLiveDetails(drive) {
     displayStatus = "QUEUED";
     statusClass = "status-ready";
   } else if (isCompleted) {
-    displayStatus = "SANITIZED";
+    if (drive.marker?.status === "pristine_secure") {
+      displayStatus = "SANITIZED (MARKER AUTHENTICATED)";
+    } else if (drive.marker?.status === "pristine_insecure") {
+      displayStatus = "SANITIZED (MARKER UNAUTHENTICATED)";
+    } else {
+      displayStatus = "SANITIZED (MARKER ERROR)";
+    }
     statusClass = "status-complete";
   } else if (drive.marker?.status === "written_since_wipe") {
     displayStatus = "POST-WIPE WRITES";
@@ -106,6 +112,9 @@ function renderLiveDetails(drive) {
   } else if (drive.marker?.status === "written_since_wipe") {
     markerStatusText = "ACTIVE USE (POST-WIPE WRITES DETECTED)";
     markerClass = "status-view-only";
+  } else if (drive.marker?.status === "marker_error") {
+    markerStatusText = "MARKER READ/WRITE ERROR";
+    markerClass = "status-failed";
   } else if (drive.marker?.status === "corrupted") {
     markerStatusText = "SIGNATURE CORRUPTED / INVALID";
     markerClass = "status-failed";

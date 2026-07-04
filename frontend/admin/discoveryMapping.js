@@ -451,22 +451,22 @@
       return null;
     }
 
-    let html = `<div style="font-size: 0.75rem; color: #888; margin-bottom: 8px;">${mappingKeys.length} device(s) will be mapped:</div>`;
+    let html = `<div class="discovery-preview-summary">${mappingKeys.length} device(s) will be mapped:</div>`;
     html += mappingKeys.slice(0, 100).map(bayId => {
       const device = mapping[bayId];
       return `
-        <div style="padding: 4px; background: #333; border-radius: 2px; margin-bottom: 4px; font-size: 0.75rem;">
-          <strong style="color: var(--color-primary);">${escapeHtml ? escapeHtml(bayId) : bayId}</strong> → ${escapeHtml ? escapeHtml(device.device_name) : device.device_name} (${escapeHtml ? escapeHtml(device.device_path) : device.device_path})
+        <div class="discovery-preview-row">
+          <strong class="discovery-mapping-bay">${escapeHtml ? escapeHtml(bayId) : bayId}</strong> → ${escapeHtml ? escapeHtml(device.device_name) : device.device_name} (${escapeHtml ? escapeHtml(device.device_path) : device.device_path})
         </div>
       `;
     }).join('');
     
     if (mappingKeys.length > 100) {
-      html += `<div style="color: #888; font-size: 0.7rem; margin-top: 4px;">... and ${mappingKeys.length - 100} more</div>`;
+      html += `<div class="discovery-preview-more">... and ${mappingKeys.length - 100} more</div>`;
     }
     
     mappingPreview.innerHTML = html;
-    mappingPreview.style.display = 'block';
+    mappingPreview.classList.remove('hidden');
     
     window.DiscoveryState.setCurrentMappingPreview(mapping);
     applyMappingBtn.disabled = false;
@@ -552,15 +552,15 @@
     if (mode === 'pattern') {
       patternModeBtn.style.background = 'var(--color-primary)';
       manualModeBtn.style.background = '';
-      patternMappingControls.style.display = 'block';
-      manualMappingControls.style.display = 'none';
+      patternMappingControls.classList.remove('hidden');
+      manualMappingControls.classList.add('hidden');
       window.DiscoveryState.setCurrentMappingPreview(null);
       applyMappingBtn.disabled = true;
     } else {
       patternModeBtn.style.background = '';
       manualModeBtn.style.background = 'var(--color-primary)';
-      patternMappingControls.style.display = 'none';
-      manualMappingControls.style.display = 'block';
+      patternMappingControls.classList.add('hidden');
+      manualMappingControls.classList.remove('hidden');
       window.DiscoveryState.setCurrentMappingPreview(null);
       applyMappingBtn.disabled = Object.keys(manualMappings).length === 0;
     }

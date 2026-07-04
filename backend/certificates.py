@@ -25,26 +25,8 @@ from verification import get_software_versions
 # Base64 encoded SVG logo placeholder (simple shield icon with company name)
 LOGO_BASE64 = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiB2aWV3Qm94PSIwIDAgMTIwIDQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNDAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSIxMCIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxZTNhOGEiPkRyaXZlIFdhc2hlciBTdGF0aW9uPC90ZXh0Pgo8L3N2Zz4="
 
-# Shared CSS for certificate HTML templates
-CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1; }
-.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.header-left { flex: 1; }
-.header-right { flex: 0 0 auto; }
-.header .meta { color: #555; margin-bottom: 0; font-family: monospace; font-size: 1.1rem; }
-.section { margin-bottom: 20px; }
-table { border-collapse: collapse; width: 100%; margin-top: 10px; }
-th, td { border: 1px solid #ccc; padding: 4px; text-align: left; vertical-align: top; }
-th { width: 240px; background: #f8fafc; color: #334155; }
-pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
-.status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
-.status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
-.certificate-container { page-break-after: always; }
-.certificate-container:last-child { page-break-after: auto; }
-@media print {
-  body { margin: 0; }
-  .certificate-container { page-break-after: always; }
-  .certificate-container:last-child { page-break-after: auto; }
-}"""
+# Certificate CSS has been externalized to frontend/css/certificate.css
+# Certificate HTML templates reference it via <link rel="stylesheet" href="/css/certificate.css">
 
 def get_custom_logo_base64():
     """Load and convert custom logo to base64 data URI if it exists."""
@@ -235,7 +217,7 @@ def build_certificate_html(certificate):
     
     # Dynamic header title and color accents based on physical wipe status
     title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
-    header_color = "#1e3a8a" if ok else "#dc2626"
+    title_class = "cert-title-ok" if ok else "cert-title-fail"
     status_class = "status-ok" if ok else "status-fail"
     status_text = esc(verification.get("status"))
 
@@ -271,16 +253,13 @@ def build_certificate_html(certificate):
 <head>
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
-<style>
-h1 { margin: 0; color: {{HEADER_COLOR}}; }
-{{CERTIFICATE_CSS}}
-</style>
+<link rel="stylesheet" href="/css/certificate.css">
 </head>
 <body>
 <div class="certificate-container">
 <div class="header">
   <div class="header-left">
-    <h1>{{TITLE}}</h1>
+    <h1 class="{{TITLE_CLASS}}">{{TITLE}}</h1>
   </div>
   <div class="header-right">
     {{LOGO_IMG}}
@@ -317,12 +296,11 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     # Run clean, robust text replacements to completely bypass quote-nesting quirks
     content = template
     content = content.replace("{{TITLE}}", esc(title))
-    content = content.replace("{{HEADER_COLOR}}", esc(header_color))
-    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
+    content = content.replace("{{TITLE_CLASS}}", esc(title_class))
     # Use custom logo if available, otherwise no logo
     custom_logo = get_custom_logo_base64()
     if custom_logo:
-        logo_img = f'<img src="{custom_logo}" alt="Logo" style="max-height: 75px; max-width: 500px;">'
+        logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">'
     else:
         logo_img = ""
     content = content.replace("{{LOGO_IMG}}", logo_img)
@@ -386,10 +364,7 @@ def build_bulk_certificate_html(certificates):
 <head>
 <meta charset="utf-8">
 <title>Bulk Certificates</title>
-<style>
-h1 { margin: 0; }
-{{CERTIFICATE_CSS}}
-</style>
+<link rel="stylesheet" href="/css/certificate.css">
 </head>
 <body>
 {{CERTIFICATE_BODIES}}
@@ -398,7 +373,6 @@ h1 { margin: 0; }
 """
     
     content = bulk_template.replace("{{CERTIFICATE_BODIES}}", "\n".join(cert_htmls))
-    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
     return content
 
 def build_bulk_single_certificate_html(certificate, custom_logo=None):
@@ -416,7 +390,7 @@ def build_bulk_single_certificate_html(certificate, custom_logo=None):
     
     # Dynamic header title and color accents based on physical wipe status
     title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
-    header_color = "#1e3a8a" if ok else "#dc2626"
+    title_class = "cert-title-ok" if ok else "cert-title-fail"
     status_class = "status-ok" if ok else "status-fail"
     status_text = esc(verification.get("status"))
 
@@ -438,16 +412,13 @@ def build_bulk_single_certificate_html(certificate, custom_logo=None):
 <head>
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
-<style>
-h1 { margin: 0; color: {{HEADER_COLOR}}; }
-{{CERTIFICATE_CSS}}
-</style>
+<link rel="stylesheet" href="/css/certificate.css">
 </head>
 <body>
 <div class="certificate-container">
 <div class="header">
   <div class="header-left">
-    <h1>{{TITLE}}</h1>
+    <h1 class="{{TITLE_CLASS}}">{{TITLE}}</h1>
   </div>
   <div class="header-right">
     {{LOGO_IMG}}
@@ -479,13 +450,12 @@ h1 { margin: 0; color: {{HEADER_COLOR}}; }
     # Run clean, robust text replacements
     content = template
     content = content.replace("{{TITLE}}", esc(title))
-    content = content.replace("{{HEADER_COLOR}}", esc(header_color))
-    content = content.replace("{{CERTIFICATE_CSS}}", CERTIFICATE_CSS)
+    content = content.replace("{{TITLE_CLASS}}", esc(title_class))
     # Use provided custom_logo or load it if not provided (for backward compatibility)
     if custom_logo is None:
         custom_logo = get_custom_logo_base64()
     if custom_logo:
-        logo_img = f'<img src="{custom_logo}" alt="Logo" style="max-height: 75px; max-width: 500px;">'
+        logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">'
     else:
         logo_img = ""
     content = content.replace("{{LOGO_IMG}}", logo_img)

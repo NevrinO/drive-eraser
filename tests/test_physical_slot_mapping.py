@@ -315,15 +315,13 @@ class TestEnclosureCrudOperations:
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
             patch('database.get_cert_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_config_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_data_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_db_path', return_value=test_db_path),
+            patch('routes._shared.get_config_dir', return_value=test_config_dir),
+            patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
         ]
         for p in patches:
             p.start()
         try:
-            from database import init_wipe_db, close_all_connections
+            from database import init_wipe_db
             init_wipe_db()
             from flask import Flask
             from app_config import limiter
@@ -335,14 +333,11 @@ class TestEnclosureCrudOperations:
             admin_bp = getattr(admin_routes, 'admin_bp', None)
             if admin_bp:
                 app.register_blueprint(admin_bp)
+            from routes.enclosure_routes import enclosure_bp
+            app.register_blueprint(enclosure_bp)
             api_routes.register_routes(app)
             yield app
         finally:
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 
@@ -361,7 +356,7 @@ class TestEnclosureCrudOperations:
 
     def test_create_enclosure_with_auto_mapping(self, admin_session):
         """Test enclosure creation with auto-mapping enabled."""
-        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+        with patch('routes.enclosure_routes.load_layout_templates') as mock_load_templates:
             mock_load_templates.return_value = ({
                 "test_4bay": {
                     "id": "test_4bay",
@@ -371,7 +366,7 @@ class TestEnclosureCrudOperations:
                     "default_role": "wipe"
                 }
             }, False)
-            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+            with patch('routes.enclosure_routes.generate_master_slot_map') as mock_master:
                 mock_master.return_value = [
                     {
                         "pci_controller": "0000:00:1f.2",
@@ -381,8 +376,8 @@ class TestEnclosureCrudOperations:
                         "expander_sas_address": None
                     }
                 ]
-                with patch('routes.admin_routes.validate_pci_address', return_value=True):
-                    with patch('routes.admin_routes.save_bay_map') as mock_save:
+                with patch('routes.enclosure_routes.validate_pci_address', return_value=True):
+                    with patch('routes.enclosure_routes.save_bay_map') as mock_save:
                         payload = {
                             "id": "test_enc",
                             "name": "Test Enclosure",
@@ -405,7 +400,7 @@ class TestEnclosureCrudOperations:
 
     def test_create_enclosure_without_auto_mapping(self, admin_session):
         """Test enclosure creation without auto-mapping."""
-        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+        with patch('routes.enclosure_routes.load_layout_templates') as mock_load_templates:
             mock_load_templates.return_value = ({
                 "test_4bay": {
                     "id": "test_4bay",
@@ -415,8 +410,8 @@ class TestEnclosureCrudOperations:
                     "default_role": "wipe"
                 }
             }, False)
-            with patch('routes.admin_routes.validate_pci_address', return_value=True):
-                with patch('routes.admin_routes.save_bay_map') as mock_save:
+            with patch('routes.enclosure_routes.validate_pci_address', return_value=True):
+                with patch('routes.enclosure_routes.save_bay_map') as mock_save:
                     payload = {
                         "id": "test_enc",
                         "name": "Test Enclosure",
@@ -443,7 +438,7 @@ class TestEnclosureCrudOperations:
         number and would pull in unrelated drives (e.g. ata1/ata2) for empty bays. Now we
         always derive the identifier from the controller pattern.
         """
-        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+        with patch('routes.enclosure_routes.load_layout_templates') as mock_load_templates:
             mock_load_templates.return_value = ({
                 "test_4bay": {
                     "id": "test_4bay",
@@ -456,7 +451,7 @@ class TestEnclosureCrudOperations:
                     "default_role": "wipe"
                 }
             }, False)
-            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+            with patch('routes.enclosure_routes.generate_master_slot_map') as mock_master:
                 # Master map only has drives in slots 0 and 3 of the expander, and unrelated
                 # motherboard SATA drives occupying slots 1 and 2 on a different controller.
                 mock_master.return_value = [
@@ -489,8 +484,8 @@ class TestEnclosureCrudOperations:
                         "expander_sas_address": None
                     },
                 ]
-                with patch('routes.admin_routes.validate_pci_address', return_value=True):
-                    with patch('routes.admin_routes.save_bay_map') as mock_save:
+                with patch('routes.enclosure_routes.validate_pci_address', return_value=True):
+                    with patch('routes.enclosure_routes.save_bay_map') as mock_save:
                         payload = {
                             "id": "test_sequential",
                             "name": "Test Sequential",
@@ -516,7 +511,7 @@ class TestEnclosureCrudOperations:
 
     def test_create_enclosure_with_hybrid_nvme_auto_increment(self, admin_session):
         """Test enclosure creation with hybrid NVMe auto-increment."""
-        with patch('routes.admin_routes.load_layout_templates') as mock_load_templates:
+        with patch('routes.enclosure_routes.load_layout_templates') as mock_load_templates:
             mock_load_templates.return_value = ({
                 "test_hybrid": {
                     "id": "test_hybrid",
@@ -527,7 +522,7 @@ class TestEnclosureCrudOperations:
                     "default_role": "wipe"
                 }
             }, False)
-            with patch('routes.admin_routes.generate_master_slot_map') as mock_master:
+            with patch('routes.enclosure_routes.generate_master_slot_map') as mock_master:
                 mock_master.return_value = [
                     {
                         "pci_controller": "0000:00:1f.2",
@@ -537,8 +532,8 @@ class TestEnclosureCrudOperations:
                         "expander_sas_address": None
                     }
                 ]
-                with patch('routes.admin_routes.validate_pci_address', return_value=True):
-                    with patch('routes.admin_routes.save_bay_map') as mock_save:
+                with patch('routes.enclosure_routes.validate_pci_address', return_value=True):
+                    with patch('routes.enclosure_routes.save_bay_map') as mock_save:
                         payload = {
                             "id": "test_enc",
                             "name": "Test Enclosure",
@@ -618,15 +613,13 @@ class TestSlotMappingCrudOperations:
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
             patch('database.get_cert_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_config_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_data_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_db_path', return_value=test_db_path),
+            patch('routes._shared.get_config_dir', return_value=test_config_dir),
+            patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
         ]
         for p in patches:
             p.start()
         try:
-            from database import init_wipe_db, close_all_connections
+            from database import init_wipe_db
             init_wipe_db()
             from flask import Flask
             from app_config import limiter
@@ -638,14 +631,11 @@ class TestSlotMappingCrudOperations:
             admin_bp = getattr(admin_routes, 'admin_bp', None)
             if admin_bp:
                 app.register_blueprint(admin_bp)
+            from routes.enclosure_routes import enclosure_bp
+            app.register_blueprint(enclosure_bp)
             api_routes.register_routes(app)
             yield app
         finally:
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 

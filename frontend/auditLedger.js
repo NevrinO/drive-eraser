@@ -93,8 +93,8 @@ function renderAuditLedger(jobs) {
           ${checkboxHtml}
           <div class="job-id-text">${escapeHtml(job.friendly_id || "CERT-************")}</div>
           <div class="ticket-text">${escapeHtml(job.request?.ticket_number || "-")}</div>
-          <div style="font-weight: 700;">${escapeHtml(job.request?.model || "Generic")}</div>
-          <div style="font-size: 0.8rem; font-family: monospace;">S/N: ${escapeHtml(job.request?.serial || "-")}</div>
+          <div class="audit-detail-job-model">${escapeHtml(job.request?.model || "Generic")}</div>
+          <div class="audit-detail-job-serial">S/N: ${escapeHtml(job.request?.serial || "-")}</div>
           <div class="audit-status-chip">
             <span class="status-badge ${uiBadge}">${escapeHtml(statusLabel)}</span>
           </div>
@@ -117,13 +117,13 @@ function renderExpandedAuditRow(job) {
     const exitCode = job.result?.exit_code !== undefined ? job.result.exit_code : "N/A";
     
     diagnosticsHtml = `
-      <div class="detail-section" style="grid-column: span 2; border-color: var(--color-danger); background: #220a0d; margin-top: 12px; padding: 14px;">
-        <h4 style="color: var(--color-danger); margin-bottom: 6px; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.5px;">⚠️ OPERATION FAILURE DIAGNOSTICS</h4>
-        <div class="kv"><span>System Error Code:</span><span style="color: var(--color-danger) !important; font-weight: 800;">${escapeHtml(errText)}</span></div>
+      <div class="detail-section audit-detail-fail">
+        <h4 class="audit-detail-fail-title">⚠️ OPERATION FAILURE DIAGNOSTICS</h4>
+        <div class="kv"><span>System Error Code:</span><span class="audit-detail-fail-code">${escapeHtml(errText)}</span></div>
         <div class="kv"><span>Process Exit Code:</span><span>${escapeHtml(exitCode)}</span></div>
-        <div style="margin-top: 10px;">
-          <div style="font-size: 0.65rem; font-weight: 800; text-transform: uppercase; color: var(--color-text-muted); margin-bottom: 4px; letter-spacing: 0.5px;">Raw Disk Controller Console Output (stderr)</div>
-          <pre class="terminal-pre" style="background: #000; border-color: #4c1d1d; max-height: 180px; color: #fecaca; white-space: pre-wrap; font-size: 11px;">${escapeHtml(stderrText)}</pre>
+        <div class="audit-detail-fail-section">
+          <div class="audit-detail-fail-label">Raw Disk Controller Console Output (stderr)</div>
+          <pre class="terminal-pre audit-detail-fail-pre">${escapeHtml(stderrText)}</pre>
         </div>
       </div>
     `;
@@ -137,16 +137,16 @@ function renderExpandedAuditRow(job) {
     return `
       <div class="expanded-audit-details">
         <div class="audit-meta-col">
-          <div class="kv"><span>Job Type:</span><span style="color: var(--color-primary); font-weight: 800;">Bulk Certificate Generation</span></div>
+          <div class="kv"><span>Job Type:</span><span class="audit-detail-bulk-type">Bulk Certificate Generation</span></div>
           <div class="kv"><span>Target Certificates:</span><span>${escapeHtml(targetCount)}</span></div>
           <div class="kv"><span>Created At:</span><span>${escapeHtml(formatIsoDate(job.created_at))}</span></div>
           <div class="kv"><span>Finished At:</span><span>${escapeHtml(formatIsoDate(job.finished_at))}</span></div>
         </div>
         <div class="audit-actions-col">
-          <div style="font-size: 0.72rem; font-weight: 800; text-transform: uppercase; color: var(--color-text-muted); text-align: center;">Distribution Actions</div>
+          <div class="audit-detail-actions-label">Distribution Actions</div>
           <div class="audit-actions-grid">
-            <button type="button" data-bulk-cert-id="${escapeHtml(job.friendly_id)}" data-action="print" ${isCompleted ? "" : "disabled"} style="padding: 6px;">Print Bulk</button>
-            <button type="button" data-bulk-cert-id="${escapeHtml(job.friendly_id)}" data-action="download" ${isCompleted ? "" : "disabled"} style="padding: 6px;">Download Bulk HTML</button>
+            <button type="button" data-bulk-cert-id="${escapeHtml(job.friendly_id)}" data-action="print" ${isCompleted ? "" : "disabled"} class="audit-detail-action-btn">Print Bulk</button>
+            <button type="button" data-bulk-cert-id="${escapeHtml(job.friendly_id)}" data-action="download" ${isCompleted ? "" : "disabled"} class="audit-detail-action-btn">Download Bulk HTML</button>
           </div>
         </div>
         ${diagnosticsHtml}
@@ -164,21 +164,21 @@ function renderExpandedAuditRow(job) {
     let metricsHtml = "";
     if (worsenedMetrics.length > 0) {
       metricsHtml = worsenedMetrics.map(metric => `
-        <div class="kv" style="margin-top: 4px;">
-          <span style="color: var(--color-error);">${escapeHtml(metric.metric || "Unknown")}:</span>
+        <div class="kv audit-detail-metric-row">
+          <span class="audit-detail-metric-name">${escapeHtml(metric.metric || "Unknown")}:</span>
           <span>${escapeHtml(String(metric.pre_value || "N/A"))} → ${escapeHtml(String(metric.post_value || "N/A"))} (Δ${escapeHtml(String(metric.delta || "N/A"))})</span>
         </div>
       `).join("");
     } else {
-      metricsHtml = `<div style="margin-top: 8px; font-size: 0.7rem; color: var(--color-success);">No significant SMART metric degradation detected</div>`;
+      metricsHtml = `<div class="audit-detail-no-degradation">No significant SMART metric degradation detected</div>`;
     }
     
     smartDiffHtml = `
-      <div class="detail-section" style="grid-column: span 2; margin-top: 12px; padding: 14px; background: var(--color-surface-2); border: 1px solid var(--color-border);">
-        <h4 style="margin-bottom: 8px; font-weight: 800; font-size: 0.75rem; letter-spacing: 0.5px;">SMART Data Comparison (Pre-Wipe vs Post-Wipe)</h4>
-        <div style="font-size: 0.7rem; color: var(--color-text-muted); margin-bottom: 8px;">SMART snapshots captured before and after sanitization. Worsened metrics are flagged.</div>
-        <div class="kv"><span>Pre-Wipe Snapshot:</span><span style="color: var(--color-success);">✓ Captured</span></div>
-        <div class="kv"><span>Post-Wipe Snapshot:</span><span style="color: var(--color-success);">✓ Captured</span></div>
+      <div class="detail-section audit-detail-smart-section">
+        <h4 class="audit-detail-smart-title">SMART Data Comparison (Pre-Wipe vs Post-Wipe)</h4>
+        <div class="audit-detail-smart-desc">SMART snapshots captured before and after sanitization. Worsened metrics are flagged.</div>
+        <div class="kv"><span>Pre-Wipe Snapshot:</span><span class="audit-detail-smart-captured">✓ Captured</span></div>
+        <div class="kv"><span>Post-Wipe Snapshot:</span><span class="audit-detail-smart-captured">✓ Captured</span></div>
         ${metricsHtml}
       </div>
     `;
@@ -194,12 +194,12 @@ function renderExpandedAuditRow(job) {
         <div class="kv"><span>Finished At:</span><span>${escapeHtml(formatIsoDate(job.finished_at))}</span></div>
       </div>
       <div class="audit-actions-col">
-        <div style="font-size: 0.72rem; font-weight: 800; text-transform: uppercase; color: var(--color-text-muted); text-align: center;">Distribution Actions</div>
+        <div class="audit-detail-actions-label">Distribution Actions</div>
         <div class="audit-actions-grid">
-          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="print" ${isPrintable ? "" : "disabled"} style="padding: 6px;">Print Certificate</button>
-          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="html" ${isPrintable ? "" : "disabled"} style="padding: 6px;">HTML Download</button>
-          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="json" ${isPrintable ? "" : "disabled"} style="padding: 6px;">JSON Download</button>
-          <button type="button" class="copy-fields-btn" data-job-index="${escapeHtml(job.id)}" style="padding: 6px;">Copy Fields</button>
+          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="print" ${isPrintable ? "" : "disabled"} class="audit-detail-action-btn">Print Certificate</button>
+          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="html" ${isPrintable ? "" : "disabled"} class="audit-detail-action-btn">HTML Download</button>
+          <button type="button" data-cert-id="${escapeHtml(job.friendly_id)}" data-action="json" ${isPrintable ? "" : "disabled"} class="audit-detail-action-btn">JSON Download</button>
+          <button type="button" class="copy-fields-btn audit-detail-action-btn" data-job-index="${escapeHtml(job.id)}">Copy Fields</button>
         </div>
       </div>
       ${smartDiffHtml}
@@ -405,9 +405,11 @@ async function openPrintWindow(friendlyId) {
   printWindow.document.documentElement.innerHTML = `
     <!doctype html>
     <html lang="en">
-    <head><title>Loading Certificate...</title></head>
-    <body style="font-family: Arial, sans-serif; padding: 32px; text-align: center; color: #555;">
-      <h2 style="margin-bottom: 8px;">Retrieving compliance record...</h2>
+    <head><title>Loading Certificate...</title>
+    <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
+    </head>
+    <body>
+      <h2>Retrieving compliance record...</h2>
       <p>Fetching the HTML certificate layout from the station.</p>
     </body>
     </html>
@@ -418,17 +420,21 @@ async function openPrintWindow(friendlyId) {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    printWindow.document.documentElement.innerHTML = htmlContent;
+    // Inject <base> tag so relative CSS links resolve in the about:blank print window
+    const htmlWithBase = htmlContent.replace("<head>", `<head><base href="${window.location.origin}/">`);
+    printWindow.document.documentElement.innerHTML = htmlWithBase;
     printWindow.focus();
     printWindow.print();
   } catch (err) {
     printWindow.document.documentElement.innerHTML = `
       <!doctype html>
       <html lang="en">
-      <head><title>Error Retreiving Certificate</title></head>
-      <body style="font-family: Arial, sans-serif; padding: 32px; text-align: center; color: #dc2626;">
+      <head><title>Error Retreiving Certificate</title>
+      <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
+      </head>
+      <body class="print-error">
         <h2>Retrieval failure occurred</h2>
-        <p style="color: #555;">Error details: ${err.message}</p>
+        <p class="error-detail">Error details: ${err.message}</p>
       </body>
       </html>
     `;
@@ -445,9 +451,11 @@ async function openBulkPrintWindow(friendlyId) {
   printWindow.document.documentElement.innerHTML = `
     <!doctype html>
     <html lang="en">
-    <head><title>Loading Bulk Certificate...</title></head>
-    <body style="font-family: Arial, sans-serif; padding: 32px; text-align: center; color: #555;">
-      <h2 style="margin-bottom: 8px;">Retrieving bulk compliance records...</h2>
+    <head><title>Loading Bulk Certificate...</title>
+    <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
+    </head>
+    <body>
+      <h2>Retrieving bulk compliance records...</h2>
       <p>Fetching the bulk HTML certificate layout from the station.</p>
     </body>
     </html>
@@ -458,17 +466,21 @@ async function openBulkPrintWindow(friendlyId) {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    printWindow.document.documentElement.innerHTML = htmlContent;
+    // Inject <base> tag so relative CSS links resolve in the about:blank print window
+    const htmlWithBase = htmlContent.replace("<head>", `<head><base href="${window.location.origin}/">`);
+    printWindow.document.documentElement.innerHTML = htmlWithBase;
     printWindow.focus();
     printWindow.print();
   } catch (err) {
     printWindow.document.documentElement.innerHTML = `
       <!doctype html>
       <html lang="en">
-      <head><title>Error Retrieving Bulk Certificate</title></head>
-      <body style="font-family: Arial, sans-serif; padding: 32px; text-align: center; color: #dc2626;">
+      <head><title>Error Retrieving Bulk Certificate</title>
+      <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
+      </head>
+      <body class="print-error">
         <h2>Retrieval failure occurred</h2>
-        <p style="color: #555;">Error details: ${err.message}</p>
+        <p class="error-detail">Error details: ${err.message}</p>
       </body>
       </html>
     `;

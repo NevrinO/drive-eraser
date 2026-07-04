@@ -70,13 +70,6 @@ class TestAPIRoutes:
             api_routes.register_routes(app)
             yield app
         finally:
-            # Clean up database connections before stopping patches
-            from database import close_all_connections
-            try:
-                # Close all SQLite connections to prevent ResourceWarning
-                close_all_connections()
-            except Exception:
-                pass
             root_logger = logging.getLogger()
             for handler in list(root_logger.handlers):
                 if isinstance(handler, logging.FileHandler):
@@ -172,6 +165,7 @@ class TestAPIRoutes:
 
         with patch('api_routes.discover_drives', return_value=[mocked_drive]), \
              patch('api_routes.validate_single_bay', return_value=(validated, None, None)), \
+             patch('api_routes.check_health_gate_sync', return_value={"blocked": False}), \
              patch('api_routes.create_erase_job', return_value=job), \
              patch('api_routes.get_wipe_semaphore', return_value=mock_semaphore), \
              patch('api_routes.run_erase_job'), \

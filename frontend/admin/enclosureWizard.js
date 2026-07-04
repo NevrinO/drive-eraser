@@ -167,11 +167,11 @@ async function renderConfiguration() {
     const controllerLabel = hwInfo && hwInfo.vendor && hwInfo.model
       ? `${hwInfo.vendor} ${hwInfo.model}`
       : group.pci_controller;
-    const occupiedBadge = hwInfo ? ` <span style="background: #4a90e2; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${hwInfo.occupied_slots} drives</span>` : '';
+    const occupiedBadge = hwInfo ? ` <span class="wizard-badge-occupied">${hwInfo.occupied_slots} drives</span>` : '';
 
     // Use hardware_info total_slots (master slot map doesn't exist until after enclosures are configured)
     const totalSlots = hwInfo && hwInfo.total_slots ? hwInfo.total_slots : 0;
-    const totalBadge = totalSlots > 0 ? ` <span style="background: #666; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.75rem;">${totalSlots} slots</span>` : '';
+    const totalBadge = totalSlots > 0 ? ` <span class="wizard-badge-total">${totalSlots} slots</span>` : '';
 
     if (expanders.length > 0) {
       expanders.forEach(expander => {
@@ -200,11 +200,11 @@ async function renderConfiguration() {
 
   // Add hint about controller identification
   html += `
-    <div style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-top: 12px; border-left: 3px solid #4a90e2;">
-      <p style="margin: 0; font-size: 0.85rem; color: #aaa;">
+    <div class="wizard-hint-box">
+      <p class="wizard-hint-text">
         <strong>Tip:</strong> To identify which controller corresponds to your physical enclosure, insert a test drive into a bay and check which controller shows an increase in the "drives" count above.
       </p>
-      <button type="button" id="refreshHardwareInfo" style="margin-top: 8px; padding: 4px 8px; background: #4a90e2; color: white; border: none; border-radius: 3px; cursor: pointer; font-size: 0.75rem;">Refresh Drive Counts</button>
+      <button type="button" id="refreshHardwareInfo" class="wizard-refresh-btn">Refresh Drive Counts</button>
     </div>
   `;
 
@@ -226,9 +226,9 @@ async function renderConfiguration() {
   const selectedTemplate = availableTemplates.find(t => t.id === wizardData.template_id);
   if (selectedTemplate && selectedTemplate.hybrid_slots && selectedTemplate.hybrid_slots.length > 0) {
     html += `
-      <div class="form-group" style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-top: 12px;">
-        <label style="color: #4a90e2; font-weight: bold;">Hybrid Slot Configuration</label>
-        <p style="font-size: 0.8rem; color: #aaa; margin: 8px 0;">
+      <div class="form-group wizard-hybrid-section">
+        <label class="wizard-hybrid-label">Hybrid Slot Configuration</label>
+        <p class="wizard-hybrid-desc">
           This template contains ${selectedTemplate.hybrid_slots.length} Hybrid slots (Slots ${selectedTemplate.hybrid_slots.join(', ')}).
           Select starting PCIe NVMe Slot folder to auto-populate hardware paths:
         </p>
@@ -257,7 +257,7 @@ async function renderConfiguration() {
               const selected = wizardData.nvme_starting_slot === drive.by_path ? 'selected' : '';
               html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
             });
-            html += `<small style="color: #888; display: block; margin-top: 4px;">Using detected NVMe drives (no hot-plug slots found)</small>`;
+            html += `<small class="wizard-form-hint">Using detected NVMe drives (no hot-plug slots found)</small>`;
           } else {
             html += `<option value="" disabled>No NVMe drives detected in system</option>`;
           }
@@ -277,7 +277,7 @@ async function renderConfiguration() {
 
     html += `
         </select>
-        <small style="color: #888; display: block; margin-top: 4px;">
+        <small class="wizard-form-hint">
           System will auto-map hybrid slots using the starting slot as a base, incrementing by hybrid slot index.
         </small>
       </div>
@@ -510,10 +510,10 @@ function renderSlotAssignment() {
     .sort((a, b) => parseInt(a, 10) - parseInt(b, 10));
 
   let html = `
-    <div class="form-group" style="background: #2a2a2a; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
-      <label style="font-weight: bold;">Starting Slot Number</label>
-      <input type="number" id="wizardStartingSlotLive" value="${wizardData.starting_slot_number}" min="0" style="width: 100px; padding: 4px; background: #333; border: 1px solid #555; color: #fff;">
-      <small style="color: #888; display: block; margin-top: 4px;">Changing this will live-update the slot table below.</small>
+    <div class="form-group wizard-slot-config-section">
+      <label class="wizard-slot-config-label">Starting Slot Number</label>
+      <input type="number" id="wizardStartingSlotLive" value="${wizardData.starting_slot_number}" min="0" class="wizard-slot-number-input">
+      <small class="wizard-form-hint">Changing this will live-update the slot table below.</small>
     </div>
     <table class="slot-validation-table">
       <thead>
@@ -535,7 +535,7 @@ function renderSlotAssignment() {
     const slotType = sasMapping ? sasMapping.slot_type : null;
 
     // Check if drive is present by matching against master slot map
-    let status = '<span style="color: #888;">Unconfigured</span>';
+    let status = '<span class="slot-status--unconfigured">Unconfigured</span>';
     if (hwId && slotType) {
       const masterEntry = masterSlotMap.find(e =>
         e.hardware_identifier === hwId &&
@@ -544,9 +544,9 @@ function renderSlotAssignment() {
         (wizardData.expander_sas_address ? e.expander_sas_address === wizardData.expander_sas_address : !e.expander_sas_address)
       );
       if (masterEntry) {
-        status = '<span style="color: #4CAF50;">Drive Present</span>';
+        status = '<span class="slot-status--present">Drive Present</span>';
       } else {
-        status = '<span style="color: #FFA500;">Empty Bay</span>';
+        status = '<span class="slot-status--empty">Empty Bay</span>';
       }
     }
 
@@ -554,17 +554,17 @@ function renderSlotAssignment() {
       <tr>
         <td rowspan="${nvmeMapping ? 2 : 1}"><strong>${slot.physical_slot_number}</strong></td>
         <td rowspan="${nvmeMapping ? 2 : 1}">
-          <input type="text" class="slot-label-input" data-slot-index="${index}" value="${escapeHtml(slot.label)}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+          <input type="text" class="slot-label-input wizard-form-input" data-slot-index="${index}" value="${escapeHtml(slot.label)}">
         </td>
         <td rowspan="${nvmeMapping ? 2 : 1}">
-          <select class="slot-role-select" data-slot-index="${index}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+          <select class="slot-role-select wizard-form-select" data-slot-index="${index}">
             <option value="wipe" ${slot.role === 'wipe' ? 'selected' : ''}>Wipe</option>
             <option value="os" ${slot.role === 'os' ? 'selected' : ''}>OS Drive</option>
             <option value="reserved" ${slot.role === 'reserved' ? 'selected' : ''}>Reserved</option>
           </select>
         </td>
         <td>
-          <input type="text" class="hw-id-input" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+          <input type="text" class="hw-id-input wizard-form-input" data-slot-index="${index}" data-interface="sas_sata" data-slot-type="${sasMapping ? escapeHtml(sasMapping.slot_type) : ''}" value="${sasMapping ? escapeHtml(sasMapping.hardware_identifier) : ''}">
         </td>
         <td>${status}</td>
       </tr>
@@ -573,7 +573,7 @@ function renderSlotAssignment() {
     if (nvmeMapping) {
       const nvmeHwId = nvmeMapping.hardware_identifier;
       const nvmeSlotType = nvmeMapping.slot_type;
-      let nvmeStatus = '<span style="color: #888;">Unconfigured</span>';
+      let nvmeStatus = '<span class="slot-status--unconfigured">Unconfigured</span>';
       if (nvmeHwId && nvmeSlotType) {
         // Check against master slot map (PCIe hot-plug slots)
         const nvmeMasterEntry = masterSlotMap.find(e =>
@@ -584,9 +584,9 @@ function renderSlotAssignment() {
         // If slot exists in master map, show as configured
         // We can't easily determine drive presence without scanning devices
         if (nvmeMasterEntry) {
-          nvmeStatus = '<span style="color: #4CAF50;">Configured</span>';
+          nvmeStatus = '<span class="slot-status--configured">Configured</span>';
         } else {
-          nvmeStatus = '<span style="color: #FFA500;">Unconfigured</span>';
+          nvmeStatus = '<span class="slot-status--empty">Unconfigured</span>';
         }
       }
 
@@ -600,7 +600,7 @@ function renderSlotAssignment() {
       html += `
         <tr>
           <td>
-            <select class="hw-id-input" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}" style="width: 100%; padding: 4px; background: #222; border: 1px solid #444; color: #fff;">
+            <select class="hw-id-input wizard-form-select" data-slot-index="${index}" data-interface="nvme" data-slot-type="${nvmeMapping ? escapeHtml(nvmeMapping.slot_type) : ''}">
               ${nvmeOptions}
             </select>
           </td>

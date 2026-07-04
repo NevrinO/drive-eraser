@@ -21,7 +21,7 @@ async function loadTriageReport() {
     console.error("Failed to load triage report:", error);
     const tableHead = document.querySelector("#triageTable thead tr");
     const colCount = tableHead ? tableHead.querySelectorAll("th").length : 8;
-    triageTableBody.innerHTML = `<tr><td colspan="${colCount}" style="text-align: center; color: var(--color-danger);">Failed to load drives: ${error.message}</td></tr>`;
+    triageTableBody.innerHTML = `<tr><td colspan="${colCount}" class="triage-error-cell">Failed to load drives: ${error.message}</td></tr>`;
   }
 }
 
@@ -72,7 +72,7 @@ function renderTriageTable() {
   if (filteredDrives.length === 0) {
     const tableHead = document.querySelector("#triageTable thead tr");
     const colCount = tableHead ? tableHead.querySelectorAll("th").length : 8;
-    triageTableBody.innerHTML = `<tr><td colspan="${colCount}" style="text-align: center; color: var(--color-text-muted);">No drives match the current filter criteria</td></tr>`;
+    triageTableBody.innerHTML = `<tr><td colspan="${colCount}" class="triage-empty-cell">No drives match the current filter criteria</td></tr>`;
     return;
   }
 

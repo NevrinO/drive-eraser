@@ -98,7 +98,8 @@ function computeRecommendedMethod(drive) {
 
 function calculateDriveHealthScore(drive) {
   if (!drive || !drive.present) return 0;
-  return drive.health_score ?? null;
+  const val = drive.health_score;
+  return typeof val === 'number' && isFinite(val) ? val : null;
 }
 
 async function copyTextToClipboard(text) {

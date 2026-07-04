@@ -6,7 +6,7 @@ import json
 import logging
 
 from disk_utils import get_command_path, run_command
-from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS
+from smart_constants import correct_self_test_log_hours
 from smart_utils import validate_device_path
 from smart_data_parsing import get_smart_data
 
@@ -221,37 +221,15 @@ def get_smart_test_status(device, diagnostics=None):
                     current_poh = current_smart.get("power_on_hours")
                     serial = current_smart.get("serial")
 
-                if current_poh and log_hours is not None:
-                    if current_poh < SMART_SELF_TEST_LOG_MAX_HOURS:
-                        # No rollover possible
-                        corrected_hours = log_hours
-                    else:
-                        # POH > 65,535 - rollover has occurred
-                        # Get historical POH from database
-                        historical_poh = None
-                        if serial:
-                            try:
-                                from database import get_historical_poh_for_serial
-                                historical_poh = get_historical_poh_for_serial(serial)
-                            except Exception as e:
-                                logger.warning(f"Failed to get historical POH for {serial}: {e}")
+                historical_poh = None
+                if serial:
+                    try:
+                        from database import get_historical_poh_for_serial
+                        historical_poh = get_historical_poh_for_serial(serial)
+                    except Exception as e:
+                        logger.warning(f"Failed to get historical POH for {serial}: {e}")
 
-                        # Only correct if we have historical evidence that drive was already over 65,535
-                        # when we started tracking it (proves this is our system's data)
-                        if historical_poh and historical_poh > SMART_SELF_TEST_LOG_MAX_HOURS:
-                            # We know from database that drive was already over 65,535 when we first saw it
-                            # Calculate rollovers based on current POH (use 65536 for accurate boundary)
-                            rollover_count = int(current_poh // SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY)
-                            corrected_hours = log_hours + (rollover_count * SMART_SELF_TEST_LOG_MAX_HOURS)
-                            rollover_corrected = True
-                            # Flag ambiguous if near rollover boundary (within 1000 hours)
-                            # or if log hours differ significantly from expected corrected hours
-                            if current_poh > SMART_SELF_TEST_LOG_MAX_HOURS and (abs(current_poh % SMART_SELF_TEST_LOG_MAX_HOURS) < SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS or abs(current_poh - corrected_hours) > SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS):
-                                ambiguous = True
-                        else:
-                            # No database history or drive was under 65,535 when we first saw it
-                            # Don't correct - these may be from another system or before rollover
-                            corrected_hours = log_hours
+                corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
             except Exception:
                 # If we can't get current POH, use raw log hours
                 corrected_hours = log_hours

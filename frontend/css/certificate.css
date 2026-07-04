@@ -1,0 +1,29 @@
+/* Certificate HTML styling — used by certificate print windows and downloaded HTML */
+body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.header-left { flex: 1; }
+.header-right { flex: 0 0 auto; }
+.header .meta { color: #555; margin-bottom: 0; font-family: monospace; font-size: 1.1rem; }
+.section { margin-bottom: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 4px; text-align: left; vertical-align: top; }
+th { width: 240px; background: #f8fafc; color: #334155; }
+pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
+.status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
+.status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
+.certificate-container { page-break-after: always; }
+.certificate-container:last-child { page-break-after: auto; }
+
+/* Dynamic header colors based on wipe status */
+h1 { margin: 0; }
+h1.cert-title-ok { color: #1e3a8a; }
+h1.cert-title-fail { color: #dc2626; }
+
+/* Logo image sizing */
+.cert-logo { max-height: 75px; max-width: 500px; }
+
+@media print {
+  body { margin: 0; }
+  .certificate-container { page-break-after: always; }
+  .certificate-container:last-child { page-break-after: auto; }
+}

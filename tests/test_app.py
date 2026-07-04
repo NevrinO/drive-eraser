@@ -56,6 +56,10 @@ class TestBlueprintRegistration:
         assert 'bay_mapping_routes' in registered_blueprints
         assert 'discovery_routes' in registered_blueprints
         assert 'template_routes' in registered_blueprints
+        assert 'support_routes' in registered_blueprints
+        assert 'policy_routes' in registered_blueprints
+        assert 'enclosure_routes' in registered_blueprints
+        assert 'smart_routes' in registered_blueprints
 
 
 class TestSecurityHeaders:
@@ -89,7 +93,8 @@ class TestSecurityHeaders:
         csp = result.headers['Content-Security-Policy']
         assert "default-src 'self'" in csp
         assert "script-src 'self'" in csp
-        assert "style-src 'self' 'unsafe-inline'" in csp
+        assert "style-src 'self'" in csp
+        assert "unsafe-inline" not in csp
 
 
 class TestDatabaseInitialization:

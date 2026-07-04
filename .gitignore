@@ -248,8 +248,8 @@ progress.txt
 # Code review scratchpad (working file, not project content)
 code_concerns.md
 
-# Triage script output (generated, not project content)
-scripts/triage_output.json
+# Triage workspace (scripts, output, plans — generated, not project content)
+triage/
 
 # Release build artifacts
 drive-eraser-*.zip

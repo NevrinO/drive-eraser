@@ -179,3 +179,112 @@
 .status-chip.status-view-only { background: rgba(168, 85, 247, 0.15); color: var(--color-purple); border: 1px solid var(--color-purple); }
 .status-chip.status-empty { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
 .status-chip.status-warning { background: rgba(245, 158, 11, 0.15); color: var(--color-warning); border: 1px solid var(--color-warning); }
+
+/* JS-generated audit detail classes */
+.audit-detail-fail {
+  grid-column: span 2;
+  border-color: var(--color-danger);
+  background: #220a0d;
+  margin-top: 12px;
+  padding: 14px;
+}
+
+.audit-detail-fail-title {
+  color: var(--color-danger);
+  margin-bottom: 6px;
+  font-weight: 800;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.audit-detail-fail-code {
+  color: var(--color-danger) !important;
+  font-weight: 800;
+}
+
+.audit-detail-fail-section {
+  margin-top: 10px;
+}
+
+.audit-detail-fail-label {
+  font-size: 0.65rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+  letter-spacing: 0.5px;
+}
+
+.audit-detail-fail-pre {
+  background: #000;
+  border-color: #4c1d1d;
+  max-height: 180px;
+  color: #fecaca;
+  white-space: pre-wrap;
+  font-size: 11px;
+}
+
+.audit-detail-bulk-type {
+  color: var(--color-primary);
+  font-weight: 800;
+}
+
+.audit-detail-actions-label {
+  font-size: 0.72rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+.audit-detail-action-btn {
+  padding: 6px;
+}
+
+.audit-detail-smart-section {
+  grid-column: span 2;
+  margin-top: 12px;
+  padding: 14px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+}
+
+.audit-detail-smart-title {
+  margin-bottom: 8px;
+  font-weight: 800;
+  font-size: 0.75rem;
+  letter-spacing: 0.5px;
+}
+
+.audit-detail-smart-desc {
+  font-size: 0.7rem;
+  color: var(--color-text-muted);
+  margin-bottom: 8px;
+}
+
+.audit-detail-smart-captured {
+  color: var(--color-success);
+}
+
+.audit-detail-metric-row {
+  margin-top: 4px;
+}
+
+.audit-detail-metric-name {
+  color: var(--color-error);
+}
+
+.audit-detail-no-degradation {
+  margin-top: 8px;
+  font-size: 0.7rem;
+  color: var(--color-success);
+}
+
+.audit-detail-job-model {
+  font-weight: 700;
+}
+
+.audit-detail-job-serial {
+  font-size: 0.8rem;
+  font-family: monospace;
+}

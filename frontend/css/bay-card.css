@@ -318,3 +318,90 @@
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.7; }
 }
+
+/* JS-generated drive card classes */
+.bay-banner--blocked {
+  background: transparent;
+  color: #444;
+}
+
+.bay-number--blocked {
+  color: #444;
+}
+
+.enclosure-section-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.enclosure-section-header h3--primary {
+  color: var(--color-primary);
+}
+
+.enclosure-section-header h3--warning {
+  color: var(--color-warning);
+}
+
+.enclosure-section-header small {
+  color: #888;
+}
+
+.bay-card-badges {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.drive-type-badge--xs {
+  font-size: 0.65rem;
+}
+
+.health-label-running {
+  color: var(--color-primary);
+  font-weight: bold;
+}
+
+.health-label-loading {
+  color: var(--color-warning);
+}
+
+.health-label-na {
+  color: var(--color-text-card-muted);
+}
+
+.card-checkbox--visible {
+  display: block;
+}
+
+.batch-config-drive-info {
+  color: var(--color-text-muted);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.batch-drive-method-select {
+  padding: 6px;
+  font-size: 0.75rem;
+}
+
+.enclosure-section-title {
+  margin: 0;
+  font-size: 1.1rem;
+}
+
+.enclosure-section-title--primary {
+  color: var(--color-primary);
+}
+
+.enclosure-section-title--warning {
+  color: var(--color-warning);
+}
+
+.enclosure-section-count {
+  color: #888;
+}
+
+.health-bar-fill--full {
+  width: 100%;
+}
