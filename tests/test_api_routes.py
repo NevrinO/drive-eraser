@@ -70,13 +70,6 @@ class TestAPIRoutes:
             api_routes.register_routes(app)
             yield app
         finally:
-            # Clean up database connections before stopping patches
-            from database import close_all_connections
-            try:
-                # Close all SQLite connections to prevent ResourceWarning
-                close_all_connections()
-            except Exception:
-                pass
             root_logger = logging.getLogger()
             for handler in list(root_logger.handlers):
                 if isinstance(handler, logging.FileHandler):

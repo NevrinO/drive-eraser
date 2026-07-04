@@ -13,7 +13,8 @@ from contextlib import closing
 from datetime import datetime, timezone
 
 # Constants
-ESTIMATED_ERASE_TIMEOUT_SECONDS = 600  # Default estimated timeout for erase operations (10 minutes)
+DEFAULT_SATA_ERASE_ESTIMATE_SECONDS = 600  # Default estimated seconds for SATA erase progress calculation
+SATA_SECURITY_PASSWORD = "wipestation"  # Used for hdparm security-erase commands
 
 # High #14: Global generation counter for job interruption.
 # Uses a monotonically increasing counter instead of a boolean flag to avoid
@@ -198,8 +199,6 @@ def get_device_sectors_written(device):
     try:
         dev_name = os.path.basename(device)
         stat_path = f"/sys/block/{dev_name}/stat"
-        if not os.path.exists(stat_path):
-            return None
         with open(stat_path, "r") as f:
             content = f.read().strip()
         parts = content.split()
@@ -259,7 +258,7 @@ def prepare_erase_command(device, interface_type, method):
     iface = str(interface_type or "").strip().lower()
 
     # Validate interface type is one of the supported types
-    supported_interfaces = {"sata", "sas", "nvme", "scsi"}
+    supported_interfaces = {"sata", "sas", "nvme"}
     if iface and iface not in supported_interfaces:
         return {"ok": False, "error": f"unsupported_interface:{iface}"}
 
@@ -273,7 +272,7 @@ def prepare_erase_command(device, interface_type, method):
         hdparm_cmd = resolve_verify_command_path("hdparm")
         if not hdparm_cmd:
             return {"ok": False, "error": "hdparm_not_available"}
-        user_password = "wipestation"
+        user_password = SATA_SECURITY_PASSWORD
         erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
         erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
         return {"ok": True, "command": erase_cmd}
@@ -454,7 +453,7 @@ def run_erase_job(job_id):
             finalize_failed_job(job_id, "hdparm_not_available")
             return
 
-        user_password = "wipestation"
+        user_password = SATA_SECURITY_PASSWORD
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         try:
             set_pass_proc = subprocess.run(set_pass_cmd, capture_output=True, text=True, shell=False)
@@ -527,12 +526,15 @@ def run_erase_job(job_id):
             if job:
                 job["_process"] = process
     except Exception as e:
-        log_file.close()
+        try:
+            log_file.close()
+        except Exception:
+            pass
         finalize_failed_job(job_id, f"process_spawn_failed:{str(e)}")
         return
 
     try:
-        estimated_seconds = ESTIMATED_ERASE_TIMEOUT_SECONDS
+        estimated_seconds = DEFAULT_SATA_ERASE_ESTIMATE_SECONDS
 
         # Thread sleep telemetry updates loop (contained within individual job context)
         while process.poll() is None:
@@ -640,6 +642,11 @@ def run_erase_job(job_id):
 
         exit_code = process.returncode
         execution_ok = (exit_code == 0)
+
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["_process"] = None
 
         log_file.flush()
         log_file.close()
@@ -770,6 +777,13 @@ def run_erase_job(job_id):
                     phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
                     fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                     progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
+            elif status_report is None:
+                # No status report for this interface type (e.g., scsi)
+                logger.warning(f"No status report for interface_type={interface_type} during firmware polling for {device}")
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    break
+                phase_text = f"Polling drive (no status report... {consecutive_errors}/{max_consecutive_errors})"
             else:
                 # Unknown error - log details and increment error counter
                 logger.warning(f"Unexpected verification error during firmware polling for {device}: {status_report.get('error')}, details: {status_report.get('details')}")
@@ -837,7 +851,6 @@ def run_erase_job(job_id):
             # Phase 5: Capture post-wipe SMART snapshot after successful verification
             post_wipe_smart = None
             try:
-                from smart_parsing import get_smart_data
                 command_diagnostics = {}
                 post_wipe_smart = get_smart_data(device, command_diagnostics)
                 if post_wipe_smart:

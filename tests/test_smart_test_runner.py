@@ -349,10 +349,6 @@ class TestSmartTestDatabaseFunctions:
                 assert row[2] == "TEST123"
                 assert row[3] == "short"
                 assert row[6] == "started"
-            
-            # Close all SQLite connections before temp directory cleanup
-            from database import close_all_connections
-            close_all_connections()
 
     @patch('database.get_db_path')
     def test_record_smart_test_run_invalid_device(self, mock_get_db_path):
@@ -407,10 +403,6 @@ class TestSmartTestDatabaseFunctions:
                 assert row[6] == "completed"
                 assert row[7] == "passed"
                 assert row[5] is not None  # finished_at should be set
-            
-            # Close all SQLite connections before temp directory cleanup
-            from database import close_all_connections
-            close_all_connections()
 
     @patch('database.get_db_path')
     def test_get_smart_test_history(self, mock_get_db_path):
@@ -447,10 +439,6 @@ class TestSmartTestDatabaseFunctions:
             assert len(history) == 2
             assert history[0]["device"] == "/dev/sda"
             assert history[0]["serial"] == "TEST123"
-            
-            # Close all SQLite connections before temp directory cleanup
-            from database import close_all_connections
-            close_all_connections()
 
     @patch('database.get_db_path')
     def test_get_smart_test_history_invalid_device(self, mock_get_db_path):
@@ -508,10 +496,6 @@ class TestSmartTestDatabaseFunctions:
             history = get_smart_test_history(device="/dev/sda", limit=5000)
 
             assert len(history) <= 1000  # Should be capped at 1000
-            
-            # Close all SQLite connections before temp directory cleanup
-            from database import close_all_connections
-            close_all_connections()
 
 
 class TestSmartDetailsEndpoint:

@@ -323,7 +323,7 @@ class TestEnclosureCrudOperations:
         for p in patches:
             p.start()
         try:
-            from database import init_wipe_db, close_all_connections
+            from database import init_wipe_db
             init_wipe_db()
             from flask import Flask
             from app_config import limiter
@@ -338,11 +338,6 @@ class TestEnclosureCrudOperations:
             api_routes.register_routes(app)
             yield app
         finally:
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 
@@ -626,7 +621,7 @@ class TestSlotMappingCrudOperations:
         for p in patches:
             p.start()
         try:
-            from database import init_wipe_db, close_all_connections
+            from database import init_wipe_db
             init_wipe_db()
             from flask import Flask
             from app_config import limiter
@@ -641,11 +636,6 @@ class TestSlotMappingCrudOperations:
             api_routes.register_routes(app)
             yield app
         finally:
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 

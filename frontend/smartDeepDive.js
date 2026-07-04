@@ -4,7 +4,6 @@
 let smartDeepDiveModal = null;
 let smartDeepDiveContent = null;
 let smartTestPollingInterval = null;
-let currentTestDevice = null;
 
 // Initialize the modal on load
 document.addEventListener('DOMContentLoaded', () => {
@@ -35,27 +34,17 @@ document.addEventListener('DOMContentLoaded', () => {
     elem.addEventListener('click', closeSmartDeepDive);
   });
 
-  // Event delegation for SMART test buttons
+  // Event delegation for SMART test and refresh buttons
   smartDeepDiveModal.addEventListener('click', (event) => {
     if (event.target.matches('[data-start-smart-test]')) {
-      const button = event.target;
-      const device = button.dataset.device;
-      startSmartTest(device);
-    }
-  });
-
-  // Event delegation for refresh SMART details buttons
-  smartDeepDiveModal.addEventListener('click', (event) => {
-    if (event.target.matches('[data-refresh-smart-details]')) {
-      const button = event.target;
-      const device = button.dataset.device;
-      loadSmartDetails(device, '', '');
+      startSmartTest(event.target.dataset.device);
+    } else if (event.target.matches('[data-refresh-smart-details]')) {
+      loadSmartDetails(event.target.dataset.device, '', '');
     }
   });
 });
 
 async function openSmartDeepDiveModal(device, serial, interfaceType) {
-  currentTestDevice = device;
   smartDeepDiveContent.innerHTML = '<p>Loading SMART data...</p>';
   openModal(smartDeepDiveModal);
   await loadSmartDetails(device, serial, interfaceType);
@@ -71,7 +60,6 @@ function closeSmartDeepDive() {
     smartTestPollingInterval = null;
   }
   closeModal(smartDeepDiveModal);
-  currentTestDevice = null;
 }
 
 async function checkAndResumeTestPolling(device) {
@@ -87,12 +75,13 @@ async function checkAndResumeTestPolling(device) {
     if (data.status === 'in_progress') {
       // Test is still running, resume polling
       const testType = data.test_type || 'short';
+      const pct = typeof data.percentage === 'number' && isFinite(data.percentage) ? data.percentage : 0;
       testStatusDiv.innerHTML = `
         <p>Test in progress (resumed)...</p>
         <div class="progress-bar">
-          <div class="progress-bar-fill" id="testProgressBar" style="width: ${data.percentage || 0}%"></div>
+          <div class="progress-bar-fill" id="testProgressBar" style="width: ${pct}%"></div>
         </div>
-        <p id="testProgressText">${Math.round(data.percentage || 0)}%</p>
+        <p id="testProgressText">${Math.round(pct)}%</p>
       `;
       pollSmartTestStatus(device, testType);
     } else if (data.status === 'completed') {
@@ -156,7 +145,7 @@ function renderSmartDetails(data, device, serial, interfaceType) {
   html += `
     <div class="detail-section">
       <h4>Self-Test History</h4>
-      ${renderAuditHistory(data.audit_history, data.self_test_logs, data.current_power_on_hours, device)}
+      ${renderAuditHistory(data.self_test_logs, data.current_power_on_hours)}
     </div>
   `;
 
@@ -233,7 +222,7 @@ function renderAttributesTable(attributes) {
     const name = attr.name || 'Unknown';
 
     // Flag attributes with concerning values
-    const rowClass = (attr.thresh && attr.value && attr.value < attr.thresh) ? 'row-warning' : '';
+    const rowClass = (attr.thresh !== undefined && attr.value !== undefined && attr.value < attr.thresh) ? 'row-warning' : '';
 
     return `
       <tr class="${rowClass}">
@@ -266,7 +255,7 @@ function renderAttributesTable(attributes) {
   `;
 }
 
-function renderAuditHistory(auditHistory, liveSelfTestLogs, currentPoh, device) {
+function renderAuditHistory(liveSelfTestLogs, currentPoh) {
   let html = '';
 
   // Display current POH for context
@@ -328,8 +317,8 @@ function renderAuditHistory(auditHistory, liveSelfTestLogs, currentPoh, device) 
         <tr>
           <td>${escapeHtml(testType)}</td>
           <td><span class="status-chip ${statusClass}">${escapeHtml(status)}</span></td>
-          <td>${test.remaining !== undefined && test.remaining !== null && test.remaining !== 'null' ? test.remaining + '%' : '-'}</td>
-          <td>${test.lba || '-'}</td>
+          <td>${test.remaining !== undefined && test.remaining !== null && String(test.remaining).toLowerCase() !== 'null' ? test.remaining + '%' : '-'}</td>
+          <td>${test.lba !== undefined && test.lba !== null ? test.lba : '-'}</td>
           <td>${hoursDisplay}</td>
         </tr>
       `;

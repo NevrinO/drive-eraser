@@ -72,23 +72,16 @@ class TestDiscoveryRoutes:
             api_routes.register_routes(app)
             yield app
         finally:
-            # Clean up database connections before stopping patches
-            from database import close_all_connections
+            # Close log file handlers to prevent Windows file locking issues
             import logging
-            try:
-                # Close all SQLite connections to prevent ResourceWarning
-                close_all_connections()
-                # Close log file handlers to prevent Windows file locking issues
-                root_logger = logging.getLogger()
-                for handler in list(root_logger.handlers):
-                    if isinstance(handler, logging.FileHandler):
-                        try:
-                            handler.close()
-                            root_logger.removeHandler(handler)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            root_logger = logging.getLogger()
+            for handler in list(root_logger.handlers):
+                if isinstance(handler, logging.FileHandler):
+                    try:
+                        handler.close()
+                        root_logger.removeHandler(handler)
+                    except Exception:
+                        pass
             for p in patches:
                 p.stop()
 

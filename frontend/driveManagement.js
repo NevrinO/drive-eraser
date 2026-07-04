@@ -25,7 +25,7 @@ async function loadEnclosuresForWorkbench() {
   workbenchEnclosuresPromise = (async () => {
     try {
       const response = await safeFetch("/api/admin/enclosures");
-      if (!response.ok) return;
+      if (!response.ok) { console.warn("Enclosures fetch failed:", response.status); return; }
       const data = await response.json();
       workbenchEnclosures = {};
       (data.enclosures || []).forEach(enc => {
@@ -186,6 +186,7 @@ async function loadDrives(silent = false, forceRefresh = false) {
       lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     }
   } catch (error) {
+    console.error("loadDrives error:", error);
     if (!silent) apiStatus.textContent = `API Status: Error (${error.message})`;
   }
 }
@@ -449,13 +450,11 @@ function renderBaysByEnclosure(drives) {
 
     // Create a map of drives by their physical position
     const driveByPosition = new Map();
-    const drivesWithInvalidPositions = [];
     enclosureDrives.forEach(drive => {
       const pos = drive.physical_position;
       if (pos && Number.isInteger(pos.row) && Number.isInteger(pos.col)) {
         driveByPosition.set(`${pos.row},${pos.col}`, drive);
       } else {
-        drivesWithInvalidPositions.push(drive);
         allDrivesWithInvalidPositions.push(drive);
       }
     });
@@ -735,8 +734,9 @@ function getZeroCheckBannerLabel(drive) {
 function renderBayCard(drive) {
   const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
   const isEmpty = !drive.present;
-  const isCritical = String(drive.status).toUpperCase() === "FAILED";
-  const isRunning = String(drive.status).toUpperCase() === "RUNNING";
+  const driveStatus = (drive.status || "READY").toUpperCase();
+  const isCritical = driveStatus === "FAILED";
+  const isRunning = driveStatus === "RUNNING";
   const isCompleted = drive.marker && drive.marker.status !== "none" && drive.marker.status !== "corrupted" && drive.marker.status !== "written_since_wipe";
   const isWrittenSinceWipe = drive.marker && drive.marker.status === "written_since_wipe";
   const isMarkerDisabled = drive.marker && (drive.marker.status === "disabled_per_request" || drive.marker.status === "disabled_by_policy");
@@ -855,7 +855,7 @@ function renderBayCard(drive) {
   const driveTypeLabel = drive.drive_type && (drive.drive_type === "ssd" || drive.drive_type === "hdd") ? drive.drive_type.toUpperCase() : "";
   const driveTypeClass = drive.drive_type === "ssd" ? "badge-ssd" : "badge-hdd";
 
-  const progressPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
+  const progressPercent = typeof drive.progress_percent === 'number' && isFinite(drive.progress_percent) ? drive.progress_percent : 0.0;
   const phaseLabel = drive.current_phase || "Sanitizing...";
 
   // ──────────────────────────────────────────────────────────────────────

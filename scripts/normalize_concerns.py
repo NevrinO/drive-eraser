@@ -62,12 +62,19 @@ LEGACY_PATTERNS = [
     ("format_e",
      re.compile(r"^###\s+(?:\[COMPLETED\]\s*)?(ORG\d+):\s+(.+?)\s*$", re.MULTILINE),
      {"id": 0, "title": 1}),
+
+    # Format F: ### A1: Title  (id-first, no severity, no em-dash, no difficulty inline)
+    # This is the body-field format produced by deep-review when canonical format isn't followed.
+    # Difficulty and Category are extracted from body fields (**Difficulty**, **Category**).
+    ("format_f",
+     re.compile(r"^###\s+(?:\[COMPLETED\]\s*)?([ACFY](?:-[A-Z]+)?\d+|ORG\d+):\s+(.+?)\s*$", re.MULTILINE),
+     {"id": 0, "title": 1}),
 ]
 
 # Canonical heading pattern
 CANONICAL_PATTERN = re.compile(
     r"^###\s+(?:(\[COMPLETED\]\s*)?)"
-    r"([AC]\d+|ORG\d+):\s*"
+    r"([ACFY](?:-[A-Z]+)?\d+|ORG\d+):\s*"
     r"(?:\[(Critical|Advisory)\]\s+)?"
     r"(.+?)\s+"
     r"\u2014\s+Difficulty:\s*(\w+)\s+"
@@ -260,17 +267,27 @@ def parse_legacy(heading: str, body: str) -> dict | None:
             continue
 
         # Extract issue/suggestion text for difficulty/category inference
+        # Try canonical field names first, then body-field alternatives
         issue_text = ""
         suggestion_text = ""
         issue_m = re.search(r"\*\*Issue\*\*:\s*(.+?)(?=\*\*Impact\*\*|\Z)", body, re.DOTALL)
+        if not issue_m:
+            issue_m = re.search(r"\*\*Root Problem\*\*:\s*(.+?)(?=\*\*Fix\*\*|\*\*Suggestion\*\*|\*\*Depends-on\*\*|\*\*Related\*\*|\Z)", body, re.DOTALL)
         if issue_m:
             issue_text = issue_m.group(1).strip()
         sug_m = re.search(r"\*\*Suggestion\*\*:\s*(.+?)(?=\n-|\n###|\Z)", body, re.DOTALL)
+        if not sug_m:
+            sug_m = re.search(r"\*\*Fix\*\*:\s*(.+?)(?=\n-|\n###|\Z)", body, re.DOTALL)
         if sug_m:
             suggestion_text = sug_m.group(1).strip()
 
         # Infer missing fields
         difficulty = data.get("difficulty")
+        if not difficulty:
+            # Check for **Difficulty** in body (body-field format)
+            diff_m = re.search(r"\*\*Difficulty\*\*:\s*(\w+)", body)
+            if diff_m:
+                difficulty = diff_m.group(1).strip()
         if not difficulty:
             difficulty = infer_difficulty(issue_text, suggestion_text)
 

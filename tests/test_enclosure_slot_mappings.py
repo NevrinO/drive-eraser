@@ -68,11 +68,6 @@ class TestEnclosureSlotMappings:
             api_routes.register_routes(app)
             yield app
         finally:
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             for p in patches:
                 p.stop()
 

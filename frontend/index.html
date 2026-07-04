@@ -11,6 +11,7 @@
 <body>
   <a href="#main-content" class="skip-to-content">Skip to main content</a>
   <div class="app" id="main-content">
+    <noscript><p style="padding: 2rem; text-align: center;">This application requires JavaScript to function.</p></noscript>
     <header class="app-header">
       <h1>Drive Sanitization Station</h1>
       <div class="header-actions">
@@ -141,7 +142,7 @@
       </div>
     </section>
 
-    <!-- TAB C: SYSTEM ADMINISTRATION -->
+    <!-- TAB D: SYSTEM ADMINISTRATION -->
     <section id="adminPanel" class="tab-panel">
       <div class="admin-grid">
         
@@ -253,7 +254,7 @@
           <div id="logoStatus" class="test-result-label hidden"></div>
         </div>
 
-        <!-- Zone E: Enclosure Management -->
+        <!-- Zone G: Enclosure Management -->
         <div class="admin-card grid-span-2">
           <div class="card-header-row flex-row-between mb-3">
             <div class="card-title mb-0">Enclosure Management</div>
@@ -265,7 +266,7 @@
           </div>
         </div>
 
-        <!-- Zone F: Interactive Bay Mapping -->
+        <!-- Zone H: Interactive Bay Mapping -->
         <div class="admin-card grid-span-2">
           <div class="card-header-row flex-row-between mb-3">
             <div class="card-title mb-0">Interactive Physical Bay Mapping</div>
@@ -316,9 +317,9 @@
   </div>
 
   <!-- NETWORK AUTHENTICATION OVERLAY -->
-  <div id="authOverlay" class="auth-overlay hidden">
+  <div id="authOverlay" class="auth-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="authTitle">
     <div class="auth-dialog">
-      <h2>Remote Network Access Required</h2>
+      <h2 id="authTitle">Remote Network Access Required</h2>
       <p>Please enter the administrator passphrase configured in policy.json to interact with this station.</p>
       <form id="authForm">
         <input type="password" id="authPassphrase" class="input--auth" placeholder="Passphrase" autocomplete="current-password">
@@ -445,9 +446,9 @@
 
         <h4 class="modal-section-header">Detailed Documentation</h4>
         <ul>
-          <li><a href="/docs/SOP_technician_guide.md" target="_blank">Technician SOP</a> - Step-by-step workflow for health checking and erasing drives</li>
-          <li><a href="/docs/troubleshooting.md" target="_blank">Troubleshooting</a> - Common issues and solutions</li>
-          <li><a href="/docs/runbook.md" target="_blank">Runbook</a> - Operational commands and procedures</li>
+          <li><a href="/docs/SOP_technician_guide.md" target="_blank" rel="noopener noreferrer">Technician SOP</a> - Step-by-step workflow for health checking and erasing drives</li>
+          <li><a href="/docs/troubleshooting.md" target="_blank" rel="noopener noreferrer">Troubleshooting</a> - Common issues and solutions</li>
+          <li><a href="/docs/runbook.md" target="_blank" rel="noopener noreferrer">Runbook</a> - Operational commands and procedures</li>
         </ul>
 
         <h4 class="modal-section-header">Common Tasks</h4>
@@ -1042,7 +1043,7 @@
             </label>
             <label>
               Wipe Passphrase
-              <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase">
+              <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase" autocomplete="new-password">
               <small class="text-muted-xs">Passphrase for marker HMAC signing (min 8 characters when strict mode is enabled). Changing this invalidates existing marker verification results.</small>
             </label>
           </div>

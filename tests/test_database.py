@@ -221,8 +221,6 @@ def test_record_intake_snapshot():
         print(f"[FAIL] record_intake_snapshot test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 
@@ -278,8 +276,6 @@ def test_load_prior_visit():
         print(f"[FAIL] load_prior_visit test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 
@@ -357,8 +353,6 @@ def test_save_wipe_smart_snapshot():
         print(f"[FAIL] save_wipe_smart_snapshot test failed: {e}")
         raise
     finally:
-        from database import close_all_connections
-        close_all_connections()
         if os.path.exists(db_path):
             os.unlink(db_path)
 

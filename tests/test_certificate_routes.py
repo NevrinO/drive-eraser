@@ -389,12 +389,6 @@ class TestGetBulkCertificatesHtml:
             init_wipe_db()
             yield app
         finally:
-            # Clean up database connections
-            from database import close_all_connections
-            try:
-                close_all_connections()
-            except Exception:
-                pass
             mock_limiter.stop()
 
     @pytest.fixture

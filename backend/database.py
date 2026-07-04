@@ -4,8 +4,9 @@ import os
 import re
 import secrets
 import time
+import threading
 from contextlib import closing
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from common import get_db_path, get_cert_dir
 
 def ensure_column(conn, table_name, column_name, column_def):
@@ -121,14 +122,14 @@ def init_wipe_db():
                 )
                 conn.commit()
                 break  # Success, exit retry loop
-            except Exception as e:
+            except sqlite3.OperationalError as e:
                 conn.rollback()
-                if attempt < max_retries - 1:
-                    # Retry with exponential backoff
+                if ("database is locked" in str(e).lower() or "table is locked" in str(e).lower()) and attempt < max_retries - 1:
+                    # Retry with exponential backoff for lock errors
                     delay = backoff_delays[attempt]
                     time.sleep(delay)
                 else:
-                    # Final attempt failed, re-raise the exception
+                    # Non-lock error or final attempt failed, re-raise
                     raise
 
         # Phase 4: Add drive_intake_history table for SMART snapshots
@@ -198,7 +199,7 @@ def init_wipe_db():
 # Valid job types - allowlist for validation
 # job_type distinguishes between different job types:
 # - "erase": Standard drive sanitization jobs (default)
-# - "bulk_cert": Bulk certificate generation jobs (future use)
+# - "bulk_cert": Bulk certificate generation jobs
 VALID_JOB_TYPES = {"erase", "bulk_cert"}
 
 def persist_job(job):
@@ -225,7 +226,7 @@ def persist_job(job):
             ON CONFLICT(id) DO UPDATE SET
                 friendly_id=COALESCE(excluded.friendly_id, friendly_id),
                 status=excluded.status,
-                created_at=excluded.created_at,
+                created_at=COALESCE(excluded.created_at, erase_jobs.created_at),
                 started_at=excluded.started_at,
                 finished_at=excluded.finished_at,
                 error=excluded.error,
@@ -294,40 +295,6 @@ def load_job(job_id):
         "certificate": safe_json_load(row["certificate_json"], "certificate_json"),
         "job_type": row["job_type"],
     }
-
-
-def close_all_connections():
-    """Close all SQLite connections to prevent ResourceWarning in tests.
-
-    This function iterates through all objects in the sqlite3 module's connection
-    cache and closes any connections to the current database path. This is primarily
-    intended for test cleanup to avoid ResourceWarning about unclosed connections.
-    """
-    try:
-        db_path = get_db_path()
-        # Close all connections to the test database
-        for conn in list(sqlite3.connections.values()):
-            try:
-                if conn and not conn.closed:
-                    # Check if this connection is to our database
-                    if hasattr(conn, 'execute'):
-                        cursor = conn.execute("PRAGMA database_list")
-                        databases = cursor.fetchall()
-                        for db in databases:
-                            if db_path in db[2] or db[2] == db_path:
-                                # Run WAL checkpoint to release file locks on Windows before closing
-                                try:
-                                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                                except Exception:
-                                    pass
-                                conn.close()
-                                break
-            except Exception:
-                # Ignore errors during cleanup
-                pass
-    except Exception:
-        # Ignore errors if get_db_path or connection iteration fails
-        pass
 
 
 # Phase 4: SMART snapshot helper functions
@@ -568,11 +535,21 @@ def record_smart_test_run(device, serial, test_type, status, result=None, output
     # Defense-in-depth: validate device path (lesson #13)
     if not device or not isinstance(device, str):
         return None
-    # Reject path traversal and newlines
-    if ".." in device or "\n" in device or "\r" in device:
+    # Use strict validation from smart_parsing (consistent with get_smart_test_history)
+    try:
+        from smart_parsing import validate_device_path
+        if not validate_device_path(device):
+            return None
+    except ImportError:
+        # Fallback to basic checks if smart_parsing unavailable
+        if ".." in device or "\n" in device or "\r" in device:
+            return None
+
+    # Validate test_type against allowlist (lesson #77: string enum validation)
+    if test_type not in ("short", "extended", "offline", "conveyance"):
         return None
-    
-    if not test_type or not status:
+
+    if not status:
         return None
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -642,7 +619,7 @@ def get_historical_poh_for_serial(serial):
                             poh_int = int(poh) if poh_clean.isdigit() else None
                         else:
                             poh_int = None
-                        if poh_int and (max_poh is None or poh_int > max_poh):
+                        if poh_int is not None and (max_poh is None or poh_int > max_poh):
                             max_poh = poh_int
                 except (json.JSONDecodeError, TypeError, ValueError, AttributeError):
                     continue
@@ -813,8 +790,6 @@ def cleanup_stale_smart_tests():
         Number of records updated
     """
     try:
-        from datetime import datetime, timezone, timedelta
-
         with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
             now = datetime.now(timezone.utc)
 
@@ -856,6 +831,10 @@ def cleanup_stale_smart_tests():
         return 0
 
 
+_last_cleanup_time = 0.0
+_cleanup_lock = threading.Lock()
+
+
 def get_smart_test_status_batch(devices):
     """Get latest SMART test status for multiple devices in a single query.
 
@@ -865,11 +844,20 @@ def get_smart_test_status_batch(devices):
     Returns:
         Dict mapping device path to latest test status dict, or None if no test
     """
-    # Clean up stale records before querying
-    cleanup_stale_smart_tests()
+    # Clean up stale records at most once per 60 seconds to avoid write-on-read
+    global _last_cleanup_time
+    with _cleanup_lock:
+        now = time.time()
+        if now - _last_cleanup_time > 60:
+            cleanup_stale_smart_tests()
+            _last_cleanup_time = now
 
     if not devices or not isinstance(devices, list):
         return {}
+
+    # Enforce size limit (lesson #8: size limits for DoS prevention)
+    if len(devices) > 100:
+        devices = devices[:100]
 
     # Filter out invalid device paths
     valid_devices = []

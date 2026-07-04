@@ -19,7 +19,7 @@ from threading import Lock
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, calculate_session_token, limiter, ERASE_JOBS, ERASE_JOBS_LOCK, SMART_TEST_LOCKS, SMART_TEST_LOCKS_LOCK
-from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, BAY_MAP_SCHEMA, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
+from common import get_config_dir, load_policy, save_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path, load_bay_map, save_bay_map, BAY_MAP_LOCK, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA, validate_strict_audit_requirements
 from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
 from device_discovery import (
     generate_master_slot_map,
@@ -37,7 +37,7 @@ from database import persist_job
 import ipaddress
 from verification import verify_nvme_sanitize, verify_sata_sanitize, verify_sas_block
 from smart_constants import SMART_SELF_TEST_LOG_MAX_HOURS, SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY, SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS, SMART_TEST_GRACE_PERIOD_SECONDS
-from job_management import poll_nvme_sanitize_progress, poll_sata_sanitize_progress, poll_sas_sanitize_progress, get_device_sectors_written
+from job_management import poll_sata_sanitize_progress, poll_sas_sanitize_progress, get_device_sectors_written
 
 
 def should_update_test_status(started_at, grace_period_seconds=SMART_TEST_GRACE_PERIOD_SECONDS):
@@ -163,7 +163,7 @@ def require_admin_auth(f):
 def get_admin_metrics():
     try:
         total, used, free = shutil.disk_usage(get_data_dir())
-        disk_pct = round((used / total) * 100, 1)
+        disk_pct = round((used / total) * 100, 1) if total > 0 else 0.0
         disk_str = f"{format_capacity_bytes(used)} / {format_capacity_bytes(total)}"
         
         return jsonify({
@@ -214,6 +214,7 @@ def test_webhook():
 
 @admin_bp.route("/api/admin/export-csv")
 @require_admin_auth
+@limiter.limit("10 per minute")
 def export_csv_ledger():
     try:
         with sqlite3.connect(get_db_path(), timeout=30.0) as conn:
@@ -265,7 +266,7 @@ def export_csv_ledger():
 
 @admin_bp.after_request
 def cleanup_support_bundle(response):
-    if request.path == "/api/admin/support-bundle" and response.status_code == 200:
+    if request.path == "/api/admin/support-bundle":
         tar_path = getattr(g, 'support_bundle_tar_path', None)
         if tar_path:
             try:
@@ -278,6 +279,7 @@ def cleanup_support_bundle(response):
 
 @admin_bp.route("/api/admin/support-bundle")
 @require_admin_auth
+@limiter.limit("5 per minute")
 def download_support_bundle():
     try:
         hostname = socket.gethostname()
@@ -451,10 +453,11 @@ def download_support_bundle():
             pass
 
         tar_path = f"/tmp/{bundle_name}.tar.gz"
-        with tarfile.open(tar_path, "w:gz") as tar:
-            tar.add(workspace_dir, arcname=bundle_name)
-
-        shutil.rmtree(workspace_dir, ignore_errors=True)
+        try:
+            with tarfile.open(tar_path, "w:gz") as tar:
+                tar.add(workspace_dir, arcname=bundle_name)
+        finally:
+            shutil.rmtree(workspace_dir, ignore_errors=True)
 
         g.support_bundle_tar_path = tar_path
         logger.info(f"Support bundle built successfully: {tar_path}")
@@ -513,12 +516,63 @@ def admin_policy():
                 if not is_valid:
                     return jsonify({"error": error_msg}), 400
             
-            # Apply mutations after validation passes
+            # Validate numeric and string fields before applying mutations
             old_background_smart_max_workers = current_policy.get("background_smart_max_workers")
-            updatable_fields = ["station_id", "slack_webhook_url", "prewipe_zero_detection_enabled", "zero_detection_concurrency_limit", "post_erase_marker", "allow_method_override", "secondary_verification_mode", "discovery_max_workers", "background_smart_max_workers", "max_concurrent_wipes", "blockdev_post_wipe_retries", "blockdev_post_wipe_retry_delay", "strict_audit_mode", "prewipe_health_gate_enabled", "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy", "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart", "prewipe_health_gate_max_pending_sectors", "prewipe_health_gate_max_reallocated_sectors", "prewipe_health_gate_max_interface_errors", "prewipe_health_gate_max_health_score_drop"]
-            for field in updatable_fields:
+
+            # Numeric policy fields with (type, min, max) constraints
+            numeric_policy_fields = {
+                "max_concurrent_wipes": (int, 1, 32),
+                "background_smart_max_workers": (int, 1, 32),
+                "discovery_max_workers": (int, 1, 64),
+                "zero_detection_concurrency_limit": (int, 1, 32),
+                "blockdev_post_wipe_retries": (int, 0, 10),
+                "blockdev_post_wipe_retry_delay": (int, 0, 300),
+                "prewipe_health_gate_max_pending_sectors": (int, 0, 100000),
+                "prewipe_health_gate_max_reallocated_sectors": (int, 0, 100000),
+                "prewipe_health_gate_max_interface_errors": (int, 0, 100000),
+                "prewipe_health_gate_max_health_score_drop": (int, 0, 100),
+            }
+
+            # Boolean policy fields
+            boolean_policy_fields = {
+                "prewipe_zero_detection_enabled", "post_erase_marker", "allow_method_override",
+                "strict_audit_mode", "prewipe_health_gate_enabled",
+                "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy",
+                "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart",
+            }
+
+            # String policy fields with max length
+            string_policy_fields = {
+                "station_id": 100,
+                "slack_webhook_url": 500,
+                "secondary_verification_mode": 50,
+            }
+
+            for field, (val_type, min_val, max_val) in numeric_policy_fields.items():
                 if field in payload:
+                    try:
+                        value = val_type(payload[field])
+                        if not (min_val <= value <= max_val):
+                            return jsonify({"error": f"Invalid value for {field}: must be between {min_val} and {max_val}"}), 400
+                        current_policy[field] = value
+                    except (ValueError, TypeError):
+                        return jsonify({"error": f"Invalid type for {field}: must be {val_type.__name__}"}), 400
+
+            for field in boolean_policy_fields:
+                if field in payload:
+                    if not isinstance(payload[field], bool):
+                        return jsonify({"error": f"{field} must be a boolean value"}), 400
                     current_policy[field] = payload[field]
+
+            _valid_secondary_verification_modes = {"conservative_probe", "full_verify", "disabled"}
+            for field, max_len in string_policy_fields.items():
+                if field in payload:
+                    val = str(payload[field]) if payload[field] is not None else ""
+                    if len(val) > max_len:
+                        return jsonify({"error": f"{field} exceeds maximum length of {max_len} characters"}), 400
+                    if field == "secondary_verification_mode" and val not in _valid_secondary_verification_modes:
+                        return jsonify({"error": f"secondary_verification_mode must be one of: {', '.join(sorted(_valid_secondary_verification_modes))}"}), 400
+                    current_policy[field] = val
                     
             lan_passphrase_changed = False
             if new_lan_pass:
@@ -655,47 +709,47 @@ def manage_logo():
             
             # Validate format by reading with PIL
             try:
-                img = Image.open(file)
-                file_format = img.format
-                if file_format not in ("PNG", "JPEG", "JPG"):
-                    return jsonify({"error": f"Unsupported format: {file_format}. Only PNG, JPG, JPEG allowed."}), 400
-                
-                # Ensure data directory exists
-                os.makedirs(get_data_dir(), exist_ok=True)
-                
-                # Resize to target dimensions (max 500x500) for better quality
-                img.thumbnail((500, 500), Image.Resampling.LANCZOS)
-                
-                # Use atomic write: save to temporary file first, then rename
-                temp_path = logo_path + ".tmp"
-                file.seek(0)
-                img.save(temp_path, format="PNG", optimize=True, compress_level=3)
-                
-                # Validate converted PNG file size (max 1MB)
-                png_size = os.path.getsize(temp_path)
-                logger.info(f"Converted PNG size: {png_size} bytes ({png_size / 1024:.2f} KB)")
-                if png_size > 1024 * 1024:
-                    os.remove(temp_path)
-                    return jsonify({"error": f"Converted PNG exceeds 1MB limit (was {png_size / 1024:.2f} KB)"}), 400
-                
-                # Calculate hash of the bytes that will be served (the committed PNG file)
-                with open(temp_path, "rb") as f:
-                    file_bytes = f.read()
-                    file_hash = hashlib.sha256(file_bytes).hexdigest()
-                
-                # Atomic rename operation for logo file
-                os.replace(temp_path, logo_path)
-                
-                # Write hash file atomically (temp file + rename)
-                hash_path = logo_path + ".sha256"
-                hash_temp_path = hash_path + ".tmp"
-                with open(hash_temp_path, "w") as f:
-                    f.write(file_hash)
-                os.replace(hash_temp_path, hash_path)
-                
-                logger.info(f"Custom logo uploaded successfully: {logo_path}")
-                return jsonify({"status": "success", "message": "Logo uploaded successfully"}), 200
-                
+                with Image.open(file) as img:
+                    file_format = img.format
+                    if file_format not in ("PNG", "JPEG", "JPG"):
+                        return jsonify({"error": f"Unsupported format: {file_format}. Only PNG, JPG, JPEG allowed."}), 400
+
+                    # Ensure data directory exists
+                    os.makedirs(get_data_dir(), exist_ok=True)
+
+                    # Resize to target dimensions (max 500x500) for better quality
+                    img.thumbnail((500, 500), Image.Resampling.LANCZOS)
+
+                    # Use atomic write: save to temporary file first, then rename
+                    temp_path = logo_path + ".tmp"
+                    file.seek(0)
+                    img.save(temp_path, format="PNG", optimize=True, compress_level=3)
+
+                    # Validate converted PNG file size (max 1MB)
+                    png_size = os.path.getsize(temp_path)
+                    logger.info(f"Converted PNG size: {png_size} bytes ({png_size / 1024:.2f} KB)")
+                    if png_size > 1024 * 1024:
+                        os.remove(temp_path)
+                        return jsonify({"error": f"Converted PNG exceeds 1MB limit (was {png_size / 1024:.2f} KB)"}), 400
+
+                    # Calculate hash of the bytes that will be served (the committed PNG file)
+                    with open(temp_path, "rb") as f:
+                        file_bytes = f.read()
+                        file_hash = hashlib.sha256(file_bytes).hexdigest()
+
+                    # Atomic rename operation for logo file
+                    os.replace(temp_path, logo_path)
+
+                    # Write hash file atomically (temp file + rename)
+                    hash_path = logo_path + ".sha256"
+                    hash_temp_path = hash_path + ".tmp"
+                    with open(hash_temp_path, "w") as f:
+                        f.write(file_hash)
+                    os.replace(hash_temp_path, hash_path)
+
+                    logger.info(f"Custom logo uploaded successfully: {logo_path}")
+                    return jsonify({"status": "success", "message": "Logo uploaded successfully"}), 200
+
             except Exception as e:
                 # Clean up temporary file if it exists
                 temp_path = logo_path + ".tmp"
@@ -1973,23 +2027,26 @@ def manage_template(template_id):
     
     elif request.method == "DELETE":
         try:
-            # Check if template is in use by any enclosure (read from bay_map.json)
+            # Acquire both locks in consistent order (BAY_MAP_LOCK → TEMPLATES_LOCK)
+            # to prevent two-phase lock race: enclosure can be created referencing
+            # this template between the check and delete if locks are released separately.
             with BAY_MAP_LOCK:
-                bay_map = load_bay_map(config_dir)
-                enclosures = bay_map.get("enclosures", {})
-                for enc_id, enc_data in enclosures.items():
-                    if enc_data.get("template_id") == template_id:
-                        return jsonify({"error": f"Template is in use by enclosure: {enc_id}"}), 400
-            
-            # Delete from layout_templates.json
-            with TEMPLATES_LOCK:
-                templates_dict, _ = load_layout_templates(config_dir)
-                
-                if template_id not in templates_dict:
-                    return jsonify({"error": f"Template not found: {template_id}"}), 404
-                
-                del templates_dict[template_id]
-                save_layout_templates(templates_dict, config_dir)
+                with TEMPLATES_LOCK:
+                    # Check if template is in use by any enclosure
+                    bay_map = load_bay_map(config_dir)
+                    enclosures = bay_map.get("enclosures", {})
+                    for enc_id, enc_data in enclosures.items():
+                        if enc_data.get("template_id") == template_id:
+                            return jsonify({"error": f"Template is in use by enclosure: {enc_id}"}), 400
+
+                    # Delete from layout_templates.json
+                    templates_dict, _ = load_layout_templates(config_dir)
+
+                    if template_id not in templates_dict:
+                        return jsonify({"error": f"Template not found: {template_id}"}), 404
+
+                    del templates_dict[template_id]
+                    save_layout_templates(templates_dict, config_dir)
             
             logger.info(f"Deleted template: {template_id}")
             return jsonify({"status": "success", "message": f"Template {template_id} deleted"}), 200
@@ -2419,11 +2476,7 @@ def run_smart_test_endpoint(device):
         
         # Build device path
         device_path = f"/dev/{device}"
-        
-        # Check if device exists before proceeding
-        if not os.path.exists(device_path):
-            return jsonify({"error": f"Device {device_path} does not exist"}), 404
-        
+
         # Check if device is currently being wiped (safety guardrail)
         with ERASE_JOBS_LOCK:
             for job in ERASE_JOBS.values():
@@ -2463,7 +2516,6 @@ def run_smart_test_endpoint(device):
         
         # Phase 7.4: Safety checks - block tests on OS/locked drives and dual-port secondary paths
         # Check if device is the OS drive
-        os_dev_node = None
         try:
             os_dev, _ = get_os_by_path()
             if os_dev and os.path.realpath(device_path) == os.path.realpath(os_dev):
