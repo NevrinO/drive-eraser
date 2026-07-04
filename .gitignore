@@ -253,3 +253,4 @@ scripts/triage_output.json
 
 # Release build artifacts
 drive-eraser-*.zip
+docs-audit-plan.md
