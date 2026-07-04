@@ -144,7 +144,7 @@ class TestGetCertificate:
         original_limiter = certificate_routes.limiter
         certificate_routes.limiter = mock_limiter
         
-        with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-pass"}):
+        with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-pass"}):
             with patch('common.load_policy', return_value={"lan_passphrase": "test-pass"}):
                 yield client
         
@@ -158,7 +158,7 @@ class TestGetCertificate:
         with ERASE_JOBS_LOCK:
             ERASE_JOBS["test-job"] = {"certificate": test_cert}
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.get('/api/certificates/test-job?format=json')
             assert response.status_code == 200
             data = json.loads(response.data)
@@ -186,7 +186,7 @@ class TestGetCertificate:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/db-job?format=json')
                     assert response.status_code == 200
                     data = json.loads(response.data)
@@ -213,7 +213,7 @@ class TestGetCertificate:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/friendly-2?format=json')
                     assert response.status_code == 200
                     data = json.loads(response.data)
@@ -228,7 +228,7 @@ class TestGetCertificate:
                     conn.execute("CREATE TABLE IF NOT EXISTS erase_jobs (id TEXT PRIMARY KEY, friendly_id TEXT, certificate_json TEXT, request_json TEXT)")
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/missing-job?format=json')
                     assert response.status_code == 404
                     data = json.loads(response.data)
@@ -245,7 +245,7 @@ class TestGetCertificate:
                                ("no-cert-job", "friendly-3", None))
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/no-cert-job?format=json')
                     assert response.status_code == 404
                     data = json.loads(response.data)
@@ -258,7 +258,7 @@ class TestGetCertificate:
         with ERASE_JOBS_LOCK:
             ERASE_JOBS["json-test"] = {"certificate": test_cert}
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.get('/api/certificates/json-test?format=json')
             assert response.status_code == 200
             assert response.content_type == "application/json"
@@ -270,7 +270,7 @@ class TestGetCertificate:
         with ERASE_JOBS_LOCK:
             ERASE_JOBS["format-test"] = {"certificate": test_cert}
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.get('/api/certificates/format-test?format=xml')
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -298,7 +298,7 @@ class TestGetCertificate:
                 ERASE_JOBS["html-test"] = {"certificate": test_cert}
             
             with patch('routes.certificate_routes.get_cert_dir', return_value=cert_dir):
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.send_file') as mock_send:
                         mock_send.return_value = MagicMock(status_code=200)
                         response = admin_session.get('/api/certificates/html-test?format=html')
@@ -322,7 +322,7 @@ class TestGetCertificate:
                 ERASE_JOBS["bulk-test"] = {"certificate": test_cert}
             
             with patch('routes.certificate_routes.get_cert_dir', return_value=cert_dir):
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.send_file') as mock_send:
                         mock_send.return_value = MagicMock(status_code=200)
                         response = admin_session.get('/api/certificates/bulk-test?format=html&bulk=true')
@@ -335,7 +335,7 @@ class TestGetCertificate:
         with ERASE_JOBS_LOCK:
             ERASE_JOBS["bulk-auth-test"] = {"certificate": test_cert}
         
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.certificate_routes.load_policy', return_value={"lan_passphrase": "test-pass"}):
                 response = client.get('/api/certificates/bulk-auth-test?format=html&bulk=true')
                 assert response.status_code == 401
@@ -359,7 +359,7 @@ class TestGetCertificate:
                 ERASE_JOBS["traversal-test"] = {"certificate": test_cert}
             
             with patch('routes.certificate_routes.get_cert_dir', return_value=cert_dir):
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.get('/api/certificates/traversal-test?format=html')
                     assert response.status_code == 403
                     data = json.loads(response.data)
@@ -403,20 +403,20 @@ class TestGetBulkCertificatesHtml:
         # Manually set the admin session cookie to bypass rate limiting
         client.set_cookie('admin_session', calculate_session_token('test-pass'))
         # Patch load_policy to return test passphrase for validation
-        with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-pass"}):
+        with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-pass"}):
             with patch('common.load_policy', return_value={"lan_passphrase": "test-pass"}):
                 yield client
 
     def test_invalid_json_payload(self, admin_session):
         """Test that invalid JSON is handled."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', data="not json")
             # Accept 200, 400, or 500 (500 if database table doesn't exist)
             assert response.status_code in [200, 400, 500]  # request.get_json(silent=True) returns None
 
     def test_job_ids_not_list(self, admin_session):
         """Test that job_ids must be a list."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"job_ids": "not-a-list"})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -424,7 +424,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_job_ids_not_strings(self, admin_session):
         """Test that all job_ids must be strings."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"job_ids": [123, 456]})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -432,7 +432,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_job_ids_exceeds_limit(self, admin_session):
         """Test that job_ids list is limited to 100 items."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"job_ids": [str(i) for i in range(101)]})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -440,7 +440,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_ticket_number_not_string(self, admin_session):
         """Test that ticket_number must be a string."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"ticket_number": 123})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -448,7 +448,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_ticket_number_empty(self, admin_session):
         """Test that ticket_number cannot be empty/whitespace."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"ticket_number": "   "})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -456,7 +456,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_invalid_start_date_format(self, admin_session):
         """Test that invalid start_date format is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"start_date": "invalid-date"})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -464,7 +464,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_invalid_end_date_format(self, admin_session):
         """Test that invalid end_date format is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={"end_date": "invalid-date"})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -472,7 +472,7 @@ class TestGetBulkCertificatesHtml:
 
     def test_start_date_after_end_date(self, admin_session):
         """Test that start_date after end_date is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/certificates/bulk-html', json={
                 "start_date": "2026-12-31",
                 "end_date": "2026-01-01"
@@ -503,7 +503,7 @@ class TestGetBulkCertificatesHtml:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
                         with patch('routes.certificate_routes.send_file') as mock_send:
                             mock_send.return_value = MagicMock(status_code=200)
@@ -532,7 +532,7 @@ class TestGetBulkCertificatesHtml:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
                         with patch('routes.certificate_routes.send_file') as mock_send:
                             mock_send.return_value = MagicMock(status_code=200)
@@ -561,7 +561,7 @@ class TestGetBulkCertificatesHtml:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
                         with patch('routes.certificate_routes.send_file') as mock_send:
                             mock_send.return_value = MagicMock(status_code=200)
@@ -580,7 +580,7 @@ class TestGetBulkCertificatesHtml:
                     conn.execute("CREATE TABLE IF NOT EXISTS erase_jobs (id TEXT PRIMARY KEY, friendly_id TEXT, certificate_json TEXT, request_json TEXT, finished_at TEXT)")
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.post('/api/certificates/bulk-html', json={"ticket_number": "NONEXISTENT"})
                     assert response.status_code == 200
                     data = json.loads(response.data)
@@ -608,7 +608,7 @@ class TestGetBulkCertificatesHtml:
                     )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
                         with patch('routes.certificate_routes.send_file') as mock_send:
                             mock_send.return_value = MagicMock(status_code=200)
@@ -639,7 +639,7 @@ class TestGetBulkCertificatesHtml:
                         )
                     conn.commit()
                 
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     with patch('routes.certificate_routes.build_bulk_certificate_html', return_value="<html>bulk</html>"):
                         with patch('routes.certificate_routes.send_file') as mock_send:
                             mock_response = MagicMock(status_code=200)
@@ -686,7 +686,7 @@ class TestCreateBulkCert:
         original_limiter = certificate_routes.limiter
         certificate_routes.limiter = mock_limiter
         
-        with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-pass"}):
+        with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-pass"}):
             with patch('common.load_policy', return_value={"lan_passphrase": "test-pass"}):
                 yield client
         
@@ -695,7 +695,7 @@ class TestCreateBulkCert:
 
     def test_job_ids_required(self, admin_session):
         """Test that job_ids is required."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/admin/bulk-cert/create', json={})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -703,7 +703,7 @@ class TestCreateBulkCert:
 
     def test_job_ids_must_be_list(self, admin_session):
         """Test that job_ids must be a list."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/admin/bulk-cert/create', json={"job_ids": "not-a-list"})
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -714,7 +714,7 @@ class TestCreateBulkCert:
         with patch('routes.certificate_routes.create_bulk_cert_job') as mock_create:
             mock_create.return_value = ({"id": "bulk-job-123"}, None, None)
             with patch('routes.certificate_routes.run_bulk_cert_job'):
-                with patch('routes.admin_routes.is_local_request', return_value=False):
+                with patch('routes._shared.is_local_request', return_value=False):
                     response = admin_session.post('/api/admin/bulk-cert/create', json={"job_ids": ["job-1", "job-2"]})
                     assert response.status_code == 202
                     data = json.loads(response.data)
@@ -725,7 +725,7 @@ class TestCreateBulkCert:
         """Test that validation errors from create_bulk_cert_job are returned."""
         with patch('routes.certificate_routes.create_bulk_cert_job') as mock_create:
             mock_create.return_value = (None, {"error": "Job not found"}, 404)
-            with patch('routes.admin_routes.is_local_request', return_value=False):
+            with patch('routes._shared.is_local_request', return_value=False):
                 response = admin_session.post('/api/admin/bulk-cert/create', json={"job_ids": ["invalid-job"]})
                 assert response.status_code == 404
                 data = json.loads(response.data)
@@ -739,7 +739,7 @@ class TestCreateBulkCert:
                 with patch('routes.certificate_routes.Thread') as mock_thread:
                     mock_thread_instance = MagicMock()
                     mock_thread.return_value = mock_thread_instance
-                    with patch('routes.admin_routes.is_local_request', return_value=False):
+                    with patch('routes._shared.is_local_request', return_value=False):
                         response = admin_session.post('/api/admin/bulk-cert/create', json={"job_ids": ["job-1"]})
                         assert response.status_code == 202
                         mock_thread.assert_called_once()

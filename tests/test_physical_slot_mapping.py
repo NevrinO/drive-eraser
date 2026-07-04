@@ -317,9 +317,6 @@ class TestEnclosureCrudOperations:
             patch('database.get_cert_dir', return_value=test_config_dir),
             patch('routes._shared.get_config_dir', return_value=test_config_dir),
             patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_data_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_db_path', return_value=test_db_path),
         ]
         for p in patches:
             p.start()
@@ -618,9 +615,6 @@ class TestSlotMappingCrudOperations:
             patch('database.get_cert_dir', return_value=test_config_dir),
             patch('routes._shared.get_config_dir', return_value=test_config_dir),
             patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_data_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.enclosure_routes.get_db_path', return_value=test_db_path),
         ]
         for p in patches:
             p.start()

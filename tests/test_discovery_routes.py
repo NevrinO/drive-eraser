@@ -50,7 +50,7 @@ class TestDiscoveryRoutes:
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
             patch('database.get_cert_dir', return_value=test_config_dir),
-            patch('routes.admin_routes.get_config_dir', return_value=test_config_dir),
+            patch('routes._shared.get_config_dir', return_value=test_config_dir),
             patch('routes.discovery_routes.get_config_dir', return_value=test_config_dir),
         ]
         for p in patches:
@@ -100,13 +100,13 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_unauthenticated(self, client):
         """Test that unauthenticated requests return 401."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = client.get('/api/admin/discover-slots')
             assert response.status_code == 401
 
     def test_discover_slots_invalid_controller_type(self, admin_session):
         """Test that invalid controller_type returns 400."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.get('/api/admin/discover-slots?controller_type=invalid')
             assert response.status_code == 400
             data = json.loads(response.data)
@@ -114,7 +114,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_invalid_pci_address(self, admin_session):
         """Test that invalid pci_address returns 400."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.discovery_routes.validate_pci_address', return_value=False):
                 response = admin_session.get('/api/admin/discover-slots?pci_address=invalid')
                 assert response.status_code == 400
@@ -123,7 +123,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_valid_controller_type(self, admin_session):
         """Test that valid controller_type is accepted."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.discovery_routes.scan_pci_controllers', return_value=[]):
                 with patch('routes.discovery_routes.discover_controllers_and_devices', return_value={}):
                     with patch('routes.discovery_routes.get_scsi_host_slot_projections', return_value=[]):
@@ -135,7 +135,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_controller_limit(self, admin_session):
         """Test that controller count limit is enforced."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.discovery_routes.scan_pci_controllers', return_value=[{"pci_address": f"0000:00:0{i}.0"} for i in range(101)]):
                 with patch('routes.discovery_routes.discover_controllers_and_devices', return_value={}):
                     response = admin_session.get('/api/admin/discover-slots')
@@ -145,7 +145,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_device_limit(self, admin_session):
         """Test that device count limit is enforced."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.discovery_routes.scan_pci_controllers', return_value=[]):
                 with patch('routes.discovery_routes.discover_controllers_and_devices', return_value={
                     "sata": [{"device_path": f"/dev/sd{i}", "controller": {}} for i in range(1001)]
@@ -160,7 +160,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_include_smart(self, admin_session):
         """Test that include_smart parameter works."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             with patch('routes.discovery_routes.scan_pci_controllers', return_value=[]):
                 with patch('routes.discovery_routes.discover_controllers_and_devices', return_value={
                     "sata": [{"device_path": "/dev/sda", "controller": {}}]
@@ -174,7 +174,7 @@ class TestDiscoveryRoutes:
 
     def test_discover_slots_local_request_allowed(self, client):
         """Test that localhost requests bypass authentication."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
+        with patch('routes._shared.is_local_request', return_value=True):
             with patch('routes.discovery_routes.scan_pci_controllers', return_value=[]):
                 with patch('routes.discovery_routes.discover_controllers_and_devices', return_value={}):
                     with patch('routes.discovery_routes.get_scsi_host_slot_projections', return_value=[]):
@@ -184,19 +184,19 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_unauthenticated(self, client):
         """Test that unauthenticated requests return 401."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = client.post('/api/admin/apply-slot-mapping', json={})
             assert response.status_code == 401
 
     def test_apply_slot_mapping_invalid_payload(self, admin_session):
         """Test that invalid payload returns 400."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             response = admin_session.post('/api/admin/apply-slot-mapping', data="not json")
             assert response.status_code == 400
 
     def test_apply_slot_mapping_exceeds_limit(self, admin_session):
         """Test that mapping count limit is enforced."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
+        with patch('routes._shared.is_local_request', return_value=False):
             payload = {f"bay{i}": {"device_path": "/dev/sda"} for i in range(101)}
             response = admin_session.post('/api/admin/apply-slot-mapping', json=payload)
             assert response.status_code == 400
@@ -205,8 +205,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_invalid_bay_id(self, admin_session):
         """Test that invalid bay_id is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     # Patch only bay_map.json open to simulate file not found
                     original_open = open
@@ -221,8 +221,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_invalid_device_path(self, admin_session):
         """Test that invalid device path is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     with patch('builtins.open', MagicMock()):
                         with patch('json.load', return_value={"bay1": {"by_path": "/dev/sdb"}}):
@@ -235,8 +235,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_valid_nvme_path(self, admin_session):
         """Test that valid NVMe path is accepted."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     with patch('builtins.open', MagicMock()):
                         with patch('json.load', return_value={"bay1": {"by_path": "/dev/sdb"}}):
@@ -248,8 +248,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_empty_slot_with_projected_path(self, admin_session):
         """Test that empty slot with projected by-path is accepted."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     with patch('builtins.open', MagicMock()):
                         with patch('json.load', return_value={"bay1": {"by_path": "/dev/sdb"}}):
@@ -265,8 +265,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_invalid_projected_path(self, admin_session):
         """Test that invalid projected by-path is rejected."""
-        with patch('routes.admin_routes.is_local_request', return_value=False):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=False):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     with patch('builtins.open', MagicMock()):
                         with patch('json.load', return_value={"bay1": {"by_path": "/dev/sdb"}}):
@@ -283,8 +283,8 @@ class TestDiscoveryRoutes:
 
     def test_apply_slot_mapping_local_request_allowed(self, client):
         """Test that localhost requests bypass authentication."""
-        with patch('routes.admin_routes.is_local_request', return_value=True):
-            with patch('routes.admin_routes.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
+        with patch('routes._shared.is_local_request', return_value=True):
+            with patch('routes._shared.load_policy', return_value={"lan_passphrase": "test-lan-pass"}):
                 with patch('routes.discovery_routes.BAY_MAP_LOCK'):
                     with patch('builtins.open', MagicMock()):
                         with patch('json.load', return_value={"bay1": {"by_path": "/dev/sdb"}}):
