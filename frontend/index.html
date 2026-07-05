@@ -85,22 +85,27 @@
             <option value="unknown">Unknown</option>
           </select>
           <button type="button" id="printTriageBtn" class="btn btn--primary ml-auto">Print Report</button>
+          <button type="button" id="exportCsvTriageBtn" class="btn btn--secondary">Export CSV</button>
+          <button type="button" id="exportJsonTriageBtn" class="btn btn--secondary">Export JSON</button>
         </div>
       </div>
+
+      <div id="triageSummaryBar" class="triage-summary-bar"></div>
 
       <div id="triageTableContainer" class="triage-table-container">
         <table id="triageTable" class="triage-table">
           <thead>
             <tr>
-              <th>Bay</th>
-              <th>Serial</th>
-              <th>Model</th>
-              <th>Media Type</th>
-              <th>Interface</th>
-              <th>Capacity</th>
-              <th>POH</th>
-              <th>Health Score</th>
-              <th>Recommendation</th>
+              <th data-sort="bay" class="triage-sortable">Bay</th>
+              <th data-sort="serial" class="triage-sortable">Serial</th>
+              <th data-sort="model" class="triage-sortable">Model</th>
+              <th data-sort="media" class="triage-sortable">Media Type</th>
+              <th data-sort="interface" class="triage-sortable">Interface</th>
+              <th data-sort="capacity" class="triage-sortable">Capacity</th>
+              <th data-sort="poh" class="triage-sortable">POH</th>
+              <th data-sort="health" class="triage-sortable">Health Score</th>
+              <th>Flags</th>
+              <th data-sort="recommendation" class="triage-sortable">Recommendation</th>
             </tr>
           </thead>
           <tbody id="triageTableBody">

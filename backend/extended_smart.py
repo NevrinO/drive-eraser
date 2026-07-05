@@ -125,6 +125,7 @@ def _process_single_drive_extended_smart(item, passphrase):
                     'device': dev_node,
                     'enclosure_id': enclosure_id,
                     'slot_number': slot_number,
+                    'status': payload.get('status'),
                     'smart': payload.get('smart'),
                     'health_score': payload.get('health_score'),
                     'recommendation': payload.get('recommendation'),
