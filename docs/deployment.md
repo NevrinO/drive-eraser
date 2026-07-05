@@ -144,19 +144,20 @@ On your Ubuntu server:
 
 ```bash
 # Download the release
-wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
 
-# Extract
-unzip drive-eraser-v1.1.0.zip -d /opt/drive-eraser/
+# Extract to a staging directory (install.sh will copy to /opt/drive-eraser)
+unzip drive-eraser-v1.1.0.zip -d /tmp/drive-eraser-v1.1.0
 
-# Run installation
-cd /opt/drive-eraser
+# Run installation from the staging directory
+cd /tmp/drive-eraser-v1.1.0
 sudo bash scripts/install.sh
 
-# Start the service
-sudo systemctl start drive-eraser
-sudo systemctl enable drive-eraser
+# Clean up staging directory
+rm -rf /tmp/drive-eraser-v1.1.0
 ```
+
+The install script copies application files to `/opt/drive-eraser/`, sets up the Python venv, configures sudo rules, creates config files with interactive prompts, and starts the systemd service.
 
 ### Versioning
 
@@ -223,11 +224,35 @@ curl -sS http://127.0.0.1:5000/api/erase/jobs/<job_id>
 
 ## 4. Updating
 
-To pull the latest version on an existing installation:
+### From Git (Development/Testing)
+
+If you have a git clone on the server:
 
 ```bash
-cd /path/to/drive-eraser
+cd ~/drive-eraser
+git fetch origin
+git checkout main
+git pull origin main
 sudo bash scripts/update.sh
+```
+
+### From Release Zip (Production)
+
+If you installed from a GitHub release zip (no git repo on server):
+
+```bash
+# Download the new release
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+
+# Extract to a staging directory
+unzip drive-eraser-v1.1.0.zip -d /tmp/drive-eraser-v1.1.0
+
+# Run update from the staging directory
+cd /tmp/drive-eraser-v1.1.0
+sudo bash scripts/update.sh
+
+# Clean up
+rm -rf /tmp/drive-eraser-v1.1.0
 ```
 
 The update script:
@@ -267,9 +292,14 @@ Rollback if any are true:
 If a release has issues, deploy the previous version:
 
 ```bash
-wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
-unzip drive-eraser-v1.1.0.zip -d /opt/drive-eraser/
-sudo systemctl restart drive-eraser
+# Download the previous release
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.0.1/drive-eraser-v1.0.1.zip
+
+# Extract to staging and run update
+unzip drive-eraser-v1.0.1.zip -d /tmp/drive-eraser-v1.0.1
+cd /tmp/drive-eraser-v1.0.1
+sudo bash scripts/update.sh
+rm -rf /tmp/drive-eraser-v1.0.1
 ```
 
 ### Rollback from Git Update

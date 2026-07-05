@@ -19,10 +19,25 @@ Local wipe-station software for enterprise SATA, SAS, and U.2 NVMe drives.
 - `docs/` project documentation
 
 ## First Setup
-Run:
+
+### From GitHub Release (Production)
+
+Download the latest release from [GitHub Releases](https://github.com/NevrinO/drive-eraser/releases):
 
 ```bash
-bash scripts/install.sh
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+unzip drive-eraser-v1.1.0.zip -d /tmp/drive-eraser-v1.1.0
+cd /tmp/drive-eraser-v1.1.0
+sudo bash scripts/install.sh
+rm -rf /tmp/drive-eraser-v1.1.0
+```
+
+### From Git Clone (Development/Testing)
+
+```bash
+git clone https://github.com/NevrinO/drive-eraser.git
+cd drive-eraser
+sudo bash scripts/install.sh
 ```
 
 ## Getting Started

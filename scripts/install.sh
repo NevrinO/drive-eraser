@@ -365,7 +365,7 @@ setup_config() {
     if [ -z "$detected_ip" ]; then
         detected_ip="127.0.0.1"
     fi
-    local cors_origin="http://${detected_ip}:${WIPE_PORT}"
+    CORS_ORIGIN="http://${detected_ip}:${WIPE_PORT}"
 
      # bay_map.json - only create if missing
     if [ ! -f "$CONFIG_DIR/bay_map.json" ]; then

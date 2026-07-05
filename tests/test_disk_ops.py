@@ -804,6 +804,7 @@ class TestAutoEnqueueZeroChecks:
         fake_manager = MagicMock()
         fake_manager.get_status.return_value = {"status": "not_started"}
         fake_manager.get_all_status.return_value = {}
+        fake_manager.is_auto_enqueue_delayed.return_value = False
 
         with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
             with patch('discovery.get_zero_check_manager', return_value=fake_manager):
@@ -819,6 +820,7 @@ class TestAutoEnqueueZeroChecks:
         fake_manager = MagicMock()
         fake_manager.get_status.return_value = {"status": "completed", "serial": "OLD_SERIAL"}
         fake_manager.get_all_status.return_value = {}
+        fake_manager.is_auto_enqueue_delayed.return_value = False
 
         with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
             with patch('discovery.get_zero_check_manager', return_value=fake_manager):
@@ -835,6 +837,7 @@ class TestAutoEnqueueZeroChecks:
         fake_manager = MagicMock()
         fake_manager.get_status.return_value = {"status": "completed", "serial": "SAME_SERIAL"}
         fake_manager.get_all_status.return_value = {}
+        fake_manager.is_auto_enqueue_delayed.return_value = False
 
         with patch('discovery.load_policy', return_value={"prewipe_zero_detection_enabled": True}):
             with patch('discovery.get_zero_check_manager', return_value=fake_manager):
