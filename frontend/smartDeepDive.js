@@ -296,6 +296,7 @@ async function pollSmartTestStatus(device, testType) {
           (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
         if (!canTrustCompletion) {
           console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring completed status from stale log entry');
+          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -311,6 +312,7 @@ async function pollSmartTestStatus(device, testType) {
           (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
         if (!canTrustCompletion) {
           console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring failed status from stale log entry');
+          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -325,6 +327,7 @@ async function pollSmartTestStatus(device, testType) {
           (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
         if (!canTrustCompletion) {
           console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring aborted status from stale log entry');
+          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -340,7 +343,8 @@ async function pollSmartTestStatus(device, testType) {
         const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
           (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
         if (!canTrustCompletion) {
-          console.log('Grace period not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
+          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
+          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
           return;
         }
         clearInterval(smartTestPollingInterval);

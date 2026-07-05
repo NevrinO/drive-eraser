@@ -184,6 +184,42 @@ def get_smart_test_status(device, diagnostics=None):
         scsi_asc = scsi_ie.get("asc", "")
         scsi_ascq = scsi_ie.get("ascq", "")
 
+        # SCSI/SAS real-time in-progress check: scan scsi_self_test_N entries for
+        # result value 15 (self-test in progress). Many SAS drives (e.g. Seagate)
+        # don't populate scsi_ie during tests but do report in-progress via the
+        # self-test result slots. Also check scsi_ie for ASC 0x3F/ASCQ 0x0E.
+        if scsi_asc == 0x3F and scsi_ascq == 0x0E:
+            return {
+                "status": "in_progress",
+                "percentage": 50,
+                "self_test_log_table": None,
+                "latest_result": {
+                    "type": "unknown",
+                    "status": scsi_ie.get("string", "Self test in progress"),
+                    "remaining": 0,
+                    "lba": None,
+                    "hours": None
+                }
+            }
+        for k in sorted(data.keys()):
+            if k.startswith("scsi_self_test_"):
+                result_val = data[k].get("result", {}).get("value")
+                result_str = data[k].get("result", {}).get("string", "")
+                if result_val == 15 or "in progress" in result_str.lower():
+                    return {
+                        "status": "in_progress",
+                        "percentage": 50,
+                        "self_test_log_table": None,
+                        "latest_result": {
+                            "type": data[k].get("code", {}).get("string", "unknown"),
+                            "status": result_str,
+                            "passed": None,
+                            "remaining": 0,
+                            "lba": None,
+                            "hours": data[k].get("power_on_time", {}).get("hours")
+                        }
+                    }
+
         # Determine device type and process accordingly
         if table:
             # ATA/SATA device: log table reflects completed tests only.
@@ -303,8 +339,7 @@ def get_smart_test_status(device, diagnostics=None):
                     }
                 }
         elif scsi_ie:
-            # SCSI/SAS device - check for self-test in progress via ASC/ASCQ
-            # ASC 0x3F, ASCQ 0x0E indicates self-test in progress
+            # SCSI/SAS device with IE log - return status from IE
             test_status = "no_tests"
             percentage = 0
             
@@ -325,6 +360,55 @@ def get_smart_test_status(device, diagnostics=None):
                 }
             }
         else:
+            # Check for SCSI self-test results even without scsi_ie
+            # SAS drives like Seagate report test results via scsi_self_test_N entries
+            # without populating scsi_ie
+            for k in sorted(data.keys()):
+                if k.startswith("scsi_self_test_"):
+                    test_data = data[k]
+                    test_code = test_data.get("code", {}).get("string", "unknown")
+                    test_result = test_data.get("result", {}).get("string", "unknown")
+                    result_value = test_data.get("result", {}).get("value")
+                    test_hours = test_data.get("power_on_time", {}).get("hours")
+                    passed = result_value == 0
+
+                    if "in progress" in test_result.lower() or result_value == 15:
+                        return {
+                            "status": "in_progress",
+                            "percentage": 50,
+                            "self_test_log_table": None,
+                            "latest_result": {
+                                "type": test_code,
+                                "status": test_result,
+                                "passed": None,
+                                "remaining": 0,
+                                "lba": None,
+                                "hours": test_hours
+                            }
+                        }
+                    else:
+                        # Return the first (most recent) completed test result
+                        if result_value == 0:
+                            test_status = "completed"
+                        elif "failed" in test_result.lower() or "error" in test_result.lower():
+                            test_status = "failed"
+                        elif "aborted" in test_result.lower():
+                            test_status = "aborted"
+                        else:
+                            test_status = "unknown"
+                        return {
+                            "status": test_status,
+                            "percentage": 100 if test_status == "completed" else 0,
+                            "self_test_log_table": None,
+                            "latest_result": {
+                                "type": test_code,
+                                "status": test_result,
+                                "passed": passed,
+                                "remaining": 0,
+                                "lba": None,
+                                "hours": test_hours
+                            }
+                        }
             return {"status": "no_tests", "self_test_log_table": None, "latest_result": None}
     except json.JSONDecodeError:
         return {"error": "Failed to parse smartctl output", "status": "failed", "self_test_log_table": None}
