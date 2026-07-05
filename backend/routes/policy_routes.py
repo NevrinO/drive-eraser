@@ -59,16 +59,18 @@ def admin_policy():
 
             # Numeric policy fields with (type, min, max) constraints
             numeric_policy_fields = {
-                "max_concurrent_wipes": (int, 1, 32),
+                "max_concurrent_wipes": (int, 1, 256),
                 "background_smart_max_workers": (int, 1, 32),
-                "discovery_max_workers": (int, 1, 64),
+                "discovery_max_workers": (int, 1, 32),
                 "zero_detection_concurrency_limit": (int, 1, 32),
                 "blockdev_post_wipe_retries": (int, 0, 10),
-                "blockdev_post_wipe_retry_delay": (int, 0, 300),
-                "prewipe_health_gate_max_pending_sectors": (int, 0, 100000),
-                "prewipe_health_gate_max_reallocated_sectors": (int, 0, 100000),
+                "blockdev_post_wipe_retry_delay": (int, 0, 60),
+                "prewipe_health_gate_max_pending_sectors": (int, 0, 1000),
+                "prewipe_health_gate_max_reallocated_sectors": (int, 0, 1000),
                 "prewipe_health_gate_max_interface_errors": (int, 0, 100000),
                 "prewipe_health_gate_max_health_score_drop": (int, 0, 100),
+                "max_logo_size_mb": (float, 0.1, 50),
+                "max_bulk_cert_batch_size": (int, 1, 1000),
             }
 
             # Boolean policy fields
@@ -77,6 +79,7 @@ def admin_policy():
                 "strict_audit_mode", "prewipe_health_gate_enabled",
                 "prewipe_health_gate_strict_mode", "prewipe_health_gate_block_destroy",
                 "prewipe_health_gate_block_scratch", "prewipe_health_gate_block_failed_smart",
+                "discovery_diag",
             }
 
             # String policy fields with max length

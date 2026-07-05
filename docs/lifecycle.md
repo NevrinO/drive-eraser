@@ -583,8 +583,6 @@ The lifecycle behavior can be configured via `config/policy.json`:
 - `post_erase_marker`: Enables post-erase marker writing
 - `allow_method_override`: Allow technicians to override the recommended erase method
 - `method_priority`: Object mapping interface types (`nvme`, `sas`, `sata`) to ordered method arrays (e.g., `["crypto", "block", "overwrite"]`)
-- `crypto_fail_retry_block`: Retry with block erase if crypto erase fails
-- `health_soft_stop`: Soft-stop on health issues during discovery
 
 **Verification Policy**:
 - `secondary_verification_mode`: `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)
@@ -619,8 +617,7 @@ The lifecycle behavior can be configured via `config/policy.json`:
 - `realloc_raw_new_threshold`: Reallocated sector threshold
 - `sas_grown_defect_fail_threshold`, `sas_nme_advisory_threshold`, `sas_nme_penalty_threshold`, `sas_sticky_lba_threshold`, `sas_high_poh_threshold`: SAS-specific thresholds
 
-**Certificate & Retention**:
-- `certificate_retention_days`: How long to keep certificates in database
+**Certificate Settings**:
 - `max_logo_size_mb`: Maximum logo file size for certificates
 - `max_bulk_cert_batch_size`: Maximum batch size for bulk certificate generation
 

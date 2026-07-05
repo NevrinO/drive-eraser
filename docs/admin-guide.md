@@ -139,15 +139,12 @@ Background, non-blocking, visual-only check that runs after discovery for intern
 | `post_erase_marker` | Enables post-erase marker writing | `true` |
 | `allow_method_override` | Allow technicians to override recommended erase method | `true` |
 | `method_priority` | Per-interface method priority arrays | See `config/policy.json` |
-| `crypto_fail_retry_block` | Retry with block method if crypto erase fails | `true` |
-| `health_soft_stop` | Poor health is a soft stop (warning), not a hard block | `true` |
 | `station_id` | Station identifier for certificates and markers | `wipe-station-01` |
-| `certificate_retention_days` | How long to keep certificates in database | `365` |
 | `log_retention_days` | How long to keep operational logs | — |
 | `max_logo_size_mb` | Maximum logo file size | `1` |
 | `max_bulk_cert_batch_size` | Maximum certificates per bulk export | `100` |
-| `discovery_diag` | Enable discovery diagnostic logging | `true` |
-| `background_smart_max_workers` | Maximum parallel workers for background SMART collection (1-32) | `4` |
+| `discovery_diag` | Enable discovery diagnostic logging | `false` |
+| `background_smart_max_workers` | Maximum parallel workers for background SMART collection (1-32) | `8` |
 
 ---
 

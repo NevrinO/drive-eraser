@@ -231,6 +231,30 @@ class TestAdminRoutes:
             assert data["status"] == "success"
             mock_stop.assert_called_once()
 
+    def test_admin_policy_post_update_discovery_diag(self, admin_session):
+        """Test that discovery_diag can be updated via POST."""
+        payload = {"discovery_diag": True}
+        response = admin_session.post('/api/admin/policy', json=payload)
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["status"] == "success"
+
+    def test_admin_policy_post_update_max_logo_size_mb(self, admin_session):
+        """Test that max_logo_size_mb can be updated via POST."""
+        payload = {"max_logo_size_mb": 5.0}
+        response = admin_session.post('/api/admin/policy', json=payload)
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["status"] == "success"
+
+    def test_admin_policy_post_update_max_bulk_cert_batch_size(self, admin_session):
+        """Test that max_bulk_cert_batch_size can be updated via POST."""
+        payload = {"max_bulk_cert_batch_size": 500}
+        response = admin_session.post('/api/admin/policy', json=payload)
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert data["status"] == "success"
+
     def test_admin_policy_post_rejects_deprecated_crypto_verification_mode(self, admin_session):
         """Test that the deprecated crypto_verification_mode key is rejected."""
         payload = {"crypto_verification_mode": "disabled"}

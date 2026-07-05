@@ -675,18 +675,18 @@ class TestExtendedSmartPool:
         disk_ops.stop_extended_smart_pool(wait=False)
 
     def test_get_background_smart_max_workers_default(self):
-        """Default background worker count is 4."""
+        """Default background worker count is 8."""
         from disk_ops import get_background_smart_max_workers
         with patch('extended_smart.load_policy') as mock_load_policy:
             mock_load_policy.return_value = {}
-            assert get_background_smart_max_workers() == 4
+            assert get_background_smart_max_workers() == 8
 
     def test_get_background_smart_max_workers_clamped(self):
-        """Worker count is clamped to [1, 8]."""
+        """Worker count is clamped to [1, 32]."""
         from disk_ops import get_background_smart_max_workers
         with patch('extended_smart.load_policy') as mock_load_policy:
             mock_load_policy.return_value = {"background_smart_max_workers": 50}
-            assert get_background_smart_max_workers() == 8
+            assert get_background_smart_max_workers() == 32
             mock_load_policy.return_value = {"background_smart_max_workers": 0}
             assert get_background_smart_max_workers() == 1
 

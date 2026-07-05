@@ -1015,6 +1015,11 @@
               <input type="url" id="slack_webhook_url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
               <small class="text-muted-xs">Slack webhook URL for wipe completion/failure notifications</small>
             </label>
+            <label>
+              Station ID
+              <input type="text" id="station_id" name="station_id" maxlength="100" placeholder="wipe-station-01">
+              <small class="text-muted-xs">Identifier for this wipe station (max 100 characters)</small>
+            </label>
           </div>
 
           <div class="modal-section-header">Verification Mode</div>
@@ -1041,6 +1046,11 @@
               Max Concurrent Wipes
               <input type="number" id="max_concurrent_wipes" name="max_concurrent_wipes" min="1" max="256" step="1">
               <small class="text-muted-xs">Maximum simultaneous wipe operations (1-256)</small>
+            </label>
+            <label>
+              Background SMART Max Workers
+              <input type="number" id="background_smart_max_workers" name="background_smart_max_workers" min="1" max="32" step="1">
+              <small class="text-muted-xs">Maximum parallel threads for background extended SMART collection (1-32)</small>
             </label>
           </div>
 
@@ -1072,6 +1082,36 @@
               Wipe Passphrase
               <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase" autocomplete="new-password">
               <small class="text-muted-xs">Passphrase for marker HMAC signing (min 8 characters when strict mode is enabled). Changing this invalidates existing marker verification results.</small>
+            </label>
+            <label>
+              Post-Erase Marker
+              <select id="post_erase_marker" name="post_erase_marker">
+                <option value="true">Enabled (write marker after erase)</option>
+                <option value="false">Disabled (no marker written)</option>
+              </select>
+              <small class="text-muted-xs">Write a cryptographic marker to the drive after successful erasure</small>
+            </label>
+            <label>
+              Allow Method Override
+              <select id="allow_method_override" name="allow_method_override">
+                <option value="true">Enabled (allow manual method selection)</option>
+                <option value="false">Disabled (use method priority only)</option>
+              </select>
+              <small class="text-muted-xs">Allow operators to override the default wipe method for a drive</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">Certificate Settings</div>
+          <div class="form-fields-stack">
+            <label>
+              Max Logo Size (MB)
+              <input type="number" id="max_logo_size_mb" name="max_logo_size_mb" min="0.1" max="50" step="0.1">
+              <small class="text-muted-xs">Maximum logo file size in megabytes for certificate customization (0.1-50)</small>
+            </label>
+            <label>
+              Max Bulk Certificate Batch Size
+              <input type="number" id="max_bulk_cert_batch_size" name="max_bulk_cert_batch_size" min="1" max="1000" step="1">
+              <small class="text-muted-xs">Maximum number of certificates that can be generated in a single bulk batch (1-1000)</small>
             </label>
           </div>
 
@@ -1153,6 +1193,18 @@
               Zero Detection Concurrency Limit
               <input type="number" id="zero_detection_concurrency_limit" name="zero_detection_concurrency_limit" min="1" max="32" step="1">
               <small class="text-muted-xs">Maximum parallel zero-check reads (1-32)</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">Diagnostics</div>
+          <div class="form-fields-stack">
+            <label>
+              Discovery Diagnostics
+              <select id="discovery_diag" name="discovery_diag">
+                <option value="false">Disabled</option>
+                <option value="true">Enabled (verbose discovery logging)</option>
+              </select>
+              <small class="text-muted-xs">Enable verbose diagnostic logging during drive discovery</small>
             </label>
           </div>
 

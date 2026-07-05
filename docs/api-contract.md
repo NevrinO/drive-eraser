@@ -209,17 +209,16 @@ Writable operational fields include:
 - `post_erase_marker` — enable/disable post-erase marker writing
 - `allow_method_override` — allow technicians to override the recommended erase method
 - `method_priority` — object mapping interface types (`nvme`, `sas`, `sata`) to ordered method arrays (e.g. `["crypto", "block", "overwrite"]`)
-- `crypto_fail_retry_block` — retry with block erase if crypto erase fails
-- `health_soft_stop` — soft-stop on health issues during discovery
 - `secondary_verification_mode` — `conservative_probe`, `full_verify`, or `disabled` (deprecated alias `crypto_verification_mode` still accepted)
-- `discovery_max_workers` — parallel SMART query threads during discovery
-- `max_concurrent_wipes` — maximum simultaneous erase jobs
+- `discovery_max_workers` — parallel SMART query threads during discovery (1-32)
+- `background_smart_max_workers` — maximum parallel workers for background extended SMART collection (1-32)
+- `max_concurrent_wipes` — maximum simultaneous erase jobs (1-256)
+- `discovery_diag` — enable/disable verbose discovery diagnostic logging
 - `triage_thresholds` — nested object with triage scoring thresholds (ssd/hdd Poh, health score, FDW, SAS defect thresholds)
-- `certificate_retention_days` — days to retain certificates
 - `max_logo_size_mb` — maximum logo file size in MB
 - `max_bulk_cert_batch_size` — maximum batch size for bulk certificate generation
-- `blockdev_post_wipe_retries` — retry attempts for post-wipe `blockdev --getsize64`
-- `blockdev_post_wipe_retry_delay` — seconds between post-wipe blockdev retries
+- `blockdev_post_wipe_retries` — retry attempts for post-wipe `blockdev --getsize64` (0-10)
+- `blockdev_post_wipe_retry_delay` — seconds between post-wipe blockdev retries (0-60)
 
 **Note on GET requests:** The backend redacts both `"lan_passphrase"` and `"wipe_passphrase"` to empty strings in the response. `"slack_webhook_url"` is included and should be treated as a sensitive value by the admin UI.
 

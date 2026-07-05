@@ -36,11 +36,11 @@ def get_background_smart_max_workers():
     """Get the maximum number of workers for background extended SMART collection."""
     try:
         policy = load_policy(get_config_dir())
-        workers = policy.get("background_smart_max_workers", 4)
+        workers = policy.get("background_smart_max_workers", 8)
         # Clamp to reasonable bounds for background load
-        return max(1, min(workers, 8))
+        return max(1, min(workers, 32))
     except Exception:
-        return 4
+        return 8
 
 
 def _get_extended_smart_executor():

@@ -37,12 +37,12 @@ async function loadSystemConfig() {
     
     const discoveryWorkersInput = document.getElementById("discovery_max_workers");
     if (discoveryWorkersInput) {
-      discoveryWorkersInput.value = policy.discovery_max_workers || 8;
+      discoveryWorkersInput.value = policy.discovery_max_workers || 16;
     }
     
     const maxConcurrentInput = document.getElementById("max_concurrent_wipes");
     if (maxConcurrentInput) {
-      maxConcurrentInput.value = policy.max_concurrent_wipes || 64;
+      maxConcurrentInput.value = policy.max_concurrent_wipes || 34;
     }
     
     const blockdevRetriesInput = document.getElementById("blockdev_post_wipe_retries");
@@ -64,6 +64,47 @@ async function loadSystemConfig() {
     const wipePassphraseInput = document.getElementById("wipe_passphrase");
     if (wipePassphraseInput) {
       wipePassphraseInput.value = ""; // Never populate the passphrase field for security
+    }
+
+    // Station ID
+    const stationIdInput = document.getElementById("station_id");
+    if (stationIdInput) {
+      stationIdInput.value = policy.station_id || "";
+    }
+
+    // Background SMART max workers
+    const backgroundSmartMaxWorkersInput = document.getElementById("background_smart_max_workers");
+    if (backgroundSmartMaxWorkersInput) {
+      backgroundSmartMaxWorkersInput.value = policy.background_smart_max_workers || 8;
+    }
+
+    // Post-erase marker
+    const postEraseMarkerInput = document.getElementById("post_erase_marker");
+    if (postEraseMarkerInput) {
+      postEraseMarkerInput.value = policy.post_erase_marker ? "true" : "false";
+    }
+
+    // Allow method override
+    const allowMethodOverrideInput = document.getElementById("allow_method_override");
+    if (allowMethodOverrideInput) {
+      allowMethodOverrideInput.value = policy.allow_method_override ? "true" : "false";
+    }
+
+    // Certificate settings
+    const maxLogoSizeInput = document.getElementById("max_logo_size_mb");
+    if (maxLogoSizeInput) {
+      maxLogoSizeInput.value = policy.max_logo_size_mb || 1;
+    }
+
+    const maxBulkCertBatchInput = document.getElementById("max_bulk_cert_batch_size");
+    if (maxBulkCertBatchInput) {
+      maxBulkCertBatchInput.value = policy.max_bulk_cert_batch_size || 100;
+    }
+
+    // Discovery diagnostics
+    const discoveryDiagInput = document.getElementById("discovery_diag");
+    if (discoveryDiagInput) {
+      discoveryDiagInput.value = policy.discovery_diag ? "true" : "false";
     }
 
     // Zero detection settings
@@ -173,6 +214,19 @@ function validateForm() {
     formData.slack_webhook_url = slackWebhookInput.value.trim();
   }
   
+  // Station ID (optional string, max 100 chars)
+  const stationIdInput = document.getElementById("station_id");
+  if (stationIdInput) {
+    const value = stationIdInput.value.trim();
+    if (value.length > 100) {
+      isValid = false;
+      stationIdInput.style.borderColor = "var(--color-danger)";
+    } else {
+      stationIdInput.style.borderColor = "";
+      formData.station_id = value;
+    }
+  }
+  
   // Secondary verification mode (enum)
   const secondaryVerificationModeInput = document.getElementById("secondary_verification_mode");
   if (secondaryVerificationModeInput) {
@@ -209,6 +263,19 @@ function validateForm() {
     } else {
       maxConcurrentInput.style.borderColor = "";
       formData.max_concurrent_wipes = value;
+    }
+  }
+  
+  // Background SMART max workers (integer 1-32)
+  const backgroundSmartMaxWorkersInput = document.getElementById("background_smart_max_workers");
+  if (backgroundSmartMaxWorkersInput) {
+    const value = parseInt(backgroundSmartMaxWorkersInput.value, 10);
+    if (isNaN(value) || value < 1 || value > 32) {
+      isValid = false;
+      backgroundSmartMaxWorkersInput.style.borderColor = "var(--color-danger)";
+    } else {
+      backgroundSmartMaxWorkersInput.style.borderColor = "";
+      formData.background_smart_max_workers = value;
     }
   }
   
@@ -260,6 +327,50 @@ function validateForm() {
     } else {
       wipePassphraseInput.style.borderColor = "";
     }
+  }
+
+  // Post-erase marker (boolean)
+  const postEraseMarkerInput = document.getElementById("post_erase_marker");
+  if (postEraseMarkerInput) {
+    formData.post_erase_marker = postEraseMarkerInput.value === "true";
+  }
+
+  // Allow method override (boolean)
+  const allowMethodOverrideInput = document.getElementById("allow_method_override");
+  if (allowMethodOverrideInput) {
+    formData.allow_method_override = allowMethodOverrideInput.value === "true";
+  }
+
+  // Max logo size (float 0.1-50)
+  const maxLogoSizeInput = document.getElementById("max_logo_size_mb");
+  if (maxLogoSizeInput) {
+    const value = parseFloat(maxLogoSizeInput.value);
+    if (isNaN(value) || value < 0.1 || value > 50) {
+      isValid = false;
+      maxLogoSizeInput.style.borderColor = "var(--color-danger)";
+    } else {
+      maxLogoSizeInput.style.borderColor = "";
+      formData.max_logo_size_mb = value;
+    }
+  }
+
+  // Max bulk cert batch size (integer 1-1000)
+  const maxBulkCertBatchInput = document.getElementById("max_bulk_cert_batch_size");
+  if (maxBulkCertBatchInput) {
+    const value = parseInt(maxBulkCertBatchInput.value, 10);
+    if (isNaN(value) || value < 1 || value > 1000) {
+      isValid = false;
+      maxBulkCertBatchInput.style.borderColor = "var(--color-danger)";
+    } else {
+      maxBulkCertBatchInput.style.borderColor = "";
+      formData.max_bulk_cert_batch_size = value;
+    }
+  }
+
+  // Discovery diagnostics (boolean)
+  const discoveryDiagInput = document.getElementById("discovery_diag");
+  if (discoveryDiagInput) {
+    formData.discovery_diag = discoveryDiagInput.value === "true";
   }
 
   // Zero detection settings

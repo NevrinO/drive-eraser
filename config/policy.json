@@ -7,10 +7,8 @@
     "sas": ["crypto", "block", "overwrite"],
     "sata": ["crypto", "block", "overwrite"]
   },
-  "crypto_fail_retry_block": true,
   "strict_audit_mode": true,
   "secondary_verification_mode": "conservative_probe",
-  "health_soft_stop": true,
   "port": 5000,
   "bind_address": "0.0.0.0",
   "station_id": "wipe-station-01",
@@ -34,7 +32,10 @@
     "sas_sticky_lba_threshold": 3,
     "sas_high_poh_threshold": 50000
   },
-  "certificate_retention_days": 365,
+  "discovery_max_workers": 16,
+  "background_smart_max_workers": 8,
+  "max_concurrent_wipes": 34,
+  "discovery_diag": false,
   "max_logo_size_mb": 1,
   "max_bulk_cert_batch_size": 100,
   "blockdev_post_wipe_retries": 3,
