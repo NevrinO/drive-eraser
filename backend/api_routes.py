@@ -40,7 +40,13 @@ def register_routes(flask_app):
             return jsonify({"error": "not found"}), 404
         asset_path = os.path.join(FRONTEND_DIR, path)
         if os.path.exists(asset_path) and os.path.isfile(asset_path):
-            return send_from_directory(FRONTEND_DIR, path)
+            response = send_from_directory(FRONTEND_DIR, path)
+            # Prevent browser caching of JS/CSS so code fixes reach the client
+            if path.endswith(('.js', '.css')):
+                response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+                response.headers['Pragma'] = 'no-cache'
+                response.headers['Expires'] = '0'
+            return response
         return jsonify({"error": "not found"}), 404
 
     @flask_app.route("/docs/<path:path>")
