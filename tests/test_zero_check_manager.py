@@ -472,3 +472,18 @@ class TestZeroCheckManager:
                     break
                 time.sleep(0.05)
 
+    def test_skip_auto_enqueue_next_consumes_once(self):
+        """Test that skip_auto_enqueue_next skips only the first consume call."""
+        reset_manager()
+        manager = ZeroCheckManager(socketio=None, max_concurrency=2)
+
+        # Before setting flag, consume returns False
+        assert manager.consume_skip_auto_enqueue() is False
+
+        # Set flag, first consume returns True
+        manager.skip_auto_enqueue_next()
+        assert manager.consume_skip_auto_enqueue() is True
+
+        # Second consume returns False (flag was consumed)
+        assert manager.consume_skip_auto_enqueue() is False
+

@@ -224,6 +224,13 @@ baysGrid.addEventListener("click", (event) => {
 });
 
 async function handleZeroCheckAction(bay, action) {
+  const button = document.querySelector(`[data-zero-check-action][data-bay="${CSS.escape(bay)}"]`);
+  if (button) {
+    if (button.disabled) return;
+    button.disabled = true;
+    const originalText = button.textContent;
+    button.textContent = action === "start" ? "Starting..." : "Cancelling...";
+  }
   try {
     const method = action === "start" ? "POST" : "DELETE";
     const response = await safeFetch(`/api/drives/${encodeURIComponent(bay)}/zero-check`, { method });
@@ -232,6 +239,10 @@ async function handleZeroCheckAction(bay, action) {
       const errMsg = data.error || response.status;
       console.error(`Zero-check ${action} failed for ${bay}:`, errMsg);
       alert(`Zero-check ${action} failed for ${bay}: ${errMsg}`);
+      if (button) {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
       return;
     }
     await loadDrives(true);
@@ -245,6 +256,10 @@ async function handleZeroCheckAction(bay, action) {
     }
   } catch (e) {
     console.error(`Zero-check ${action} error for ${bay}:`, e);
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalText;
+    }
   }
 }
 

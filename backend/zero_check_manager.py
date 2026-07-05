@@ -36,6 +36,7 @@ class ZeroCheckManager:
         self._status = {}  # bay -> status dict
         self._generations = {}  # bay -> generation token
         self._generation_counter = 0
+        self._skip_auto_enqueue = False  # set on startup, cleared after first discovery
 
     def set_socketio(self, socketio):
         self._socketio = socketio
@@ -209,6 +210,24 @@ class ZeroCheckManager:
 
     def on_wipe_starting(self, bay):
         self.cancel_check(bay)
+
+    def skip_auto_enqueue_next(self):
+        """Skip auto-enrollment on the next discovery cycle only.
+
+        Called on startup to give drives time to settle after restart (e.g.,
+        flushing interrupted DD writes). The first discovery will skip
+        auto-enrolling zero checks; the second cycle enrolls normally.
+        """
+        with self._lock:
+            self._skip_auto_enqueue = True
+
+    def consume_skip_auto_enqueue(self):
+        """Check and clear the one-time skip flag. Returns True if this call consumed it."""
+        with self._lock:
+            if self._skip_auto_enqueue:
+                self._skip_auto_enqueue = False
+                return True
+            return False
 
     # --- Queue/scheduling internals ---
 

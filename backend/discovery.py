@@ -84,6 +84,14 @@ def _auto_enqueue_zero_checks(results):
         return
 
     manager = get_zero_check_manager()
+
+    # One-time skip on startup: if the flag is set, consume it and skip
+    # auto-enrollment for this entire discovery cycle. The next cycle
+    # will enroll normally (drives get ~30s to settle after restart).
+    if manager.consume_skip_auto_enqueue():
+        logging.getLogger(__name__).info("Skipping zero-check auto-enrollment for this cycle (startup delay)")
+        return
+
     present_bays = set()
     for bay_info in results:
         bay = bay_info.get("bay")

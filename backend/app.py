@@ -254,7 +254,7 @@ def recover_orphaned_jobs_on_startup():
     from common import get_db_path
     from database import persist_job, load_job
     from datetime import datetime, timezone
-    
+
     now = datetime.now(timezone.utc).isoformat()
     try:
         with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
@@ -262,11 +262,11 @@ def recover_orphaned_jobs_on_startup():
             rows = conn.execute(
                 "SELECT id FROM erase_jobs WHERE status IN ('running', 'queued')"
             ).fetchall()
-        
+
         if not rows:
             logger.info("Startup recovery: no orphaned jobs found")
             return
-        
+
         logger.warning(f"Startup recovery: found {len(rows)} orphaned job(s) to mark as failed")
         for row in rows:
             job_id = row["id"]
@@ -418,16 +418,22 @@ def create_app():
     
     # Recover orphaned jobs from previous server instance
     recover_orphaned_jobs_on_startup()
-    
+
     # Set WebSocket managers
     udev_listener.set_websocket_manager(socketio)
     disk_ops.set_websocket_manager(socketio)
-    
+
     # Initialize zero-check manager with current policy concurrency limit
     config_dir = get_config_dir()
     _policy = load_policy(config_dir)
     zero_check_concurrency = int(_policy.get("zero_detection_concurrency_limit", 8))
-    get_zero_check_manager(socketio=socketio, max_concurrency=zero_check_concurrency)
+    zc_manager = get_zero_check_manager(socketio=socketio, max_concurrency=zero_check_concurrency)
+
+    # Skip auto-enrollment of zero checks on the first discovery cycle after
+    # restart. Drives may still be flushing interrupted DD writes, and enrolling
+    # zero checks immediately causes timeouts and I/O contention. The second
+    # discovery cycle (~30s later) will enroll normally.
+    zc_manager.skip_auto_enqueue_next()
     
     # Start udev event listener for real-time device discovery
     udev_listener.start_udev_listener()

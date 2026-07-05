@@ -357,10 +357,6 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
     small_threshold_bytes = small_threshold_gb * 1024 * 1024 * 1024
 
     device_lock = get_device_lock(device)
-    deadline = time.time() + timeout_seconds
-
-    def _is_timed_out():
-        return time.time() >= deadline
 
     def _is_cancelled():
         return cancel_event is not None and cancel_event.is_set()
@@ -380,6 +376,14 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
 
     if capacity <= 0:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_capacity", "details": f"Drive reported zero capacity: {capacity}"}
+
+    # Set deadline after blockdev completes so retry delays don't eat into
+    # the zone-read timeout budget. The timeout is meant to limit dd read
+    # time, not metadata query time (blockdev has its own retry logic).
+    deadline = time.time() + timeout_seconds
+
+    def _is_timed_out():
+        return time.time() >= deadline
 
     # Determine read strategy
     if capacity <= small_threshold_bytes:
