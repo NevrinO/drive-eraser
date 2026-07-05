@@ -24,13 +24,13 @@ def check_health_gate_sync(device, interface_type, policy, health_gate_override=
     """Synchronous health gate check for use by API routes before starting a job.
 
     Returns a dict:
-        {"blocked": False} if not blocked or override accepted.
+        {"blocked": False, "health_gate_result": <full result>} if not blocked or override accepted.
         {"blocked": True, "error_code": "pre_wipe_health_check_failed",
-         "block_reason": "...", "override_available": bool} if blocked.
+         "block_reason": "...", "override_available": bool, "health_gate_result": <full result>} if blocked.
     """
     health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
     if not health_gate_result.get("blocked"):
-        return {"blocked": False}
+        return {"blocked": False, "health_gate_result": health_gate_result}
 
     block_reason = health_gate_result.get("block_reason")
     strict_mode = policy.get("prewipe_health_gate_strict_mode", False)
@@ -38,13 +38,14 @@ def check_health_gate_sync(device, interface_type, policy, health_gate_override=
     override_allowed = not strict_mode and not strict_audit_mode
 
     if health_gate_override and override_allowed:
-        return {"blocked": False, "override_accepted": True, "block_reason": block_reason}
+        return {"blocked": False, "override_accepted": True, "block_reason": block_reason, "health_gate_result": health_gate_result}
 
     return {
         "blocked": True,
         "error_code": "pre_wipe_health_check_failed",
         "block_reason": block_reason,
         "override_available": override_allowed,
+        "health_gate_result": health_gate_result,
     }
 
 

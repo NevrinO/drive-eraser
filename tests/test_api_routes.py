@@ -5,6 +5,7 @@ import os
 import json
 import logging
 import tempfile
+import threading
 from unittest.mock import patch, MagicMock
 
 # Add backend to path for imports
@@ -165,7 +166,7 @@ class TestAPIRoutes:
 
         with patch('api_routes.discover_drives', return_value=[mocked_drive]), \
              patch('api_routes.validate_single_bay', return_value=(validated, None, None)), \
-             patch('api_routes.check_health_gate_sync', return_value={"blocked": False}), \
+             patch('api_routes.check_health_gate_sync', return_value={"blocked": False, "health_gate_result": {"blocked": False}}), \
              patch('api_routes.create_erase_job', return_value=job), \
              patch('api_routes.get_wipe_semaphore', return_value=mock_semaphore), \
              patch('api_routes.run_erase_job'), \
@@ -238,13 +239,16 @@ class TestAPIRoutes:
                 return (validated_1, None, None)
             return (validated_2, None, None)
 
-        call_count = [0]
+        call_count = []
+        call_lock = threading.Lock()
         def mock_health_gate(device, interface_type, policy, health_gate_override=False):
-            call_count[0] += 1
+            with call_lock:
+                call_count.append(device)
             if device == "/dev/sdb":
                 return {"blocked": True, "error_code": "pre_wipe_health_check_failed",
-                        "block_reason": "smart_status_failed", "override_available": True}
-            return {"blocked": False}
+                        "block_reason": "smart_status_failed", "override_available": True,
+                        "health_gate_result": {"blocked": True, "block_reason": "smart_status_failed"}}
+            return {"blocked": False, "health_gate_result": {"blocked": False}}
 
         with patch('api_routes.discover_drives', return_value=[mocked_drive_1, mocked_drive_2]), \
              patch('api_routes.validate_single_bay', side_effect=mock_validate), \
@@ -267,7 +271,7 @@ class TestAPIRoutes:
             assert "passing_bays" in data
             assert "bay2" in data["passing_bays"]
             assert data["override_available"] is True
-            assert call_count[0] == 2
+            assert len(call_count) == 2
 
     def test_erase_start_health_gate_all_drives_blocked(self, client):
         """Test that health gate returns empty passing_bays when all drives are blocked."""
@@ -317,7 +321,8 @@ class TestAPIRoutes:
 
         def mock_health_gate(device, interface_type, policy, health_gate_override=False):
             return {"blocked": True, "error_code": "pre_wipe_health_check_failed",
-                    "block_reason": "smart_status_failed", "override_available": True}
+                    "block_reason": "smart_status_failed", "override_available": True,
+                    "health_gate_result": {"blocked": True, "block_reason": "smart_status_failed"}}
 
         with patch('api_routes.discover_drives', return_value=[mocked_drive_1, mocked_drive_2]), \
              patch('api_routes.validate_single_bay', side_effect=mock_validate), \

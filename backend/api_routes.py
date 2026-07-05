@@ -9,6 +9,7 @@ import sqlite3
 from contextlib import closing
 from datetime import datetime, timezone
 from threading import Thread
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import request, jsonify, send_from_directory
 
 from app_config import app, ERASE_JOBS, ERASE_JOBS_LOCK, FRONTEND_DIR, PROJECT_ROOT, logger, calculate_session_token, limiter, get_wipe_semaphore
@@ -129,24 +130,36 @@ def register_routes(flask_app):
             health_gate_override = payload.get("health_gate_override", False)
             health_gate_override_justification = payload.get("health_gate_override_justification", "")
 
-            # Synchronous health gate pre-check before starting background jobs
+            # Parallel health gate pre-check before starting background jobs
             # Collect ALL blocked drives so the user can see which ones failed
+            # Run all smartctl checks concurrently to avoid serial 2-10s delays per drive
             blocked_drives = []
             passing_validated = []
-            for validated in validated_bays:
-                device = validated.get("device")
-                drive_info = validated.get("drive", {})
+            health_gate_results = {}
+
+            def _check_gate(v):
+                device = v.get("device")
+                drive_info = v.get("drive", {})
                 interface_type = drive_info.get("interface_type")
                 gate_result = check_health_gate_sync(device, interface_type, policy, health_gate_override)
-                if gate_result.get("blocked"):
-                    blocked_drives.append({
-                        "bay": validated.get("bay"),
-                        "serial": drive_info.get("serial", "Unknown"),
-                        "model": drive_info.get("model", "Unknown"),
-                        "block_reason": gate_result.get("block_reason", "unknown"),
-                    })
-                else:
-                    passing_validated.append(validated)
+                return v, gate_result
+
+            max_gate_workers = min(len(validated_bays), 16)
+            with ThreadPoolExecutor(max_workers=max_gate_workers) as executor:
+                futures = [executor.submit(_check_gate, v) for v in validated_bays]
+                for future in as_completed(futures):
+                    v, gate_result = future.result()
+                    if gate_result.get("blocked"):
+                        drive_info = v.get("drive", {})
+                        blocked_drives.append({
+                            "bay": v.get("bay"),
+                            "serial": drive_info.get("serial", "Unknown"),
+                            "model": drive_info.get("model", "Unknown"),
+                            "block_reason": gate_result.get("block_reason", "unknown"),
+                        })
+                    else:
+                        passing_validated.append(v)
+                        health_gate_results[v.get("bay")] = gate_result.get("health_gate_result")
 
             if blocked_drives:
                 return jsonify({
@@ -169,22 +182,14 @@ def register_routes(flask_app):
                     job["request"]["full_verification"] = full_verification
                     job["request"]["health_gate_override"] = health_gate_override
                     job["request"]["health_gate_override_justification"] = health_gate_override_justification
+                    # Store health gate result so worker can skip redundant check
+                    bay_key = validated.get("bay")
+                    if bay_key in health_gate_results:
+                        job["health_gate_result"] = health_gate_results[bay_key]
+
                     with ERASE_JOBS_LOCK:
                         ERASE_JOBS[job["id"]] = job
                     persist_job(job)
-
-                    # Phase 4: Capture pre-wipe SMART snapshot
-                    device = validated.get("device")
-                    if device:
-                        try:
-                            from smart_parsing import get_smart_data
-                            command_diagnostics = {}
-                            pre_wipe_smart = get_smart_data(device, command_diagnostics)
-                            if pre_wipe_smart:
-                                from database import save_wipe_smart_snapshot
-                                save_wipe_smart_snapshot(job["id"], "pre", pre_wipe_smart)
-                        except Exception as e:
-                            logger.warning(f"Failed to capture pre-wipe SMART snapshot for job {job['id']}: {e}")
 
                     # Wrap worker to release semaphore when done
                     def worker_with_cleanup(job_id):

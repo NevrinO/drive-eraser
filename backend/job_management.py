@@ -187,10 +187,15 @@ def run_erase_job(job_id):
     except Exception as e:
         logger.warning(f"Failed to cancel zero-check for bay {job['request'].get('bay')} before wipe: {e}")
 
-    # Pre-wipe health gate check to prevent starting wipes on failing drives
+    # Pre-wipe health gate check — use cached result from API route if available
+    # to avoid redundant smartctl call (Fix 3: skip redundant health gate)
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
-    health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
+    cached_health_gate = job.get("health_gate_result")
+    if cached_health_gate is not None:
+        health_gate_result = cached_health_gate
+    else:
+        health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
     
     # Check if override was requested
     health_gate_override = job["request"].get("health_gate_override", False)
@@ -232,6 +237,17 @@ def run_erase_job(job_id):
             else:
                 finalize_failed_job(job_id, f"pre_wipe_health_check_failed: {block_reason}")
             return
+
+    # Capture pre-wipe SMART snapshot in worker thread (Fix 2: parallelize SMART capture)
+    # Previously this was done serially in the API route, delaying all job starts
+    try:
+        command_diagnostics = {}
+        pre_wipe_smart = get_smart_data(device, command_diagnostics)
+        if pre_wipe_smart:
+            save_wipe_smart_snapshot(job_id, "pre", pre_wipe_smart)
+            logger.info(f"Job {job_id} (Bay {job['request']['bay']}) pre-wipe SMART snapshot captured")
+    except Exception as e:
+        logger.warning(f"Failed to capture pre-wipe SMART snapshot for job {job_id}: {e}")
 
     # Capture before-state for all methods for hash comparison verification
     before_state = None
@@ -458,16 +474,20 @@ def run_erase_job(job_id):
                     progress = min(99.9, (elapsed / 120.0) * 100)
                     phase = "SAS Sanitize running..."
 
-            with ERASE_JOBS_LOCK:
-                job = ERASE_JOBS.get(job_id)
-                if job:
-                    job["progress_percent"] = round(progress, 1)
-                    job["current_phase"] = phase
-                    job["elapsed_seconds"] = round(elapsed, 0)
-                    if write_speed is not None:
-                        job["speed_mb_s"] = round(write_speed / (1024 * 1024), 1)
-                    if eta_seconds is not None:
-                        job["eta_seconds"] = round(eta_seconds, 0)
+            # Update progress without ERASE_JOBS_LOCK — drive_routes.py reads these
+            # telemetry fields under lock, but per-key dict assignments are atomic under
+            # the GIL. All keys are pre-initialized at job start, so no new keys appear
+            # mid-iteration. Worst case is cosmetic inconsistency (reader sees progress
+            # from one loop iteration and phase from the next). Safe under CPython GIL.
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["progress_percent"] = round(progress, 1)
+                job["current_phase"] = phase
+                job["elapsed_seconds"] = round(elapsed, 0)
+                if write_speed is not None:
+                    job["speed_mb_s"] = round(write_speed / (1024 * 1024), 1)
+                if eta_seconds is not None:
+                    job["eta_seconds"] = round(eta_seconds, 0)
 
             time.sleep(3)
 
@@ -620,13 +640,14 @@ def run_erase_job(job_id):
                 fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                 progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                 
-            with ERASE_JOBS_LOCK:
-                job = ERASE_JOBS.get(job_id)
-                if job:
-                    job["progress_percent"] = round(progress_pct, 1)
-                    job["current_phase"] = phase_text
-                    total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
-                    job["elapsed_seconds"] = round(total_elapsed_fw, 0)
+            # Update firmware polling progress without lock — same rationale as above:
+            # per-key dict assignments are atomic under GIL, keys pre-initialized at job start
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["progress_percent"] = round(progress_pct, 1)
+                job["current_phase"] = phase_text
+                total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
+                job["elapsed_seconds"] = round(total_elapsed_fw, 0)
 
             time.sleep(4)
 
