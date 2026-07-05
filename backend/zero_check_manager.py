@@ -285,9 +285,9 @@ class ZeroCheckManager:
 
             try:
                 policy = load_policy()
-                timeout_seconds = policy.get("zero_check_timeout_seconds", 60)
+                timeout_seconds = policy.get("zero_check_timeout_seconds", 30)
             except Exception:
-                timeout_seconds = 60
+                timeout_seconds = 30
 
             result = check_drive_already_zeroed(
                 device, cancel_event=cancel_event, timeout_seconds=timeout_seconds

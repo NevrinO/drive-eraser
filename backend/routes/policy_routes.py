@@ -63,6 +63,8 @@ def admin_policy():
                 "background_smart_max_workers": (int, 1, 32),
                 "discovery_max_workers": (int, 1, 32),
                 "zero_detection_concurrency_limit": (int, 1, 32),
+                "zero_check_timeout_seconds": (int, 5, 300),
+                "zero_check_startup_delay_seconds": (int, 0, 300),
                 "blockdev_post_wipe_retries": (int, 0, 10),
                 "blockdev_post_wipe_retry_delay": (int, 0, 60),
                 "prewipe_health_gate_max_pending_sectors": (int, 0, 1000),

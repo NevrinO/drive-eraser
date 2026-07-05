@@ -320,7 +320,7 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
     return {"ok": True, "nonzero": False, "bytes_read": bytes_read, "chunks_read": chunks_read, "error": None}
 
 
-def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
+def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=30):
     """
     Pre-wipe zero detection: read a flat 2 GB sample from 5 zones and check
     whether the sampled bytes are all zero. Drives <= 2 GB are read in one pass.
