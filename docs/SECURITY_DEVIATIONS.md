@@ -21,17 +21,27 @@
 
 ## [2025-06-07] - systemd NoNewPrivileges Not Enabled
 - **Deviation**: systemd service file has NoNewPrivileges=false instead of true
-- **Reason**: Requires separate security hardening effort and testing
-- **Context**: The systemd service file (systemd/drive-eraser.service) currently has NoNewPrivileges=false on line 30. Setting NoNewPrivileges=true would prevent the process from gaining new privileges through setuid/setgid binaries or file capabilities, which is a security best practice. However, enabling this requires:
-  1. Testing to ensure the application doesn't require privilege escalation for any operations
-  2. Verifying that all subprocess calls (nwipe, smartctl, etc.) work correctly without privilege escalation
-  3. Potentially adjusting file permissions and capabilities for required binaries
-  Additional hardening directives to consider for future implementation:
+- **Reason**: Enabling NoNewPrivileges=true breaks sudo, which the application relies on for all disk operations. Requires architectural rework of how disk commands are executed.
+- **Context**: `NoNewPrivileges` is a systemd security directive that, when `true`, sets the `PR_SET_NO_NEW_PRIVS` kernel flag on the process and all its children. This prevents privilege escalation via SUID/SGID binaries and file capabilities. This is a security best practice because it limits the blast radius of a compromised process.
+
+  **Why it matters**: The app runs as `wipestation` user and calls `sudo` for every disk operation (smartctl, hdparm, nvme, sg_sanitize, dd, etc.) via sudoers rules granting `NOPASSWD` access to specific binaries. If an attacker compromises the Flask app (e.g., via a dependency vulnerability), `NoNewPrivileges=false` means they could potentially execute other SUID binaries on the system that aren't in the sudoers allowlist, exploit file capabilities on system binaries, or chain privilege escalation in ways that `NoNewPrivileges=true` would block.
+
+  **Why it can't be trivially fixed**: `sudo` itself is a SUID binary (`/usr/bin/sudo` has the setuid bit). When `NoNewPrivileges=true` is set, the kernel ignores SUID bits — so `sudo` would fail to escalate to root, breaking every disk command in the application. The sudoers `NOPASSWD` allowlist is already a reasonable security boundary (only specific binaries, no shell access), so the risk is post-compromise privilege escalation, not direct attack.
+
+  **Fix options** (all require significant rework):
+  1. **Run the app as root** — eliminates need for sudo, but worse security posture (compromised app has full root)
+  2. **Use Linux capabilities instead of sudo** — grant `CAP_SYS_RAWIO` + `CAP_SYS_ADMIN` to the python binary via `setcap`, then use `NoNewPrivileges=true`. Requires testing that all disk operations work with capabilities alone.
+  3. **Use a privileged helper daemon** — a small root-running service that receives commands via Unix socket. The Flask app talks to it without needing sudo. Most secure but highest implementation effort.
+
+  **Risk level**: Low (post-compromise only, sudoers allowlist is tight, LAN-only deployment)
+  **Fix complexity**: High (requires rearchitecting disk command execution)
+  **Recommendation**: Defer to v2.0.0. Current sudoers allowlist provides adequate security boundary for LAN-only tool.
+
+  Additional hardening directives to consider alongside this fix:
   - PrivateDevices=true (restrict access to hardware devices)
   - ProtectHome=true (restrict access to user home directories)
   - RestrictAddressFamilies=AF_UNIX AF_INET (limit socket families)
   - SystemCallFilter=@system-service (restrict system calls)
-  This is deferred to a dedicated security hardening phase rather than the current remediation effort.
 
 ## [2025-06-08] - Deferred Blueprint Registration to Break Circular Imports
 - **Deviation**: Blueprint registration moved from app_config.py module level to app.py
@@ -43,9 +53,26 @@
   4. Making the dependency flow explicit: app_config provides the app object, app.py registers blueprints, routes use app_config exports
 
 ## [2026-06-19] - Werkzeug Development Server in Production Mode
-- **Deviation**: `allow_unsafe_werkzeug=True` is passed to `socketio.run()` in `backend/app.py`, allowing Flask's built-in Werkzeug development server to run in production mode.
-- **Reason**: Development and testing convenience. This is a temporary workaround after a Flask-SocketIO upgrade began raising `RuntimeError` when Werkzeug is detected in production mode.
-- **Context**: The proper production replacement is **Gunicorn with a gevent or eventlet worker** (or uWSGI with gevent/Hypercorn). The current setup is acceptable for internal testing on a LAN, but the systemd service should be changed to run Gunicorn before any production deployment. The `wsgi.py` entry point now exists at `backend/wsgi.py` for Gunicorn deployment. The typical command would be: `/opt/drive-eraser/venv/bin/gunicorn -k gevent -w 1 --bind 0.0.0.0:5000 wsgi:app`. This deviation should be revisited before the project is deployed to any production environment.
+- **Deviation**: `allow_unsafe_werkzeug=True` is passed to `socketio.run()` in `backend/app.py` (line 269) and `backend/wsgi.py` (line 12), allowing Flask's built-in Werkzeug development server to run in production mode.
+- **Reason**: Development and testing convenience. Flask-SocketIO raises `RuntimeError` when Werkzeug is detected in production mode; this flag suppresses that error. The proper production replacement requires testing gevent compatibility with the SocketIO setup.
+- **Context**: The app uses Flask-SocketIO's `socketio.run()` which, without a real WSGI server, falls back to Werkzeug's built-in development server. This has three real issues for production:
+
+  1. **Single-threaded request handling** (by default): One slow request blocks all others. With SocketIO long-polling fallback, this can deadlock the UI while a wipe is running.
+  2. **No worker process management**: If the process crashes, systemd restarts it (good), but there's no graceful worker recycling, zero-downtime restarts, or memory leak mitigation that Gunicorn provides.
+  3. **Not hardened for network exposure**: Werkzeug's dev server was never designed to face network traffic. It lacks connection limits, slow-client timeouts, and request body size controls that production servers enforce.
+
+  **Fix path** (all components already exist):
+  1. Install gunicorn + gevent in the venv: `/opt/drive-eraser/venv/bin/pip install gunicorn gevent`
+  2. Add to `requirements.txt`: `gunicorn==23.0.0` and `gevent==24.11.0`
+  3. Change systemd `ExecStart` to: `/opt/drive-eraser/venv/bin/gunicorn -k gevent -w 1 --bind 0.0.0.0:5000 --worker-tmp-dir /dev/shm wsgi:app`
+     - Single worker with gevent because SocketIO requires sticky sessions. Multiple workers require a message queue like Redis.
+  4. Update `install.sh` generated service file to use the same ExecStart
+  5. Remove `allow_unsafe_werkzeug=True` from both `backend/app.py` and `backend/wsgi.py`
+  6. The `backend/wsgi.py` entry point already exists and is ready for Gunicorn deployment
+
+  **Risk level**: Medium (stability under concurrent load + security hardening)
+  **Fix complexity**: Low (wsgi.py already exists, just needs gunicorn install + systemd change + testing)
+  **Recommendation**: Fix for v1.2.0. The app runs 34 concurrent wipes with SocketIO connections — Werkzeug is the weakest link. If testing under load has been stable, acceptable for v1.1.0 LAN-only deployment.
 
 ## [2026-06-21] - SMART Data Endpoints Without Admin Authentication
 - **Deviation**: `export_smart_data` and `get_smart_details` endpoints in `backend/routes/admin_routes.py` do not require `@require_admin_auth` authentication.

@@ -397,11 +397,9 @@ def get_smart_test_history(device=None, serial=None, limit=20):
         limit: Maximum number of records to return
 
     Returns:
-        List of test run dicts or empty list
+        List of test run dicts or empty list. If neither device nor serial
+        is specified, returns only in-progress tests (for background thread use).
     """
-    if not device and not serial:
-        return []
-    
     # Defense-in-depth: validate device path (lesson #13, #16, #91)
     if device:
         if not isinstance(device, str):

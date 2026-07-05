@@ -295,13 +295,24 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'aborted') {
+        if (!gracePeriodElapsed) {
+          console.log('Grace period not elapsed, ignoring aborted status from stale log entry');
+          return;
+        }
         clearInterval(smartTestPollingInterval);
         smartTestPollingInterval = null;
         testStatusDiv.innerHTML = `
           <p class="status-failed">Test was aborted.</p>
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
-      } else if (data.status === 'no_tests') {
+      } else if (data.status === 'no_tests' || data.status === 'unknown') {
+        // Grace period: the drive may not have registered the test yet.
+        // smartctl's status register can take a few seconds to update after
+        // a test is initiated, causing a false "no_tests" or "unknown" reading.
+        if (!gracePeriodElapsed) {
+          console.log('Grace period not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
+          return;
+        }
         clearInterval(smartTestPollingInterval);
         smartTestPollingInterval = null;
         testStatusDiv.innerHTML = '<p>No test in progress.</p>';

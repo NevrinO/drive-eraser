@@ -497,6 +497,46 @@ class TestSmartTestDatabaseFunctions:
 
             assert len(history) <= 1000  # Should be capped at 1000
 
+    @patch('smart_db.get_db_path')
+    def test_get_smart_test_history_no_filter_returns_in_progress(self, mock_get_db_path):
+        """Test that no-filter query returns only in-progress tests (for background thread)."""
+        from database import record_smart_test_run, get_smart_test_history
+
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
+            db_path = os.path.join(tmpdir, "test.db")
+            mock_get_db_path.return_value = db_path
+
+            # Initialize database
+            with sqlite3.connect(db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS smart_test_log (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        device TEXT NOT NULL,
+                        serial TEXT,
+                        test_type TEXT NOT NULL,
+                        started_at TEXT NOT NULL,
+                        finished_at TEXT,
+                        status TEXT NOT NULL,
+                        result TEXT,
+                        output_json TEXT,
+                        updated_at TEXT NOT NULL
+                    )
+                """)
+
+            # Insert mixed records: some in-progress, some completed
+            record_smart_test_run("/dev/sda", "SER1", "short", "completed", "passed")
+            record_smart_test_run("/dev/sdb", "SER2", "extended", "started")
+            record_smart_test_run("/dev/sdc", "SER3", "short", "in_progress")
+
+            # No filter should return only in-progress tests
+            history = get_smart_test_history(limit=100)
+
+            assert len(history) == 2  # Only the started and in_progress records
+            devices = {h["device"] for h in history}
+            assert "/dev/sdb" in devices
+            assert "/dev/sdc" in devices
+            assert "/dev/sda" not in devices  # Completed test should not appear
+
 
 class TestSmartDetailsEndpoint:
     """Test smart-details endpoint."""
