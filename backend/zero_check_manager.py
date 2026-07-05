@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timezone
 import logging
 import threading
+import time
 
 from crypto_verification import check_drive_already_zeroed
 from common import load_policy
@@ -36,7 +37,7 @@ class ZeroCheckManager:
         self._status = {}  # bay -> status dict
         self._generations = {}  # bay -> generation token
         self._generation_counter = 0
-        self._skip_auto_enqueue = False  # set on startup, cleared after first discovery
+        self._auto_enqueue_delay_until = None  # monotonic timestamp; skip auto-enroll until this time
 
     def set_socketio(self, socketio):
         self._socketio = socketio
@@ -211,23 +212,25 @@ class ZeroCheckManager:
     def on_wipe_starting(self, bay):
         self.cancel_check(bay)
 
-    def skip_auto_enqueue_next(self):
-        """Skip auto-enrollment on the next discovery cycle only.
+    def delay_auto_enqueue(self, seconds):
+        """Delay auto-enrollment for the given number of seconds from now.
 
         Called on startup to give drives time to settle after restart (e.g.,
-        flushing interrupted DD writes). The first discovery will skip
-        auto-enrolling zero checks; the second cycle enrolls normally.
+        flushing interrupted DD writes). All discovery cycles within the
+        delay window will skip auto-enrolling zero checks.
         """
         with self._lock:
-            self._skip_auto_enqueue = True
+            self._auto_enqueue_delay_until = time.monotonic() + seconds
 
-    def consume_skip_auto_enqueue(self):
-        """Check and clear the one-time skip flag. Returns True if this call consumed it."""
+    def is_auto_enqueue_delayed(self):
+        """Check if auto-enrollment is still in the startup delay window."""
         with self._lock:
-            if self._skip_auto_enqueue:
-                self._skip_auto_enqueue = False
-                return True
-            return False
+            if self._auto_enqueue_delay_until is None:
+                return False
+            if time.monotonic() >= self._auto_enqueue_delay_until:
+                self._auto_enqueue_delay_until = None
+                return False
+            return True
 
     # --- Queue/scheduling internals ---
 

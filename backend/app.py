@@ -429,11 +429,11 @@ def create_app():
     zero_check_concurrency = int(_policy.get("zero_detection_concurrency_limit", 8))
     zc_manager = get_zero_check_manager(socketio=socketio, max_concurrency=zero_check_concurrency)
 
-    # Skip auto-enrollment of zero checks on the first discovery cycle after
-    # restart. Drives may still be flushing interrupted DD writes, and enrolling
-    # zero checks immediately causes timeouts and I/O contention. The second
-    # discovery cycle (~30s later) will enroll normally.
-    zc_manager.skip_auto_enqueue_next()
+    # Delay auto-enrollment of zero checks for 120 seconds after restart.
+    # Drives may still be flushing interrupted DD writes, and enrolling
+    # zero checks immediately causes timeouts and I/O contention. After
+    # the delay window, discovery cycles will enroll normally.
+    zc_manager.delay_auto_enqueue(120)
     
     # Start udev event listener for real-time device discovery
     udev_listener.start_udev_listener()

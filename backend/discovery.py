@@ -85,11 +85,11 @@ def _auto_enqueue_zero_checks(results):
 
     manager = get_zero_check_manager()
 
-    # One-time skip on startup: if the flag is set, consume it and skip
-    # auto-enrollment for this entire discovery cycle. The next cycle
-    # will enroll normally (drives get ~30s to settle after restart).
-    if manager.consume_skip_auto_enqueue():
-        logging.getLogger(__name__).info("Skipping zero-check auto-enrollment for this cycle (startup delay)")
+    # Startup delay: if the delay window is active, skip auto-enrollment
+    # for this discovery cycle. The delay is set on startup to give drives
+    # time to settle after restart (e.g., flushing interrupted DD writes).
+    if manager.is_auto_enqueue_delayed():
+        logging.getLogger(__name__).info("Skipping zero-check auto-enrollment (startup delay window active)")
         return
 
     present_bays = set()
