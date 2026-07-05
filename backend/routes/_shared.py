@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from flask import jsonify, request
 from app_config import logger, calculate_session_token
 from common import get_config_dir, load_policy
-from smart_constants import SMART_TEST_GRACE_PERIOD_SECONDS
+from smart_constants import SMART_TEST_GRACE_PERIOD_SECONDS, ESTIMATED_TEST_DURATION_SECONDS
 
 
 def should_update_test_status(started_at, grace_period_seconds=SMART_TEST_GRACE_PERIOD_SECONDS):
@@ -32,6 +32,37 @@ def should_update_test_status(started_at, grace_period_seconds=SMART_TEST_GRACE_
             return False
     except Exception as e:
         logger.warning(f"Failed to parse started_at timestamp: {e}")
+    return True
+
+
+def should_trust_completion_status(started_at, db_status, test_type):
+    """Check if we can trust 'completed'/'failed'/'aborted' from the drive's log table.
+    
+    When the DB status is 'in_progress' (we've confirmed the test is actually running
+    on the drive via the real-time status register), we can trust the log table's
+    completion status after the normal grace period (10 seconds).
+    
+    When the DB status is 'started' (we've never confirmed the test is running),
+    the drive's log table still shows the PREVIOUS test's result. We must NOT trust
+    'completed'/'failed' until enough time has passed for the current test to have
+    actually completed (based on estimated test duration).
+    
+    Args:
+        started_at: ISO format timestamp string of when the test started
+        db_status: Current DB status ('started' or 'in_progress')
+        test_type: Type of test ('short', 'extended', 'offline', 'conveyance')
+        
+    Returns:
+        True if the completion status can be trusted, False otherwise
+    """
+    if db_status == "in_progress":
+        # Test was confirmed running — trust completion after normal grace period
+        return should_update_test_status(started_at)
+    elif db_status == "started":
+        # Test was never confirmed running — use estimated duration as grace period
+        # to avoid trusting stale log entries from previous tests
+        estimated_duration = ESTIMATED_TEST_DURATION_SECONDS.get(test_type, 120)
+        return should_update_test_status(started_at, grace_period_seconds=estimated_duration)
     return True
 
 

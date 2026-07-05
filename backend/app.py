@@ -101,7 +101,7 @@ def update_smart_test_status_background():
     import os
     from database import get_smart_test_history, update_smart_test_run
     from smart_parsing import get_smart_test_status
-    from routes.admin_routes import should_update_test_status
+    from routes.admin_routes import should_update_test_status, should_trust_completion_status
     
     logger.info("SMART test status background thread started")
     
@@ -128,10 +128,20 @@ def update_smart_test_status_background():
                     record_id = test.get("id")
                     started_at = test.get("started_at")
                     current_updated_at = test.get("updated_at")
+                    db_status = test.get("status")
+                    test_type = test.get("test_type")
                     drive_status = status_result.get("status")
                     
-                    # Update database if drive shows completed and grace period elapsed
-                    if drive_status == "completed" and should_update_test_status(started_at):
+                    # Transition: DB "started" → "in_progress" when drive confirms test is running
+                    if db_status == "started" and drive_status == "in_progress":
+                        updated = update_smart_test_run(record_id, "in_progress",
+                                                        current_updated_at=current_updated_at)
+                        if updated:
+                            logger.info(f"Background update: SMART test {device} confirmed in progress by drive status register")
+                        continue
+                    
+                    # Update database if drive shows completed and trust conditions met
+                    if drive_status == "completed" and should_trust_completion_status(started_at, db_status, test_type):
                         latest_result = status_result.get("latest_result", {})
                         passed = latest_result.get("passed")
                         
@@ -156,8 +166,8 @@ def update_smart_test_status_background():
                         if not updated:
                             logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
                     
-                    # Update database if drive shows failed and grace period elapsed
-                    elif drive_status == "failed" and should_update_test_status(started_at):
+                    # Update database if drive shows failed and trust conditions met
+                    elif drive_status == "failed" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} failed")
                         # Use optimistic locking with current_updated_at
                         updated = update_smart_test_run(record_id, "failed", result="failed",
@@ -166,8 +176,8 @@ def update_smart_test_status_background():
                         if not updated:
                             logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
                     
-                    # Update database if drive shows aborted and grace period elapsed
-                    elif drive_status == "aborted" and should_update_test_status(started_at):
+                    # Update database if drive shows aborted and trust conditions met
+                    elif drive_status == "aborted" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} aborted")
                         updated = update_smart_test_run(record_id, "failed", result="aborted",
                                                         output_json=status_result.get("self_test_log_table"),
@@ -175,10 +185,10 @@ def update_smart_test_status_background():
                         if not updated:
                             logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
                     
-                    # Drive shows no_tests/unknown after grace period: test is no longer running
+                    # Drive shows no_tests/unknown after trust conditions met: test is no longer running
                     # but we can't determine pass/fail from the drive's log. Mark as completed
                     # with result "unknown" so the card stops showing "running".
-                    elif drive_status in ("no_tests", "unknown") and should_update_test_status(started_at):
+                    elif drive_status in ("no_tests", "unknown") and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} no longer running (status={drive_status}), marking completed with unknown result")
                         updated = update_smart_test_run(record_id, "completed", result="unknown",
                                                         current_updated_at=current_updated_at)

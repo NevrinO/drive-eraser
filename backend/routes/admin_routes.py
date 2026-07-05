@@ -11,7 +11,7 @@ from job_management import poll_sata_sanitize_progress, poll_sas_sanitize_progre
 # Re-exports for backward compat — external modules import these from routes.admin_routes
 from routes._shared import (
     require_admin_auth, is_local_request, is_valid_device_name,
-    is_valid_id, should_update_test_status, _validate_slot_metadata,
+    is_valid_id, should_update_test_status, should_trust_completion_status, _validate_slot_metadata,
     _SATA_DEVICE_RE, _NVME_DEVICE_RE, _ID_PATTERN,
     _VALID_ROLES, MAX_ENCLOSURES, MAX_SLOTS_PER_ENCLOSURE,
     MAX_TEMPLATES, MAX_DEVICES_FOR_BUNDLE

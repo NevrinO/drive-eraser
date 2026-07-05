@@ -211,6 +211,20 @@ async function pollSmartTestStatus(device, testType) {
   // This must match SMART_TEST_GRACE_PERIOD_SECONDS in backend/smart_constants.py (10 seconds)
   const GRACE_PERIOD_MS = 10000;
   let testStartedAt = null; // Will be set from backend response
+  let seenInProgress = false; // Track if we've ever seen the test as in_progress
+
+  // Estimated test durations in ms. Used as grace period when we've never seen
+  // in_progress — the drive's log table shows the PREVIOUS test's result until
+  // the current test completes. For HDDs, the status register can take 15-30+
+  // seconds to show "in progress", so the old log entry's "completed" status
+  // gets falsely trusted after the 10-second grace period.
+  const ESTIMATED_TEST_DURATION_MS = {
+    short: 120 * 1000,
+    offline: 300 * 1000,
+    conveyance: 300 * 1000,
+    extended: 7200 * 1000
+  };
+  const estimatedDurationMs = ESTIMATED_TEST_DURATION_MS[testType] || 120 * 1000;
 
   const updateStatus = async () => {
     // Check if we've exceeded maximum polling duration
@@ -270,14 +284,18 @@ async function pollSmartTestStatus(device, testType) {
       const gracePeriodElapsed = testStartedAt ? (Date.now() - testStartedAt) >= GRACE_PERIOD_MS : true;
 
       if (data.status === 'in_progress') {
+        seenInProgress = true;
         const percentage = data.percentage || 0;
         if (progressBar) progressBar.style.width = `${percentage}%`;
         if (progressText) progressText.textContent = `${Math.round(percentage).toString().padStart(2, '0')}%`;
       } else if (data.status === 'completed') {
-        // Only accept completed status if grace period has elapsed
-        if (!gracePeriodElapsed) {
-          // Grace period not elapsed - ignore stale completed status and continue polling
-          console.log('Grace period not elapsed, ignoring completed status from stale log entry');
+        // Only accept completed status if we've seen in_progress first (confirmed test was running)
+        // or the estimated test duration has elapsed (test should have completed by now).
+        // Without this, stale log entries from previous tests show as completed immediately.
+        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
+          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
+        if (!canTrustCompletion) {
+          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring completed status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -288,10 +306,11 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'failed') {
-        // Only accept failed status if grace period has elapsed
-        if (!gracePeriodElapsed) {
-          // Grace period not elapsed - ignore stale failed status and continue polling
-          console.log('Grace period not elapsed, ignoring failed status from stale log entry');
+        // Only accept failed status if we've seen in_progress first or estimated duration elapsed
+        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
+          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
+        if (!canTrustCompletion) {
+          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring failed status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -301,8 +320,11 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'aborted') {
-        if (!gracePeriodElapsed) {
-          console.log('Grace period not elapsed, ignoring aborted status from stale log entry');
+        // Only accept aborted status if we've seen in_progress first or estimated duration elapsed
+        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
+          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
+        if (!canTrustCompletion) {
+          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring aborted status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -312,10 +334,12 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'no_tests' || data.status === 'unknown') {
-        // Grace period: the drive may not have registered the test yet.
-        // smartctl's status register can take a few seconds to update after
-        // a test is initiated, causing a false "no_tests" or "unknown" reading.
-        if (!gracePeriodElapsed) {
+        // Only accept no_tests/unknown if we've seen in_progress first or estimated duration elapsed.
+        // Before the test registers in the drive's status register, smartctl returns no_tests
+        // because there's no active test in the status register and the log table may be empty.
+        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
+          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
+        if (!canTrustCompletion) {
           console.log('Grace period not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
           return;
         }

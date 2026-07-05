@@ -10,6 +10,20 @@ SMART_SELF_TEST_AMBIGUOUS_THRESHOLD_HOURS = 1000
 # The drive's self-test log may not update immediately after starting a test
 SMART_TEST_GRACE_PERIOD_SECONDS = 10
 
+# Estimated test durations in seconds. Used to determine how long to wait before
+# trusting "completed"/"failed" from the drive's log table when the DB status is
+# still "started" (meaning we never confirmed the test was actually running).
+# The drive's log table shows the PREVIOUS test's result until the current test
+# completes and writes a new entry. For HDDs, the real-time status register can
+# take 15-30+ seconds to show "in progress", so the old log entry's "completed"
+# status gets falsely trusted after the 10-second grace period.
+ESTIMATED_TEST_DURATION_SECONDS = {
+    "short": 120,        # ~2 minutes
+    "offline": 300,      # ~5 minutes
+    "conveyance": 300,   # ~5 minutes
+    "extended": 7200,    # ~120 minutes
+}
+
 
 def correct_self_test_log_hours(log_hours, current_poh, historical_poh):
     """Correct SMART self-test log hours for 16-bit counter rollover.
