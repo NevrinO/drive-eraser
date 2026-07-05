@@ -188,8 +188,8 @@ async function loadDrives(silent = false, forceRefresh = false) {
 
     if (!silent) {
       apiStatus.textContent = "API Status: Ready";
-      lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
     }
+    lastUpdated.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
   } catch (error) {
     console.error("loadDrives error:", error);
     if (!silent) apiStatus.textContent = `API Status: Error (${error.message})`;
