@@ -7,7 +7,7 @@
     "sas": ["crypto", "block", "overwrite"],
     "sata": ["crypto", "block", "overwrite"]
   },
-  "strict_audit_mode": true,
+  "strict_audit_mode": false,
   "secondary_verification_mode": "conservative_probe",
   "port": 5000,
   "bind_address": "0.0.0.0",

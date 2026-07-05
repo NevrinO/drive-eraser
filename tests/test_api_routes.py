@@ -409,6 +409,97 @@ class TestAPIRoutes:
         set_cookie_headers = [v for k, v in response.headers if k.lower() == 'set-cookie']
         assert any('admin_session' in c for c in set_cookie_headers)
 
+    def test_auth_verify_uses_hmac_compare_digest(self):
+        """Regression test: verify_auth must use hmac.compare_digest, not ==."""
+        import inspect
+        import api_routes
+        source = inspect.getsource(api_routes.register_routes)
+        # Find the verify_auth function section
+        assert "hmac.compare_digest" in source, \
+            "verify_auth must use hmac.compare_digest for timing-safe comparison"
+        assert "passphrase ==" not in source, \
+            "verify_auth must not use == for passphrase comparison"
+
+    def test_erase_start_rejects_too_many_bays(self, client):
+        """Test that bays list exceeding 256 returns 400."""
+        bays = [f"bay{i}" for i in range(257)]
+        response = client.post('/api/erase/start',
+            json={
+                "bays": bays,
+                "confirmation_text": "erase 257 drives",
+                "technician": "Test Tech",
+                "ticket_number": "TICKET-001"
+            })
+        assert response.status_code == 400
+        data = json.loads(response.data)
+        assert "too many bays" in data["error"].lower()
+
+    def test_cancel_terminates_subprocess(self, client):
+        """Regression test: cancelling a running job must terminate the subprocess."""
+        from app_config import ERASE_JOBS, ERASE_JOBS_LOCK
+        from datetime import datetime, timezone
+
+        mock_process = MagicMock()
+        mock_process.poll.return_value = None  # Process is still running
+        mock_process.terminate = MagicMock()
+        mock_process.wait = MagicMock()
+        mock_process.kill = MagicMock()
+
+        job_id = "test-cancel-subprocess-job"
+        job = {
+            "id": job_id,
+            "friendly_id": "JOB-CANCEL-1",
+            "status": "running",
+            "request": {"bay": "bay1", "device": "/dev/sdb", "method": "overwrite"},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "_process": mock_process,
+        }
+
+        with ERASE_JOBS_LOCK:
+            ERASE_JOBS[job_id] = job
+
+        try:
+            with patch('api_routes.persist_job'):
+                response = client.post(f'/api/erase/jobs/{job_id}/cancel')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["status"] == "cancelled"
+
+            # Verify subprocess was terminated
+            mock_process.terminate.assert_called_once()
+            mock_process.wait.assert_called()
+        finally:
+            with ERASE_JOBS_LOCK:
+                ERASE_JOBS.pop(job_id, None)
+
+    def test_cancel_with_no_process_still_succeeds(self, client):
+        """Test that cancelling a queued job (no subprocess) still works."""
+        from app_config import ERASE_JOBS, ERASE_JOBS_LOCK
+        from datetime import datetime, timezone
+
+        job_id = "test-cancel-queued-job"
+        job = {
+            "id": job_id,
+            "friendly_id": "JOB-CANCEL-2",
+            "status": "queued",
+            "request": {"bay": "bay1", "device": "/dev/sdb", "method": "overwrite"},
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+        with ERASE_JOBS_LOCK:
+            ERASE_JOBS[job_id] = job
+
+        try:
+            with patch('api_routes.persist_job'):
+                response = client.post(f'/api/erase/jobs/{job_id}/cancel')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["status"] == "cancelled"
+        finally:
+            with ERASE_JOBS_LOCK:
+                ERASE_JOBS.pop(job_id, None)
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

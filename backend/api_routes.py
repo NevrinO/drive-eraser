@@ -5,7 +5,9 @@
 # - Auth verification (/api/auth/verify)
 import os
 import json
+import hmac
 import sqlite3
+import subprocess
 from contextlib import closing
 from datetime import datetime, timezone
 from threading import Thread
@@ -105,6 +107,8 @@ def register_routes(flask_app):
 
             if not bays or not isinstance(bays, list):
                 return jsonify({"error": "bays list is required"}), 400
+            if len(bays) > 256:
+                return jsonify({"error": "too many bays (max 256)"}), 400
 
             first_bay = str(bays[0]).strip()
             first_drive = next((d for d in drives if d.get("bay") == first_bay), None)
@@ -270,9 +274,24 @@ def register_routes(flask_app):
                     job["finished_at"] = datetime.now(timezone.utc).isoformat()
                     job["error"] = "Job cancelled by user"
                     persist_job(job)
+                    process = job.get("_process")
                     ERASE_JOBS.pop(job_id, None)
-                    return jsonify({"status": "cancelled", "job_id": job_id}), 200
-            return jsonify({"error": f"job not found or not cancellable: {job_id}"}), 404
+                else:
+                    return jsonify({"error": f"job not found or not cancellable: {job_id}"}), 404
+
+            # Terminate subprocess outside lock (process.wait can block)
+            if process and process.poll() is None:
+                try:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait()
+                except Exception as e:
+                    logger.warning(f"Failed to terminate process for cancelled job {job_id}: {e}")
+
+            return jsonify({"status": "cancelled", "job_id": job_id}), 200
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -354,7 +373,7 @@ def register_routes(flask_app):
             policy = load_policy()
             lan_passphrase = policy.get("lan_passphrase", "eraser123")
             
-            if passphrase == lan_passphrase:
+            if hmac.compare_digest(str(passphrase), str(lan_passphrase)):
                 token = calculate_session_token(lan_passphrase)
                 response = jsonify({"status": "authenticated"})
                 response.set_cookie("admin_session", token, httponly=True, samesite="Lax", max_age=86400 * 30)
