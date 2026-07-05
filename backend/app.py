@@ -65,6 +65,7 @@ def _centralized_signal_handler(signum, frame):
     disk_ops._handle_discovery_signal(signum, frame)
     udev_listener.stop_udev_listener()
     stop_smart_test_update_thread(wait=False)
+    stop_orphaned_job_sweep_thread(wait=False)
     disk_ops.stop_extended_smart_pool(wait=False)
     # Exit gracefully after setting interruption flags
     import sys
@@ -238,6 +239,171 @@ def stop_smart_test_update_thread(wait=True):
             smart_test_update_thread = None
     logger.info("Stopped SMART test status background thread")
 
+
+# --- Orphaned erase job recovery ---
+
+def recover_orphaned_jobs_on_startup():
+    """Mark all DB jobs with status 'running' or 'queued' as failed on startup.
+    
+    When the server restarts, all in-memory ERASE_JOBS are lost and the wipe
+    subprocesses are killed. Any job that was running is now dead and must be
+    marked as failed so the UI doesn't show it as running indefinitely.
+    """
+    import sqlite3
+    from contextlib import closing
+    from common import get_db_path
+    from database import persist_job, load_job
+    from datetime import datetime, timezone
+    
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT id FROM erase_jobs WHERE status IN ('running', 'queued')"
+            ).fetchall()
+        
+        if not rows:
+            logger.info("Startup recovery: no orphaned jobs found")
+            return
+        
+        logger.warning(f"Startup recovery: found {len(rows)} orphaned job(s) to mark as failed")
+        for row in rows:
+            job_id = row["id"]
+            job = load_job(job_id)
+            if job:
+                job["status"] = "failed"
+                job["finished_at"] = now
+                job["error"] = "Server restarted while job was running"
+                persist_job(job)
+                logger.info(f"Startup recovery: marked job {job_id} as failed")
+    except Exception as e:
+        logger.error(f"Startup recovery failed: {e}")
+
+
+# Background thread for periodic sweep of orphaned/stuck erase jobs
+ORPHANED_JOB_SWEEP_INTERVAL = 60  # Check every 60 seconds
+orphaned_job_sweep_thread = None
+orphaned_job_sweep_stop_event = threading.Event()
+orphaned_job_sweep_thread_lock = threading.Lock()
+
+def sweep_orphaned_jobs_background():
+    """Background thread that periodically checks for orphaned or stuck erase jobs.
+    
+    Two checks:
+    1. DB jobs with status 'running'/'queued' that are NOT in ERASE_JOBS (orphaned by restart)
+    2. Jobs in ERASE_JOBS with status 'running' that have exceeded their erase timeout (stuck thread)
+    
+    Both are marked as failed with an appropriate error message.
+    """
+    import sqlite3
+    from contextlib import closing
+    from datetime import datetime, timezone
+    from common import get_db_path
+    from database import persist_job, load_job
+    from app_config import ERASE_JOBS, ERASE_JOBS_LOCK
+    from job_management import _get_erase_timeout
+    
+    logger.info("Orphaned job sweep background thread started")
+    
+    while not orphaned_job_sweep_stop_event.is_set():
+        try:
+            now = datetime.now(timezone.utc)
+            now_iso = now.isoformat()
+            
+            # Check 1: DB running/queued jobs not in ERASE_JOBS (orphaned by restart)
+            try:
+                with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
+                    conn.row_factory = sqlite3.Row
+                    rows = conn.execute(
+                        "SELECT id FROM erase_jobs WHERE status IN ('running', 'queued')"
+                    ).fetchall()
+                
+                for row in rows:
+                    job_id = row["id"]
+                    with ERASE_JOBS_LOCK:
+                        in_memory = job_id in ERASE_JOBS
+                    
+                    if not in_memory:
+                        # Orphaned: in DB but not in memory — mark as failed
+                        job = load_job(job_id)
+                        if job and job.get("status") in ("running", "queued"):
+                            job["status"] = "failed"
+                            job["finished_at"] = now_iso
+                            job["error"] = "Job orphaned: not found in memory (possible server restart)"
+                            persist_job(job)
+                            logger.warning(f"Job sweep: marked orphaned job {job_id} as failed")
+            except Exception as e:
+                logger.error(f"Job sweep DB check failed: {e}")
+            
+            # Check 2: Jobs in ERASE_JOBS with status 'running' that exceeded their erase timeout
+            try:
+                with ERASE_JOBS_LOCK:
+                    stuck_jobs = []
+                    for job_id, job in ERASE_JOBS.items():
+                        if job.get("status") != "running":
+                            continue
+                        started_at = job.get("started_at")
+                        if not started_at:
+                            continue
+                        try:
+                            start_time = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+                            elapsed = (now - start_time).total_seconds()
+                            method = job.get("request", {}).get("method", "overwrite")
+                            timeout = _get_erase_timeout(method)
+                            if elapsed > timeout:
+                                stuck_jobs.append((job_id, method, int(elapsed), timeout))
+                        except Exception:
+                            continue
+                
+                for job_id, method, elapsed, timeout in stuck_jobs:
+                    with ERASE_JOBS_LOCK:
+                        job = ERASE_JOBS.get(job_id)
+                        if job and job.get("status") == "running":
+                            job["status"] = "failed"
+                            job["finished_at"] = now_iso
+                            job["error"] = f"Job timed out: {method} erase exceeded {timeout}s (elapsed {elapsed}s)"
+                            persist_job(job)
+                            ERASE_JOBS.pop(job_id, None)
+                            logger.error(f"Job sweep: marked stuck job {job_id} as failed ({method} exceeded {timeout}s)")
+            except Exception as e:
+                logger.error(f"Job sweep stuck check failed: {e}")
+        
+        except Exception as e:
+            logger.error(f"Orphaned job sweep thread error: {e}")
+        
+        orphaned_job_sweep_stop_event.wait(ORPHANED_JOB_SWEEP_INTERVAL)
+    
+    logger.info("Orphaned job sweep background thread stopped")
+
+
+def start_orphaned_job_sweep_thread():
+    """Start the background thread for orphaned job sweep."""
+    global orphaned_job_sweep_thread
+    with orphaned_job_sweep_thread_lock:
+        if orphaned_job_sweep_thread is None or not orphaned_job_sweep_thread.is_alive():
+            orphaned_job_sweep_stop_event.clear()
+            orphaned_job_sweep_thread = threading.Thread(target=sweep_orphaned_jobs_background, daemon=True)
+            orphaned_job_sweep_thread.start()
+            logger.info("Started orphaned job sweep background thread")
+
+
+def stop_orphaned_job_sweep_thread(wait=True):
+    """Stop the background thread for orphaned job sweep."""
+    global orphaned_job_sweep_thread
+    with orphaned_job_sweep_thread_lock:
+        thread = orphaned_job_sweep_thread
+        if thread and thread.is_alive():
+            orphaned_job_sweep_stop_event.set()
+        else:
+            return
+    if wait:
+        thread.join(timeout=5)
+    with orphaned_job_sweep_thread_lock:
+        if orphaned_job_sweep_thread is thread:
+            orphaned_job_sweep_thread = None
+    logger.info("Stopped orphaned job sweep background thread")
+
 def create_app():
     """Application factory: initializes database, background threads, and managers.
     
@@ -249,6 +415,9 @@ def create_app():
     """
     # Initialize database
     init_wipe_db()
+    
+    # Recover orphaned jobs from previous server instance
+    recover_orphaned_jobs_on_startup()
     
     # Set WebSocket managers
     udev_listener.set_websocket_manager(socketio)
@@ -265,6 +434,9 @@ def create_app():
     
     # Start SMART test status background thread
     start_smart_test_update_thread()
+    
+    # Start orphaned job sweep background thread
+    start_orphaned_job_sweep_thread()
     
     # Register signal handlers (only in main thread)
     try:
