@@ -65,6 +65,8 @@ const healthGateOverrideJustification = document.getElementById("healthGateOverr
 const healthGateOverrideBtn = document.getElementById("healthGateOverrideBtn");
 const healthGateCancelBtn = document.getElementById("healthGateCancelBtn");
 const healthGateWarningClose = document.getElementById("healthGateWarningClose");
+const healthGateDropSection = document.getElementById("healthGateDropSection");
+const healthGateDropBtn = document.getElementById("healthGateDropBtn");
 
 const POLL_INTERVAL_MS = 5000;
 

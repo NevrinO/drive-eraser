@@ -6,12 +6,14 @@
 // zeroCheckWarning, zeroCheckWarningList, healthGateWarningModal,
 // healthGateWarningContent, healthGateOverrideSection,
 // healthGateOverrideJustification, healthGateOverrideBtn,
-// healthGateCancelBtn, healthGateWarningClose),
+// healthGateCancelBtn, healthGateWarningClose,
+// healthGateDropSection, healthGateDropBtn),
 // utils.js (escapeHtml, safeFetch, openModal, closeModal),
 // app.js (selectedBays, isBatchMode, currentDrives, loadDrives, loadHistoryIndex),
 // and driveRendering.js (renderBays).
 
 let pendingHealthGatePayload = null;
+let pendingHealthGatePassingBays = null;
 
 function toggleBaySelection(bay) {
   if (selectedBays.has(bay)) {
@@ -197,6 +199,11 @@ batchEraseForm.addEventListener("submit", async (event) => {
     payload.methods[bay] = select.value;
   });
 
+  const submitBtn = document.getElementById("batchEraseSubmit");
+  const originalBtnText = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = "Checking drives...";
+
   try {
     const response = await safeFetch("/api/erase/start", {
       method: "POST",
@@ -216,11 +223,12 @@ batchEraseForm.addEventListener("submit", async (event) => {
       
       // Check if error is from health gate (structured response)
       if (result.error_code === "pre_wipe_health_check_failed") {
-        const blockReason = result.block_reason || "Unknown health issue";
+        const blockedDrives = result.blocked_drives || [];
+        const passingBays = result.passing_bays || [];
         const isOverrideAvailable = result.override_available === true;
         
         // Show health gate warning modal
-        showHealthGateWarning(blockReason, isOverrideAvailable, payload);
+        showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, payload);
         return;
       }
       
@@ -241,13 +249,23 @@ batchEraseForm.addEventListener("submit", async (event) => {
     loadHistoryIndex();
   } catch (err) {
     alert(`Failed to launch batch process: ${err.message}`);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalBtnText;
   }
 });
 
 // Health gate warning modal handlers
-function showHealthGateWarning(blockReason, isOverrideAvailable, payload) {
-  const reasonText = blockReason.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
-  
+function formatBlockReason(reason) {
+  return reason.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase());
+}
+
+function getBayDisplayLabel(bay) {
+  const drive = currentDrives.find(d => d.bay === bay);
+  return drive?.display_number ? `BAY ${drive.display_number}` : bay.toUpperCase();
+}
+
+function showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, payload) {
   // Clear existing content
   healthGateWarningContent.innerHTML = "";
   
@@ -263,27 +281,53 @@ function showHealthGateWarning(blockReason, isOverrideAvailable, payload) {
   warningTitle.style.fontWeight = "bold";
   warningTitle.style.marginBottom = "8px";
   warningTitle.textContent = "⚠️ Health Check Blocked";
-  
-  const reasonDiv = document.createElement("div");
-  reasonDiv.style.fontSize = "0.9rem";
-  const reasonLabel = document.createElement("strong");
-  reasonLabel.textContent = "Reason: ";
-  const reasonSpan = document.createElement("span");
-  reasonSpan.textContent = reasonText;
-  reasonDiv.appendChild(reasonLabel);
-  reasonDiv.appendChild(reasonSpan);
-  
   warningBox.appendChild(warningTitle);
-  warningBox.appendChild(reasonDiv);
+  
+  // List each blocked drive
+  blockedDrives.forEach(drive => {
+    const driveDiv = document.createElement("div");
+    driveDiv.style.fontSize = "0.9rem";
+    driveDiv.style.padding = "6px 0";
+    driveDiv.style.borderBottom = "1px solid var(--color-border)";
+    
+    const bayLabel = document.createElement("strong");
+    bayLabel.textContent = getBayDisplayLabel(drive.bay);
+    
+    const serialSpan = document.createElement("span");
+    serialSpan.style.color = "var(--color-text-muted)";
+    serialSpan.style.marginLeft = "8px";
+    serialSpan.textContent = `S/N: ${drive.serial || "Unknown"}`;
+    
+    const reasonSpan = document.createElement("span");
+    reasonSpan.style.color = "var(--color-warning)";
+    reasonSpan.style.marginLeft = "8px";
+    reasonSpan.textContent = formatBlockReason(drive.block_reason);
+    
+    driveDiv.appendChild(bayLabel);
+    driveDiv.appendChild(serialSpan);
+    driveDiv.appendChild(reasonSpan);
+    warningBox.appendChild(driveDiv);
+  });
   
   // Create description
   const descriptionDiv = document.createElement("div");
   descriptionDiv.style.fontSize = "0.85rem";
   descriptionDiv.style.color = "var(--color-text-muted)";
-  descriptionDiv.textContent = "The pre-wipe health gate detected a critical health issue that may cause the wipe to fail or waste time.";
+  if (passingBays.length > 0) {
+    descriptionDiv.textContent = `${blockedDrives.length} drive(s) blocked by health check. ${passingBays.length} drive(s) passed and can proceed.`;
+  } else {
+    descriptionDiv.textContent = "The pre-wipe health gate detected a critical health issue that may cause the wipe to fail or waste time.";
+  }
   
   healthGateWarningContent.appendChild(warningBox);
   healthGateWarningContent.appendChild(descriptionDiv);
+  
+  // Show drop section only if there are passing drives to continue with
+  if (passingBays.length > 0) {
+    healthGateDropSection.classList.remove("hidden");
+  } else {
+    healthGateDropSection.classList.add("hidden");
+  }
   
   if (isOverrideAvailable) {
     healthGateOverrideSection.classList.remove("hidden");
@@ -293,6 +337,7 @@ function showHealthGateWarning(blockReason, isOverrideAvailable, payload) {
   }
   
   pendingHealthGatePayload = payload;
+  pendingHealthGatePassingBays = passingBays;
   openModal(healthGateWarningModal);
 }
 
@@ -312,6 +357,10 @@ if (healthGateOverrideBtn) {
     
     closeModal(healthGateWarningModal);
     
+    const originalBtnText = healthGateOverrideBtn.textContent;
+    healthGateOverrideBtn.disabled = true;
+    healthGateOverrideBtn.textContent = "Submitting...";
+    
     // Retry the wipe request with override flag
     try {
       const response = await safeFetch("/api/erase/start", {
@@ -328,6 +377,13 @@ if (healthGateOverrideBtn) {
         return;
       }
       if (!response.ok) {
+        if (result.error_code === "pre_wipe_health_check_failed") {
+          const blockedDrives = result.blocked_drives || [];
+          const passingBays = result.passing_bays || [];
+          const isOverrideAvailable = result.override_available === true;
+          showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, pendingHealthGatePayload);
+          return;
+        }
         alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
         return;
       }
@@ -345,6 +401,93 @@ if (healthGateOverrideBtn) {
       loadHistoryIndex();
     } catch (err) {
       alert(`Failed to launch batch process: ${err.message}`);
+    } finally {
+      healthGateOverrideBtn.disabled = false;
+      healthGateOverrideBtn.textContent = originalBtnText;
+    }
+  });
+}
+
+// Drop blocked drives and continue with passing ones
+if (healthGateDropBtn) {
+  healthGateDropBtn.addEventListener("click", async () => {
+    if (!pendingHealthGatePayload || !pendingHealthGatePassingBays) {
+      return;
+    }
+    
+    // Build new payload with only passing bays
+    const dropPayload = { ...pendingHealthGatePayload };
+    dropPayload.bays = [...pendingHealthGatePassingBays];
+    // Filter methods to only include passing bays
+    if (dropPayload.methods) {
+      const filteredMethods = {};
+      for (const bay of pendingHealthGatePassingBays) {
+        if (dropPayload.methods[bay]) {
+          filteredMethods[bay] = dropPayload.methods[bay];
+        }
+      }
+      dropPayload.methods = filteredMethods;
+    }
+    // Update confirmation text for the reduced batch
+    const count = pendingHealthGatePassingBays.length;
+    if (count === 1) {
+      const bay = pendingHealthGatePassingBays[0];
+      const drive = currentDrives.find(d => d.bay === bay);
+      const displayLabel = drive?.display_number ? `BAY ${drive.display_number}` : bay.toUpperCase();
+      dropPayload.confirmation_text = `erase ${displayLabel}`.toLowerCase();
+    } else {
+      dropPayload.confirmation_text = `erase ${count} drives`;
+    }
+    
+    closeModal(healthGateWarningModal);
+    
+    const originalBtnText = healthGateDropBtn.textContent;
+    healthGateDropBtn.disabled = true;
+    healthGateDropBtn.textContent = "Starting...";
+    
+    try {
+      const response = await safeFetch("/api/erase/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dropPayload)
+      });
+      let result;
+      try {
+        result = await response.json();
+      } catch (e) {
+        console.error("Failed to parse batch erase response JSON:", e);
+        alert("Failed to process server response");
+        return;
+      }
+      if (!response.ok) {
+        // Could still have health gate failures if conditions changed
+        if (result.error_code === "pre_wipe_health_check_failed") {
+          const blockedDrives = result.blocked_drives || [];
+          const passingBays = result.passing_bays || [];
+          const isOverrideAvailable = result.override_available === true;
+          showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, dropPayload);
+          return;
+        }
+        alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
+        return;
+      }
+      
+      closeModal(batchWipeModal);
+      isBatchMode = false;
+      batchSelectToggleBtn.classList.remove("active");
+      batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
+      selectedBays.clear();
+      batchActionFooter.classList.add("hidden");
+      
+      alert(`Sanitization initiated for ${count} drive(s). Blocked drive(s) were skipped.`);
+      
+      loadDrives();
+      loadHistoryIndex();
+    } catch (err) {
+      alert(`Failed to launch batch process: ${err.message}`);
+    } finally {
+      healthGateDropBtn.disabled = false;
+      healthGateDropBtn.textContent = originalBtnText;
     }
   });
 }
@@ -353,6 +496,7 @@ if (healthGateCancelBtn || healthGateWarningClose) {
   const cancelHandler = () => {
     closeModal(healthGateWarningModal);
     pendingHealthGatePayload = null;
+    pendingHealthGatePassingBays = null;
   };
   if (healthGateCancelBtn) healthGateCancelBtn.addEventListener("click", cancelHandler);
   if (healthGateWarningClose) healthGateWarningClose.addEventListener("click", cancelHandler);
@@ -362,5 +506,6 @@ const healthGateBackdrop = healthGateWarningModal.querySelector(".modal-backdrop
 if (healthGateBackdrop) {
   healthGateBackdrop.addEventListener("click", () => {
     pendingHealthGatePayload = null;
+    pendingHealthGatePassingBays = null;
   });
 }
