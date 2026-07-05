@@ -592,6 +592,27 @@ def get_smart_test_status_endpoint(device):
                                                         current_updated_at=current_updated_at)
                         if not updated:
                             logger.debug(f"SMART test {device} record was modified by another process, skipping update")
+                # If database shows test running but drive shows aborted, update database
+                elif test_status in ("started", "in_progress") and status_result.get("status") == "aborted":
+                    if should_update_test_status(started_at):
+                        logger.debug(f"SMART test {device} aborted according to drive status")
+                        current_updated_at = latest_test.get("updated_at")
+                        updated = update_smart_test_run(record_id, "failed", result="aborted",
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"SMART test {device} record was modified by another process, skipping update")
+                # If database shows test running but drive shows no_tests/unknown after grace period,
+                # the test is no longer running but we can't determine pass/fail. Mark as completed
+                # with unknown result so the card stops showing "running".
+                elif test_status in ("started", "in_progress") and status_result.get("status") in ("no_tests", "unknown"):
+                    if should_update_test_status(started_at):
+                        logger.debug(f"SMART test {device} no longer running (status={status_result.get('status')}), marking completed with unknown result")
+                        current_updated_at = latest_test.get("updated_at")
+                        updated = update_smart_test_run(record_id, "completed", result="unknown",
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"SMART test {device} record was modified by another process, skipping update")
         except Exception as e:
             logger.warning(f"Failed to update SMART test database record for {device}: {e}")
         

@@ -165,6 +165,25 @@ def update_smart_test_status_background():
                                                         current_updated_at=current_updated_at)
                         if not updated:
                             logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                    
+                    # Update database if drive shows aborted and grace period elapsed
+                    elif drive_status == "aborted" and should_update_test_status(started_at):
+                        logger.info(f"Background update: SMART test {device} aborted")
+                        updated = update_smart_test_run(record_id, "failed", result="aborted",
+                                                        output_json=status_result.get("self_test_log_table"),
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                    
+                    # Drive shows no_tests/unknown after grace period: test is no longer running
+                    # but we can't determine pass/fail from the drive's log. Mark as completed
+                    # with result "unknown" so the card stops showing "running".
+                    elif drive_status in ("no_tests", "unknown") and should_update_test_status(started_at):
+                        logger.info(f"Background update: SMART test {device} no longer running (status={drive_status}), marking completed with unknown result")
+                        updated = update_smart_test_run(record_id, "completed", result="unknown",
+                                                        current_updated_at=current_updated_at)
+                        if not updated:
+                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
                 
                 except Exception as e:
                     logger.warning(f"Failed to update SMART test status for {device}: {e}")

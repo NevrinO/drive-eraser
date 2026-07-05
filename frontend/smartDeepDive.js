@@ -257,7 +257,13 @@ async function pollSmartTestStatus(device, testType) {
 
       // Capture started_at timestamp from first response
       if (data.started_at && !testStartedAt) {
-        testStartedAt = new Date(data.started_at).getTime();
+        const parsed = new Date(data.started_at).getTime();
+        if (!isNaN(parsed)) {
+          testStartedAt = parsed;
+        } else {
+          // Fallback: use polling start time if timestamp can't be parsed
+          testStartedAt = pollingStartTime;
+        }
       }
 
       // Check if grace period has elapsed

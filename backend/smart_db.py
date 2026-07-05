@@ -260,7 +260,8 @@ def record_smart_test_run(device, serial, test_type, status, result=None, output
     if not status:
         return None
 
-    started_at = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    started_at = now.isoformat()
     updated_at = started_at
 
     try:
@@ -354,8 +355,9 @@ def update_smart_test_run(record_id, status, result=None, output_json=None, curr
     if not record_id or not status:
         return False
 
-    finished_at = datetime.now(timezone.utc).isoformat() if status in ("completed", "failed") else None
-    updated_at = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    finished_at = now.isoformat() if status in ("completed", "failed") else None
+    updated_at = now.isoformat()
 
     try:
         with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:

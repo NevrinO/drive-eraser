@@ -161,7 +161,7 @@ function renderAuditHistory(liveSelfTestLogs, currentPoh) {
 
       // Display hours with rollover thresholds based on current POH
       let hoursDisplay;
-      if (test.hours !== undefined) {
+      if (test.hours != null) {
         const hours = test.hours;
         const ROLLOVER_LIMIT = 65535;
         
