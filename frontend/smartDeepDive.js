@@ -112,7 +112,9 @@ async function loadSmartDetails(device, serial, interfaceType) {
     }
 
     const data = await response.json();
-    renderSmartDetails(data, device, serial, interfaceType);
+    const effectiveSerial = serial || data.serial || '';
+    const effectiveInterfaceType = interfaceType || data.interface_type || '';
+    renderSmartDetails(data, device, effectiveSerial, effectiveInterfaceType);
   } catch (error) {
     console.error('Failed to load SMART details:', error);
     smartDeepDiveContent.innerHTML = `<p class="error">Failed to load SMART data: ${escapeHtml(error.message)}</p>`;

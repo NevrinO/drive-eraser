@@ -308,6 +308,10 @@ def get_smart_details(device):
         # Include current POH for context
         result["current_power_on_hours"] = current_poh
         
+        # Include serial and interface_type so frontend can refresh without losing context
+        result["serial"] = serial
+        result["interface_type"] = smart_data.get("interface_type")
+        
         # Include database audit history
         result["audit_history"] = audit_history
         
