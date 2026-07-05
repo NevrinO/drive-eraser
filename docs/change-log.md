@@ -1,5 +1,98 @@
 # Change Log
 
+## v1.1.0 - Production Release: Admin UI, Log Viewer, Documentation Overhaul & Critique Fixes
+- **Administration**:
+  - System Configuration panel now exposes 7+ operational policy fields with validation (station ID, Slack webhook, discovery workers, max concurrent wipes, blockdev retry settings, health gate thresholds, zero-check parameters)
+  - In-app markdown documentation viewer modal — replaces external `/docs/` links with rendered markdown overlay
+  - Log viewer with live log tail, configurable log retention, and wipe progress metrics
+  - Drive model risk profiles removed from admin panel (moved to config file management)
+  - Triage report refactored to use dropdown filters instead of checkboxes, added media type and POH columns
+- **Reliability**:
+  - Cache TTL increased for unmapped drive identity data (10-minute TTL using `get_smart_identity` instead of full `get_smart_data`)
+  - Cache invalidation on auto-detect, manual bay map updates, and udev hot-plug events
+  - DD read retry logic with configurable attempts and delays for post-wipe drive detachment
+  - Post-wipe `blockdev --getsize64` failures retried with configurable policy
+  - SATA SMART parsing error fix
+  - Display label normalization for erase confirmation (lowercase comparison)
+  - Enclosure name removed from card names so bay number is visible
+- **Security & Code Quality**:
+  - Removed dead config keys (`prewipe_spot_check` migrated to `prewipe_zero_detection_enabled`)
+  - Validate-before-mutate pattern for policy updates with `strict_audit_mode` validation
+  - `wipe_passphrase` redaction in GET policy response
+  - CSP `'unsafe-inline'` removed from style-src — certificate CSS externalized
+  - Fixed XSS vulnerabilities in drive rendering (unescaped `progressPercent`/`healthScore`)
+  - Fixed template DELETE race condition with two-phase lock pattern
+  - Added erase subprocess timeouts to prevent stuck drives from blocking bays forever
+  - Fixed NoneType crash in firmware polling
+  - Fixed POH=0 truthiness bug in database
+  - Removed no-op `close_all_connections` from database module
+  - Background SMART collection refactored to persistent ThreadPoolExecutor
+- **Documentation**:
+  - All documentation updated to align with code changes
+  - New: `admin-guide.md`, `enclosure-mapping-guide.md`, `operations.md`, `roadmap.md`
+  - Renamed: `deployment.md` (was `DEPLOYMENT.md`), `rebuild.md` removed
+  - `release-checklist.md` and `troubleshooting.md` consolidated into `operations.md`
+- **Testing**:
+  - 52 previously failing tests fixed
+  - New test modules: `test_zero_check_manager.py`, `test_smart_test_runner.py`, `test_smart_parsing.py`, `test_policy_routes.py`, `test_enclosure_slot_mappings.py`, `test_physical_slot_mapping.py`, `test_udev_listener.py`, `test_traversal_parity.py`, `test_smart_deep_dive.js`
+
+## v1.0.0 - Initial Production Release: Enclosure System, SMART Deep Dive, Zero-Check, Health Gate & Discovery Refactor
+- **Enclosure System**:
+  - Full enclosure/slot mapping system for physical bay management
+  - Enclosure creation wizard with traversal-based slot generation
+  - Physical position grid coordinates for enclosure slots
+  - Fallback rendering for drives with invalid positions
+  - Hybrid slot support for mixed-drive enclosures
+- **SMART Deep Dive**:
+  - Comprehensive SMART attribute viewer with per-drive detail modal
+  - SMART self-test runner with background status polling
+  - SMART test history tracking in database with optimistic locking
+  - Historical POH lookup for serial numbers across prior test runs
+- **Pre-Wipe Zero Check**:
+  - Configurable zero-detection pre-wipe check with zone-based sampling
+  - `zero_check_manager` with configurable concurrency limit
+  - Small-drive threshold for full vs. sampled checks
+  - Per-drive timeout and block size configuration
+- **Pre-Wipe Health Gate**:
+  - Prevents starting wipes on failing drives based on SMART status, health score, recommendation, pending/reallocated sectors, interface errors
+  - NVMe-specific checks (available spare, critical warnings)
+  - SAS-specific checks (grown defect list, scan status, uncorrectable errors, sticky LBA)
+  - Override support with justification logging (disabled in strict mode)
+  - Device state check via sysfs (offline/removed detection)
+- **Discovery Refactor**:
+  - Discovery modal refactored into modular components (`discoveryState.js`, `discoveryValidation.js`, `discoveryMapping.js`, `discoveryModal.js`)
+  - Deferred wizard-building calls to reduce page load overhead
+  - udev event-driven hot-plug detection via `pyudev`
+- **Performance**:
+  - 10-minute TTL cache for unmapped drive identity data
+  - Admin page load reduced from ~60s to 1-3s via cached `get_smart_identity`
+  - Background SMART collection via persistent ThreadPoolExecutor
+- **Frontend**:
+  - CSS refactored from monolithic `styles.css` into modular files (`base.css`, `layout.css`, `bay-card.css`, `modal.css`, `discovery.css`, `enclosure.css`, `legend.css`, `triage.css`, `utilities.css`, `buttons.css`)
+  - Drive rendering extracted into `driveRendering.js`
+  - SMART renderers extracted into `smartRenderers.js`
+  - Batch wipe UI in `batchWipe.js`
+  - Triage report in `triageReport.js`
+  - Legend modal for bay card status reference
+- **Backend Architecture**:
+  - Modular route blueprints: `policy_routes.py`, `enclosure_routes.py`, `support_routes.py`, `smart_routes.py`, `bay_mapping_routes.py`, `template_routes.py`, `certificate_routes.py`, `drive_routes.py`, `discovery_routes.py`
+  - `slot_mapping.py` for physical slot traversal logic
+  - `smart_data_parsing.py`, `smart_health.py`, `smart_health_gate.py`, `smart_test_runner.py`, `smart_db.py`, `smart_utils.py`, `smart_constants.py` — SMART subsystem split
+  - `zero_check_manager.py` for pre-wipe zero detection
+  - `udev_listener.py` for event-driven device discovery
+  - `wsgi.py` entry point for Gunicorn deployment
+  - `job_validation.py` extracted from `job_management.py`
+  - `device_resolution.py` for device path resolution
+- **Configuration**:
+  - `drive_models.json` for per-model risk profiles (trip temperature, NME thresholds)
+  - JSON schema validation for `policy.json` with deprecated key migration
+  - `command_paths.json` for resolved system binary paths
+- **Testing**:
+  - 30+ Python test modules and 4 JavaScript test modules
+  - SMART fixtures for NVMe, SAS, SATA healthy and failure scenarios
+  - End-to-end workflow tests
+  - Crypto verification and zero-check manager tests
+
 ## v0.27 - Live Testing Fixes & Post-Wipe Verification Resilience (Planned)
 - **UX / Visibility**:
   - Secure-mode badge now reflects `strict_audit_mode` instead of `passphrase_enabled`

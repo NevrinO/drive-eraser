@@ -120,10 +120,10 @@ journalctl -u drive-eraser -f
 Run the build script from your project root (Windows/PowerShell):
 
 ```powershell
-.\scripts\build-release.ps1 -Version "v1.0.0"
+.\scripts\build-release.ps1 -Version "v1.1.0"
 ```
 
-This creates `drive-eraser-v1.0.0.zip` in the project root, excluding:
+This creates `drive-eraser-v1.1.0.zip` in the project root, excluding:
 - Development tools (.devin, .windsurf)
 - Git repository (.git)
 - Test files (tests/)
@@ -133,7 +133,7 @@ This creates `drive-eraser-v1.0.0.zip` in the project root, excluding:
 ### Create the GitHub Release
 
 ```powershell
-gh release create v1.0.0 drive-eraser-v1.0.0.zip --notes "Production release v1.0.0"
+gh release create v1.1.0 drive-eraser-v1.1.0.zip --notes "Production release v1.1.0"
 ```
 
 Replace the notes with your actual release notes describing changes.
@@ -144,10 +144,10 @@ On your Ubuntu server:
 
 ```bash
 # Download the release
-wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.0.0/drive-eraser-v1.0.0.zip
+wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
 
 # Extract
-unzip drive-eraser-v1.0.0.zip -d /opt/drive-eraser/
+unzip drive-eraser-v1.1.0.zip -d /opt/drive-eraser/
 
 # Run installation
 cd /opt/drive-eraser
@@ -162,8 +162,8 @@ sudo systemctl enable drive-eraser
 
 Use semantic versioning:
 - `v1.0.0` — Initial production release
-- `v1.0.1` — Bug fixes
-- `v1.1.0` — New features (backward compatible)
+- `v1.1.0` — Admin UI, log viewer, documentation overhaul, critique fixes
+- `v1.1.1` — Future bug fixes
 - `v2.0.0` — Breaking changes
 
 ### Updating .productionignore
@@ -267,8 +267,8 @@ Rollback if any are true:
 If a release has issues, deploy the previous version:
 
 ```bash
-wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.0.0/drive-eraser-v1.0.0.zip
-unzip drive-eraser-v1.0.0.zip -d /opt/drive-eraser/
+wget https://github.com/YOUR_USERNAME/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+unzip drive-eraser-v1.1.0.zip -d /opt/drive-eraser/
 sudo systemctl restart drive-eraser
 ```
 

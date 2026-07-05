@@ -40,5 +40,20 @@
   "max_logo_size_mb": 1,
   "max_bulk_cert_batch_size": 100,
   "blockdev_post_wipe_retries": 3,
-  "blockdev_post_wipe_retry_delay": 5
+  "blockdev_post_wipe_retry_delay": 5,
+  "zero_detection_concurrency_limit": 8,
+  "zero_check_total_bytes_gb": 2,
+  "zero_check_zone_count": 5,
+  "zero_check_block_size_mb": 16,
+  "zero_check_timeout_seconds": 60,
+  "zero_check_small_drive_threshold_gb": 2,
+  "prewipe_health_gate_enabled": true,
+  "prewipe_health_gate_strict_mode": false,
+  "prewipe_health_gate_block_destroy": true,
+  "prewipe_health_gate_block_scratch": false,
+  "prewipe_health_gate_block_failed_smart": true,
+  "prewipe_health_gate_max_pending_sectors": 10,
+  "prewipe_health_gate_max_reallocated_sectors": 5,
+  "prewipe_health_gate_max_interface_errors": 100,
+  "prewipe_health_gate_max_health_score_drop": 20
 }
