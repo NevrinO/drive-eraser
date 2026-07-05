@@ -377,13 +377,11 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
     if capacity <= 0:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_capacity", "details": f"Drive reported zero capacity: {capacity}"}
 
-    # Set deadline after blockdev completes so retry delays don't eat into
-    # the zone-read timeout budget. The timeout is meant to limit dd read
-    # time, not metadata query time (blockdev has its own retry logic).
-    deadline = time.time() + timeout_seconds
-
-    def _is_timed_out():
-        return time.time() >= deadline
+    # Per-zone timeout: the timeout_seconds policy value applies to each
+    # zone independently, so concurrent I/O contention doesn't cause
+    # cascading timeouts across zones. The deadline is set fresh at the
+    # start of each zone iteration in the loop below.
+    per_zone_timeout = timeout_seconds
 
     # Determine read strategy
     if capacity <= small_threshold_bytes:
@@ -411,8 +409,10 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
         for zone_idx, (offset, zone_size) in enumerate(zones):
             if _is_cancelled():
                 return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
-            if _is_timed_out():
-                return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+
+            # Fresh deadline for each zone — per-zone timeout prevents
+            # cascading timeouts when concurrent I/O slows early zones.
+            deadline = time.time() + per_zone_timeout
 
             # Clamp zone to device bounds
             offset = max(0, min(offset, capacity))
@@ -427,7 +427,7 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
                 if zone_result["error"] == "cancelled":
                     return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
                 if zone_result["error"] == "timeout":
-                    return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+                    return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check zone {zone_idx} exceeded {per_zone_timeout}s timeout"}
                 return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": zone_result["error"], "details": zone_result["details"]}
 
             bytes_checked += zone_result["bytes_read"]
