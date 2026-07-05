@@ -242,6 +242,10 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
 
     bytes_read = 0
     chunks_read = 0
+    # Pre-allocate zero buffer for C-level memcmp (SIMD-optimized in glibc).
+    # any(memoryview(chunk)) iterates byte-by-byte in Python — with 8 concurrent
+    # threads fighting for the GIL, this was the actual bottleneck, not I/O.
+    zero_buf = b'\x00' * block_size
     try:
         while True:
             chunk = proc.stdout.read(block_size)
@@ -249,7 +253,11 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
                 break
             bytes_read += len(chunk)
             chunks_read += 1
-            if any(memoryview(chunk)):
+            if len(chunk) == block_size:
+                is_zero = (chunk == zero_buf)
+            else:
+                is_zero = (chunk == zero_buf[:len(chunk)])
+            if not is_zero:
                 with kill_lock:
                     if kill_reason[0] is None:
                         kill_reason[0] = "nonzero"
@@ -525,7 +533,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
             data = dd_result["data"]
             total_verified_bytes += len(data)
 
-            if any(memoryview(data)):
+            if data.count(0) != len(data):
                 non_zero_found = True
                 first_non_zero_offset = offset
                 break
@@ -812,7 +820,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 else:
                     data = dd_result["data"]
                     if data:
-                        is_all_zeros = not any(memoryview(data))
+                        is_all_zeros = (data.count(0) == len(data))
                         if is_all_zeros:
                             return {
                                 "ok": True,
