@@ -472,3 +472,34 @@ class TestZeroCheckManager:
                     break
                 time.sleep(0.05)
 
+    def test_delay_auto_enqueue_blocks_during_window(self):
+        """Test that delay_auto_enqueue blocks auto-enrollment during the delay window."""
+        reset_manager()
+        manager = ZeroCheckManager(socketio=None, max_concurrency=2)
+
+        # Before delay, not delayed
+        assert manager.is_auto_enqueue_delayed() is False
+
+        # Set 120s delay
+        manager.delay_auto_enqueue(120)
+        assert manager.is_auto_enqueue_delayed() is True
+
+        # Still delayed on subsequent checks
+        assert manager.is_auto_enqueue_delayed() is True
+
+    def test_delay_auto_enqueue_expires(self):
+        """Test that delay_auto_enqueue expires after the specified duration."""
+        reset_manager()
+        manager = ZeroCheckManager(socketio=None, max_concurrency=2)
+
+        # Set a very short delay (0.1 seconds)
+        manager.delay_auto_enqueue(0.1)
+        assert manager.is_auto_enqueue_delayed() is True
+
+        # Wait for it to expire
+        time.sleep(0.2)
+        assert manager.is_auto_enqueue_delayed() is False
+
+        # Once expired, stays expired
+        assert manager.is_auto_enqueue_delayed() is False
+

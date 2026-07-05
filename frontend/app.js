@@ -168,7 +168,7 @@ function initWebSocket() {
 
 // Handle SMART data update from WebSocket
 function handleSmartDataUpdate(data) {
-  const { device, enclosure_id, slot_number, smart, health_score, recommendation, marker } = data || {};
+  const { device, enclosure_id, slot_number, smart, health_score, recommendation, marker, status } = data || {};
 
   // Find and update the drive in currentDrives
   const driveIndex = currentDrives.findIndex(d => d.device === device);
@@ -176,6 +176,7 @@ function handleSmartDataUpdate(data) {
     currentDrives[driveIndex].smart = smart;
     currentDrives[driveIndex].health_score = health_score;
     currentDrives[driveIndex].recommendation = recommendation;
+    if (status) currentDrives[driveIndex].status = status;
     if (marker !== undefined) {
       currentDrives[driveIndex].marker = marker;
     }
@@ -185,9 +186,9 @@ function handleSmartDataUpdate(data) {
       renderBays(currentDrives);
     }
 
-    // Re-render triage table if on triage tab
-    if (document.getElementById('triagePanel').classList.contains('active')) {
-      renderTriageTable();
+    // Update triage data and re-render if on triage tab
+    if (typeof updateTriageDriveData === 'function') {
+      updateTriageDriveData(data);
     }
 
     // Update detail modal if currently open for this drive

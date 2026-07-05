@@ -130,17 +130,32 @@ def register_routes(flask_app):
             health_gate_override_justification = payload.get("health_gate_override_justification", "")
 
             # Synchronous health gate pre-check before starting background jobs
+            # Collect ALL blocked drives so the user can see which ones failed
+            blocked_drives = []
+            passing_validated = []
             for validated in validated_bays:
                 device = validated.get("device")
-                interface_type = validated.get("drive", {}).get("interface_type")
+                drive_info = validated.get("drive", {})
+                interface_type = drive_info.get("interface_type")
                 gate_result = check_health_gate_sync(device, interface_type, policy, health_gate_override)
                 if gate_result.get("blocked"):
-                    return jsonify({
-                        "error": gate_result["error_code"],
-                        "error_code": gate_result["error_code"],
-                        "block_reason": gate_result["block_reason"],
-                        "override_available": gate_result["override_available"],
-                    }), 400
+                    blocked_drives.append({
+                        "bay": validated.get("bay"),
+                        "serial": drive_info.get("serial", "Unknown"),
+                        "model": drive_info.get("model", "Unknown"),
+                        "block_reason": gate_result.get("block_reason", "unknown"),
+                    })
+                else:
+                    passing_validated.append(validated)
+
+            if blocked_drives:
+                return jsonify({
+                    "error": "pre_wipe_health_check_failed",
+                    "error_code": "pre_wipe_health_check_failed",
+                    "blocked_drives": blocked_drives,
+                    "override_available": not policy.get("prewipe_health_gate_strict_mode", False) and not policy.get("strict_audit_mode", False),
+                    "passing_bays": [v.get("bay") for v in passing_validated],
+                }), 400
 
             accepted_jobs = []
             semaphore = get_wipe_semaphore()

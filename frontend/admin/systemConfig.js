@@ -124,6 +124,16 @@ async function loadSystemConfig() {
       zeroDetectionConcurrencyInput.value = policy.zero_detection_concurrency_limit || 8;
     }
 
+    const zeroCheckTimeoutInput = document.getElementById("zero_check_timeout_seconds");
+    if (zeroCheckTimeoutInput) {
+      zeroCheckTimeoutInput.value = policy.zero_check_timeout_seconds || 30;
+    }
+
+    const zeroCheckStartupDelayInput = document.getElementById("zero_check_startup_delay_seconds");
+    if (zeroCheckStartupDelayInput) {
+      zeroCheckStartupDelayInput.value = policy.zero_check_startup_delay_seconds ?? 30;
+    }
+
     // Health gate settings
     const healthGateEnabledInput = document.getElementById("prewipe_health_gate_enabled");
     if (healthGateEnabledInput) {
@@ -407,6 +417,30 @@ function validateForm() {
     } else {
       zeroDetectionConcurrencyInput.style.borderColor = "";
       formData.zero_detection_concurrency_limit = value;
+    }
+  }
+
+  const zeroCheckTimeoutInput = document.getElementById("zero_check_timeout_seconds");
+  if (zeroCheckTimeoutInput) {
+    const value = parseInt(zeroCheckTimeoutInput.value, 10);
+    if (isNaN(value) || value < 5 || value > 300) {
+      isValid = false;
+      zeroCheckTimeoutInput.style.borderColor = "var(--color-danger)";
+    } else {
+      zeroCheckTimeoutInput.style.borderColor = "";
+      formData.zero_check_timeout_seconds = value;
+    }
+  }
+
+  const zeroCheckStartupDelayInput = document.getElementById("zero_check_startup_delay_seconds");
+  if (zeroCheckStartupDelayInput) {
+    const value = parseInt(zeroCheckStartupDelayInput.value, 10);
+    if (isNaN(value) || value < 0 || value > 300) {
+      isValid = false;
+      zeroCheckStartupDelayInput.style.borderColor = "var(--color-danger)";
+    } else {
+      zeroCheckStartupDelayInput.style.borderColor = "";
+      formData.zero_check_startup_delay_seconds = value;
     }
   }
 

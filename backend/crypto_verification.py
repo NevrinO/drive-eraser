@@ -242,6 +242,10 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
 
     bytes_read = 0
     chunks_read = 0
+    # Pre-allocate zero buffer for C-level memcmp (SIMD-optimized in glibc).
+    # any(memoryview(chunk)) iterates byte-by-byte in Python — with 8 concurrent
+    # threads fighting for the GIL, this was the actual bottleneck, not I/O.
+    zero_buf = b'\x00' * block_size
     try:
         while True:
             chunk = proc.stdout.read(block_size)
@@ -249,7 +253,11 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
                 break
             bytes_read += len(chunk)
             chunks_read += 1
-            if any(memoryview(chunk)):
+            if len(chunk) == block_size:
+                is_zero = (chunk == zero_buf)
+            else:
+                is_zero = (chunk == zero_buf[:len(chunk)])
+            if not is_zero:
                 with kill_lock:
                     if kill_reason[0] is None:
                         kill_reason[0] = "nonzero"
@@ -312,7 +320,7 @@ def _run_cancellable_zone_read(dd_cmd, device, offset, zone_size, block_size, ca
     return {"ok": True, "nonzero": False, "bytes_read": bytes_read, "chunks_read": chunks_read, "error": None}
 
 
-def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
+def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=30):
     """
     Pre-wipe zero detection: read a flat 2 GB sample from 5 zones and check
     whether the sampled bytes are all zero. Drives <= 2 GB are read in one pass.
@@ -357,10 +365,6 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
     small_threshold_bytes = small_threshold_gb * 1024 * 1024 * 1024
 
     device_lock = get_device_lock(device)
-    deadline = time.time() + timeout_seconds
-
-    def _is_timed_out():
-        return time.time() >= deadline
 
     def _is_cancelled():
         return cancel_event is not None and cancel_event.is_set()
@@ -380,6 +384,12 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
 
     if capacity <= 0:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_capacity", "details": f"Drive reported zero capacity: {capacity}"}
+
+    # Per-zone timeout: the timeout_seconds policy value applies to each
+    # zone independently, so concurrent I/O contention doesn't cause
+    # cascading timeouts across zones. The deadline is set fresh at the
+    # start of each zone iteration in the loop below.
+    per_zone_timeout = timeout_seconds
 
     # Determine read strategy
     if capacity <= small_threshold_bytes:
@@ -407,8 +417,10 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
         for zone_idx, (offset, zone_size) in enumerate(zones):
             if _is_cancelled():
                 return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
-            if _is_timed_out():
-                return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+
+            # Fresh deadline for each zone — per-zone timeout prevents
+            # cascading timeouts when concurrent I/O slows early zones.
+            deadline = time.time() + per_zone_timeout
 
             # Clamp zone to device bounds
             offset = max(0, min(offset, capacity))
@@ -423,7 +435,7 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=60):
                 if zone_result["error"] == "cancelled":
                     return {"ok": False, "result": "cancelled", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "cancelled", "details": "Zero check cancelled by user"}
                 if zone_result["error"] == "timeout":
-                    return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check exceeded {timeout_seconds} seconds"}
+                    return {"ok": True, "result": "inconclusive", "is_zeroed": None, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": "timeout", "details": f"Zero check zone {zone_idx} exceeded {per_zone_timeout}s timeout"}
                 return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": chunks_checked, "bytes_checked": bytes_checked, "failed_at_chunk": zone_idx, "error": zone_result["error"], "details": zone_result["details"]}
 
             bytes_checked += zone_result["bytes_read"]
@@ -521,7 +533,7 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
             data = dd_result["data"]
             total_verified_bytes += len(data)
 
-            if any(memoryview(data)):
+            if data.count(0) != len(data):
                 non_zero_found = True
                 first_non_zero_offset = offset
                 break
@@ -808,7 +820,7 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 else:
                     data = dd_result["data"]
                     if data:
-                        is_all_zeros = not any(memoryview(data))
+                        is_all_zeros = (data.count(0) == len(data))
                         if is_all_zeros:
                             return {
                                 "ok": True,

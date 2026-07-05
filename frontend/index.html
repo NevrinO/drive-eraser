@@ -85,22 +85,27 @@
             <option value="unknown">Unknown</option>
           </select>
           <button type="button" id="printTriageBtn" class="btn btn--primary ml-auto">Print Report</button>
+          <button type="button" id="exportCsvTriageBtn" class="btn btn--secondary">Export CSV</button>
+          <button type="button" id="exportJsonTriageBtn" class="btn btn--secondary">Export JSON</button>
         </div>
       </div>
+
+      <div id="triageSummaryBar" class="triage-summary-bar"></div>
 
       <div id="triageTableContainer" class="triage-table-container">
         <table id="triageTable" class="triage-table">
           <thead>
             <tr>
-              <th>Bay</th>
-              <th>Serial</th>
-              <th>Model</th>
-              <th>Media Type</th>
-              <th>Interface</th>
-              <th>Capacity</th>
-              <th>POH</th>
-              <th>Health Score</th>
-              <th>Recommendation</th>
+              <th data-sort="bay" class="triage-sortable">Bay</th>
+              <th data-sort="serial" class="triage-sortable">Serial</th>
+              <th data-sort="model" class="triage-sortable">Model</th>
+              <th data-sort="media" class="triage-sortable">Media Type</th>
+              <th data-sort="interface" class="triage-sortable">Interface</th>
+              <th data-sort="capacity" class="triage-sortable">Capacity</th>
+              <th data-sort="poh" class="triage-sortable">POH</th>
+              <th data-sort="health" class="triage-sortable">Health Score</th>
+              <th>Flags</th>
+              <th data-sort="recommendation" class="triage-sortable">Recommendation</th>
             </tr>
           </thead>
           <tbody id="triageTableBody">
@@ -405,7 +410,10 @@
         <div id="healthGateWarningContent" class="mb-4">
           <!-- Populated dynamically -->
         </div>
-        <div id="healthGateOverrideSection" class="hidden override-section">
+        <div id="healthGateDropSection" class="hidden mt-4">
+          <button type="button" id="healthGateDropBtn" class="btn btn--primary w-full py-3">Drop Blocked Drives and Continue</button>
+        </div>
+        <div id="healthGateOverrideSection" class="hidden override-section mt-4">
           <label>
             Justification for Override
             <input type="text" id="healthGateOverrideJustification" maxlength="200" placeholder="Enter reason for overriding health check (e.g., 'Drive for testing only')">
@@ -1246,6 +1254,16 @@
               Zero Detection Concurrency Limit
               <input type="number" id="zero_detection_concurrency_limit" name="zero_detection_concurrency_limit" min="1" max="32" step="1">
               <small class="text-muted-xs">Maximum parallel zero-check reads (1-32)</small>
+            </label>
+            <label>
+              Zero Check Per-Zone Timeout (seconds)
+              <input type="number" id="zero_check_timeout_seconds" name="zero_check_timeout_seconds" min="5" max="300" step="5">
+              <small class="text-muted-xs">Timeout per zone read (5-300s). Total worst case = zones × timeout</small>
+            </label>
+            <label>
+              Zero Check Startup Delay (seconds)
+              <input type="number" id="zero_check_startup_delay_seconds" name="zero_check_startup_delay_seconds" min="0" max="300" step="5">
+              <small class="text-muted-xs">Delay auto-enrollment after server restart (0-300s). Lets drives settle before checking.</small>
             </label>
           </div>
 

@@ -192,6 +192,150 @@ class TestAPIRoutes:
             })
         assert response.status_code == 400
 
+    def test_erase_start_health_gate_blocked_returns_all_failures(self, client):
+        """Test that health gate failure returns ALL blocked drives with bay/serial info."""
+        mocked_drive_1 = {
+            "bay": "bay1",
+            "display_number": "1",
+            "present": True,
+            "device": "/dev/sdb",
+            "serial": "SN111",
+            "model": "ModelA",
+            "interface_type": "sata",
+            "supported_methods": ["overwrite"],
+        }
+        mocked_drive_2 = {
+            "bay": "bay2",
+            "display_number": "2",
+            "present": True,
+            "device": "/dev/sdc",
+            "serial": "SN222",
+            "model": "ModelB",
+            "interface_type": "sata",
+            "supported_methods": ["overwrite"],
+        }
+        validated_1 = {
+            "technician": "Test Tech",
+            "ticket_number": "TICKET-001",
+            "bay": "bay1",
+            "device": "/dev/sdb",
+            "method": "overwrite",
+            "recommended_method": "overwrite",
+            "drive": mocked_drive_1,
+        }
+        validated_2 = {
+            "technician": "Test Tech",
+            "ticket_number": "TICKET-001",
+            "bay": "bay2",
+            "device": "/dev/sdc",
+            "method": "overwrite",
+            "recommended_method": "overwrite",
+            "drive": mocked_drive_2,
+        }
+
+        def mock_validate(tech, ticket, bay, method_override, drives, policy):
+            if bay == "bay1":
+                return (validated_1, None, None)
+            return (validated_2, None, None)
+
+        call_count = [0]
+        def mock_health_gate(device, interface_type, policy, health_gate_override=False):
+            call_count[0] += 1
+            if device == "/dev/sdb":
+                return {"blocked": True, "error_code": "pre_wipe_health_check_failed",
+                        "block_reason": "smart_status_failed", "override_available": True}
+            return {"blocked": False}
+
+        with patch('api_routes.discover_drives', return_value=[mocked_drive_1, mocked_drive_2]), \
+             patch('api_routes.validate_single_bay', side_effect=mock_validate), \
+             patch('api_routes.check_health_gate_sync', side_effect=mock_health_gate):
+            response = client.post('/api/erase/start',
+                json={
+                    "bays": ["bay1", "bay2"],
+                    "confirmation_text": "erase 2 drives",
+                    "technician": "Test Tech",
+                    "ticket_number": "TICKET-001"
+                })
+            assert response.status_code == 400
+            data = json.loads(response.data)
+            assert data["error_code"] == "pre_wipe_health_check_failed"
+            assert "blocked_drives" in data
+            assert len(data["blocked_drives"]) == 1
+            assert data["blocked_drives"][0]["bay"] == "bay1"
+            assert data["blocked_drives"][0]["serial"] == "SN111"
+            assert data["blocked_drives"][0]["block_reason"] == "smart_status_failed"
+            assert "passing_bays" in data
+            assert "bay2" in data["passing_bays"]
+            assert data["override_available"] is True
+            assert call_count[0] == 2
+
+    def test_erase_start_health_gate_all_drives_blocked(self, client):
+        """Test that health gate returns empty passing_bays when all drives are blocked."""
+        mocked_drive_1 = {
+            "bay": "bay1",
+            "display_number": "1",
+            "present": True,
+            "device": "/dev/sdb",
+            "serial": "SN111",
+            "model": "ModelA",
+            "interface_type": "sata",
+            "supported_methods": ["overwrite"],
+        }
+        mocked_drive_2 = {
+            "bay": "bay2",
+            "display_number": "2",
+            "present": True,
+            "device": "/dev/sdc",
+            "serial": "SN222",
+            "model": "ModelB",
+            "interface_type": "sata",
+            "supported_methods": ["overwrite"],
+        }
+        validated_1 = {
+            "technician": "Test Tech",
+            "ticket_number": "TICKET-001",
+            "bay": "bay1",
+            "device": "/dev/sdb",
+            "method": "overwrite",
+            "recommended_method": "overwrite",
+            "drive": mocked_drive_1,
+        }
+        validated_2 = {
+            "technician": "Test Tech",
+            "ticket_number": "TICKET-001",
+            "bay": "bay2",
+            "device": "/dev/sdc",
+            "method": "overwrite",
+            "recommended_method": "overwrite",
+            "drive": mocked_drive_2,
+        }
+
+        def mock_validate(tech, ticket, bay, method_override, drives, policy):
+            if bay == "bay1":
+                return (validated_1, None, None)
+            return (validated_2, None, None)
+
+        def mock_health_gate(device, interface_type, policy, health_gate_override=False):
+            return {"blocked": True, "error_code": "pre_wipe_health_check_failed",
+                    "block_reason": "smart_status_failed", "override_available": True}
+
+        with patch('api_routes.discover_drives', return_value=[mocked_drive_1, mocked_drive_2]), \
+             patch('api_routes.validate_single_bay', side_effect=mock_validate), \
+             patch('api_routes.check_health_gate_sync', side_effect=mock_health_gate):
+            response = client.post('/api/erase/start',
+                json={
+                    "bays": ["bay1", "bay2"],
+                    "confirmation_text": "erase 2 drives",
+                    "technician": "Test Tech",
+                    "ticket_number": "TICKET-001"
+                })
+            assert response.status_code == 400
+            data = json.loads(response.data)
+            assert data["error_code"] == "pre_wipe_health_check_failed"
+            assert len(data["blocked_drives"]) == 2
+            assert data["passing_bays"] == []
+            assert data["override_available"] is True
+
     def test_erase_start_requires_bays_list(self, client):
         """Test that bays list is required."""
         response = client.post('/api/erase/start',

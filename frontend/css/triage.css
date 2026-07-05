@@ -141,6 +141,127 @@
   .triage-table .health-score-fail {
     color: black;
   }
+
+  .triage-summary-bar {
+    background: #f0f0f0;
+    color: black;
+  }
+
+  .triage-chip {
+    border: 1px solid #999 !important;
+    color: black !important;
+    background: #f0f0f0 !important;
+  }
+
+  #exportCsvTriageBtn,
+  #exportJsonTriageBtn {
+    display: none !important;
+  }
+}
+
+/* Summary Bar */
+.triage-summary-bar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--color-surface-2);
+  border-radius: 4px;
+  font-size: 0.8rem;
+}
+
+.triage-summary-total {
+  font-weight: bold;
+  color: var(--color-text);
+}
+
+.triage-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.triage-chip-destroy { background: rgba(220, 38, 38, 0.2); color: #f87171; border: 1px solid rgba(220, 38, 38, 0.4); }
+.triage-chip-scratch { background: rgba(234, 88, 12, 0.2); color: #fbbf24; border: 1px solid rgba(234, 88, 12, 0.4); }
+.triage-chip-heavy   { background: rgba(168, 85, 247, 0.2); color: #c084fc; border: 1px solid rgba(168, 85, 247, 0.4); }
+.triage-chip-good    { background: rgba(34, 197, 94, 0.2); color: #4ade80; border: 1px solid rgba(34, 197, 94, 0.4); }
+.triage-chip-new     { background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); }
+.triage-chip-locked  { background: rgba(107, 114, 128, 0.2); color: #9ca3af; border: 1px solid rgba(107, 114, 128, 0.4); }
+.triage-chip-unknown { background: rgba(107, 114, 128, 0.15); color: var(--color-text-muted); border: 1px solid var(--color-border); }
+
+/* Sortable column headers */
+.triage-sortable {
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-right: 18px;
+}
+
+.triage-sortable::after {
+  content: "⇅";
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.7rem;
+  opacity: 0.3;
+}
+
+.triage-sortable.triage-sort-asc::after {
+  content: "↑";
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.triage-sortable.triage-sort-desc::after {
+  content: "↓";
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+/* Anomaly flags */
+.triage-flags-cell {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 200px;
+}
+
+.triage-flag {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.triage-flag-critical {
+  background: rgba(220, 38, 38, 0.25);
+  color: #f87171;
+  border: 1px solid rgba(220, 38, 38, 0.5);
+}
+
+.triage-flag-warning {
+  background: rgba(234, 88, 12, 0.25);
+  color: #fbbf24;
+  border: 1px solid rgba(234, 88, 12, 0.5);
+}
+
+.triage-flag-info {
+  background: rgba(59, 130, 246, 0.2);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.4);
+}
+
+.triage-flag-none {
+  color: var(--color-text-muted);
 }
 
 /* JS-generated triage report classes */

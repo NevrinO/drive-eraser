@@ -54,7 +54,10 @@ def _build_drive_payload(dev_node, smart, interface_type, capabilities, marker_s
         "smart": {
             "temperature": smart.get("temperature"), "reallocated_sectors": smart.get("reallocated_sectors"), "pending_sectors": smart.get("pending_sectors"), "wear_level": smart.get("wear_level"), "power_on_hours": smart.get("power_on_hours"), "power_on_days": smart.get("power_on_days"),
             "interface_errors": smart.get("interface_errors"), "data_read_raw": smart.get("data_read_raw"), "data_read_bytes": smart.get("data_read_bytes"), "data_written_raw": smart.get("data_written_raw"), "data_written_bytes": smart.get("data_written_bytes"),
-            "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+            "status": smart.get("status", "UNKNOWN"), "reallocated_normalized": smart.get("reallocated_normalized"), "reallocated_threshold": smart.get("reallocated_threshold"), "capacity_bytes": smart.get("capacity_bytes"), "raw": smart.get("raw"),
+            "sas_grown_defect_list": smart.get("sas_grown_defect_list"), "sas_scan_status": smart.get("sas_scan_status"), "sas_non_medium_errors": smart.get("sas_non_medium_errors"),
+            "sas_uncorrectable_read_errors": smart.get("sas_uncorrectable_read_errors"), "sas_uncorrectable_write_errors": smart.get("sas_uncorrectable_write_errors"), "sas_uncorrectable_verify_errors": smart.get("sas_uncorrectable_verify_errors"),
+            "sas_scan_event_count": smart.get("sas_scan_event_count"), "sas_scan_unique_lbas": smart.get("sas_scan_unique_lbas"), "sas_sticky_lba_detected": smart.get("sas_sticky_lba_detected"),
             "penalty_breakdown": penalty_breakdown, "smart_polling": smart_polling
         }
     }

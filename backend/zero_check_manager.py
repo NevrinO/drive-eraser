@@ -6,6 +6,7 @@ from collections import deque
 from datetime import datetime, timezone
 import logging
 import threading
+import time
 
 from crypto_verification import check_drive_already_zeroed
 from common import load_policy
@@ -36,6 +37,7 @@ class ZeroCheckManager:
         self._status = {}  # bay -> status dict
         self._generations = {}  # bay -> generation token
         self._generation_counter = 0
+        self._auto_enqueue_delay_until = None  # monotonic timestamp; skip auto-enroll until this time
 
     def set_socketio(self, socketio):
         self._socketio = socketio
@@ -210,6 +212,26 @@ class ZeroCheckManager:
     def on_wipe_starting(self, bay):
         self.cancel_check(bay)
 
+    def delay_auto_enqueue(self, seconds):
+        """Delay auto-enrollment for the given number of seconds from now.
+
+        Called on startup to give drives time to settle after restart (e.g.,
+        flushing interrupted DD writes). All discovery cycles within the
+        delay window will skip auto-enrolling zero checks.
+        """
+        with self._lock:
+            self._auto_enqueue_delay_until = time.monotonic() + seconds
+
+    def is_auto_enqueue_delayed(self):
+        """Check if auto-enrollment is still in the startup delay window."""
+        with self._lock:
+            if self._auto_enqueue_delay_until is None:
+                return False
+            if time.monotonic() >= self._auto_enqueue_delay_until:
+                self._auto_enqueue_delay_until = None
+                return False
+            return True
+
     # --- Queue/scheduling internals ---
 
     def _process_queue(self):
@@ -263,9 +285,9 @@ class ZeroCheckManager:
 
             try:
                 policy = load_policy()
-                timeout_seconds = policy.get("zero_check_timeout_seconds", 60)
+                timeout_seconds = policy.get("zero_check_timeout_seconds", 30)
             except Exception:
-                timeout_seconds = 60
+                timeout_seconds = 30
 
             result = check_drive_already_zeroed(
                 device, cancel_event=cancel_event, timeout_seconds=timeout_seconds
