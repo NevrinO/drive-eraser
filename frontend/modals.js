@@ -66,9 +66,27 @@ function renderZeroCheckDetailSection(drive) {
   `;
 }
 
+function formatElapsed(seconds) {
+  if (seconds == null || isNaN(seconds)) return "-";
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  const s = Math.floor(seconds % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function formatETA(seconds) {
+  if (seconds == null || isNaN(seconds)) return "-";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const m = Math.floor(seconds / 60);
+  const s = Math.round(seconds % 60);
+  if (m < 60) return `${m}m ${s}s`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return `${h}h ${remM}m`;
+}
+
 function renderLiveDetails(drive) {
   if (!drive) return;
-  
   const opStatusText = String(drive.status || "READY").toUpperCase();
   const isRunning = opStatusText === "RUNNING";
   const hasValidMarker = drive.marker && (drive.marker.status === "pristine_secure" || drive.marker.status === "pristine_insecure" || drive.marker.status === "marker_error");
@@ -128,10 +146,35 @@ function renderLiveDetails(drive) {
   if (isRunning) {
     const runPercent = drive.progress_percent !== undefined ? drive.progress_percent : 0.0;
     const runPhase = drive.current_phase || "Initializing...";
+
+    let progressKvHtml = "";
+    if (drive.elapsed_seconds != null && drive.elapsed_seconds !== undefined) {
+      progressKvHtml += `<div class="kv"><span>Elapsed Time:</span><span>${formatElapsed(drive.elapsed_seconds)}</span></div>`;
+    }
+    if (drive.speed_mb_s != null && drive.speed_mb_s !== undefined) {
+      progressKvHtml += `<div class="kv"><span>Write Speed:</span><span>${drive.speed_mb_s.toFixed(1)} MB/s</span></div>`;
+    }
+    if (drive.eta_seconds != null && drive.eta_seconds !== undefined) {
+      progressKvHtml += `<div class="kv"><span>ETA:</span><span>${formatETA(drive.eta_seconds)}</span></div>`;
+    }
+
     terminalSection = `
       <div class="detail-section">
-        <h4>Live Execution Pipe Console</h4>
-        <pre class="terminal-pre">Running process subprocess monitoring active...\nActive Phase: ${runPhase}\nCompletion percentage: ${runPercent}%</pre>
+        <h4>Active Wipe Progress</h4>
+        <div class="kv"><span>Phase:</span><span>${escapeHtml(runPhase)}</span></div>
+        <div class="kv"><span>Completion:</span><span>${runPercent}%</span></div>
+        ${progressKvHtml}
+      </div>
+      <div class="detail-section">
+        <h4>Live Subprocess Output</h4>
+        <pre class="terminal-pre" id="liveLogTail">Loading...</pre>
+      </div>
+    `;
+  } else if (opStatusText === "FAILED" && drive.job_id) {
+    terminalSection = `
+      <div class="detail-section">
+        <h4>Failed Wipe Log</h4>
+        <pre class="terminal-pre" id="liveLogTail">Loading...</pre>
       </div>
     `;
   }

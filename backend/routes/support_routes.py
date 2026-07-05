@@ -14,12 +14,13 @@ import uuid
 import sqlite3
 import urllib.request
 import re
+from collections import deque
 from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from flask import Blueprint, jsonify, request, send_file, g
 from PIL import Image
 from app_config import logger, limiter, get_local_ip
-from common import get_config_dir, load_policy, get_data_dir, get_logs_dir, get_failed_logs_dir, get_db_path
+from common import get_config_dir, load_policy, get_data_dir, get_logs_dir, get_active_logs_dir, get_failed_logs_dir, get_db_path
 from system_metrics import get_ram_usage, get_cpu_usage, get_system_uptime
 from disk_utils import format_capacity_bytes
 from routes._shared import require_admin_auth, is_valid_device_name, MAX_DEVICES_FOR_BUNDLE
@@ -460,3 +461,246 @@ def manage_logo():
         except Exception as e:
             logger.error(f"Logo deletion failed: {e}")
             return jsonify({"error": str(e)}), 500
+
+
+def _resolve_log_path(path_key):
+    """Decode base64 path_key and validate the resolved path is within the logs directory tree.
+
+    Returns (abs_path, rel_path) on success, or (None, None) if validation fails.
+    Lesson #40: Path traversal prevention via os.path.commonpath.
+    """
+    try:
+        rel_path = base64.urlsafe_b64decode(path_key.encode("ascii")).decode("utf-8")
+    except Exception:
+        return None, None
+
+    logs_dir = os.path.abspath(get_logs_dir())
+    abs_path = os.path.abspath(os.path.join(logs_dir, rel_path))
+
+    # Ensure the resolved path is within the logs directory tree
+    try:
+        if os.path.commonpath([logs_dir, abs_path]) != logs_dir:
+            return None, None
+    except ValueError:
+        # commonpath raises ValueError on Windows when paths are on different drives
+        return None, None
+
+    return abs_path, rel_path
+
+
+@support_bp.route("/api/admin/logs")
+@require_admin_auth
+@limiter.limit("30 per minute")
+def list_logs():
+    try:
+        logs_dir = os.path.abspath(get_logs_dir())
+        active_dir = os.path.abspath(get_active_logs_dir())
+        failed_dir = os.path.abspath(get_failed_logs_dir())
+
+        scan_targets = [
+            (logs_dir, "main"),
+            (active_dir, "active"),
+            (failed_dir, "failed"),
+        ]
+
+        results = []
+        for target_dir, category in scan_targets:
+            if not os.path.isdir(target_dir):
+                continue
+            try:
+                entries = os.listdir(target_dir)
+            except OSError:
+                continue
+            for entry in entries:
+                full_path = os.path.join(target_dir, entry)
+                if not os.path.isfile(full_path):
+                    continue
+                # Filter to .log and .log.N (rotated) files only
+                if not (entry.endswith(".log") or re.match(r"^.*\.log\.\d+$", entry)):
+                    continue
+                try:
+                    stat = os.stat(full_path)
+                except OSError:
+                    continue
+                # Compute relative path from logs_dir for path_key
+                rel_path = os.path.relpath(full_path, logs_dir)
+                path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+                results.append({
+                    "name": entry,
+                    "category": category,
+                    "size_bytes": stat.st_size,
+                    "modified_at": datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat(),
+                    "path_key": path_key,
+                })
+
+        # Sort by modified_at descending (newest first)
+        results.sort(key=lambda x: x["modified_at"], reverse=True)
+
+        # Enforce max 200 files (Lesson #8)
+        if len(results) > 200:
+            results = results[:200]
+
+        return jsonify(results), 200
+    except Exception as e:
+        logger.error(f"Error listing logs: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+def _read_last_n_lines(abs_path, n, file_size):
+    """Read the last N lines from a file efficiently.
+
+    For files <= 1MB, use deque which is simple and fast.
+    For larger files, seek from the end in chunks to avoid reading the entire file.
+    Returns a list of lines (each with trailing newline, matching deque behavior).
+    """
+    _SEEK_THRESHOLD = 1024 * 1024  # 1MB — below this, deque is fine
+    _CHUNK_SIZE = 65536  # 64KB chunks when seeking backwards
+
+    if file_size <= _SEEK_THRESHOLD:
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            return list(deque(f, maxlen=n))
+
+    # Seek-from-end approach for large files
+    lines_found = []
+    with open(abs_path, "rb") as f:
+        f.seek(0, 2)  # Seek to end
+        position = file_size
+        remaining_bytes = b""
+        enough_lines = False
+
+        while position > 0 and not enough_lines:
+            read_size = min(_CHUNK_SIZE, position)
+            position -= read_size
+            f.seek(position)
+            chunk = f.read(read_size)
+            data = chunk + remaining_bytes
+            lines = data.split(b"\n")
+            remaining_bytes = lines[0]  # Partial line at the start of chunk
+
+            # Process complete lines (skip the first partial, process rest in reverse)
+            for line_bytes in reversed(lines[1:]):
+                # Skip empty trailing element from final newline
+                if not line_bytes and not lines_found:
+                    continue
+                lines_found.append(line_bytes.decode("utf-8", errors="replace") + "\n")
+                if len(lines_found) >= n:
+                    enough_lines = True
+                    break
+
+        # Handle the final partial line at the very beginning of the file
+        if not enough_lines and position == 0 and remaining_bytes:
+            lines_found.append(remaining_bytes.decode("utf-8", errors="replace") + "\n")
+
+    lines_found.reverse()
+    # Ensure we don't exceed n (the last chunk might have added extra)
+    return lines_found[-n:]
+
+
+@support_bp.route("/api/admin/logs/<path_key>/preview")
+@require_admin_auth
+@limiter.limit("30 per minute")
+def preview_log(path_key):
+    try:
+        abs_path, rel_path = _resolve_log_path(path_key)
+        if abs_path is None:
+            return jsonify({"error": "Invalid or unsafe path key"}), 400
+
+        if not os.path.isfile(abs_path):
+            return jsonify({"error": "Log file not found"}), 404
+
+        # Parse query parameters
+        try:
+            lines_param = int(request.args.get("lines", 200))
+        except (ValueError, TypeError):
+            lines_param = 200
+        lines_param = max(1, min(lines_param, 1000))  # Clamp to 1-1000 (Lesson #8)
+
+        query = request.args.get("q", "").strip()
+        case_sensitive = request.args.get("case_sensitive", "false").lower() == "true"
+
+        # Read last N lines — use seek-from-end for large files to avoid reading entire file
+        try:
+            file_size = os.path.getsize(abs_path)
+            last_lines = _read_last_n_lines(abs_path, lines_param, file_size)
+        except FileNotFoundError:
+            return jsonify({"error": "Log file not found"}), 404
+        except OSError as e:
+            return jsonify({"error": f"Failed to read log file: {e}"}), 500
+
+        if query:
+            # Search mode: filter lines matching the query
+            matched_lines = []
+            regex_fallback = False
+            flags = 0 if case_sensitive else re.IGNORECASE
+
+            try:
+                pattern = re.compile(query, flags)
+            except re.error:
+                # Fallback to literal string search if regex is invalid
+                pattern = None
+                regex_fallback = True
+
+            for i, line in enumerate(last_lines):
+                line_stripped = line.rstrip("\n\r")
+                if pattern:
+                    if pattern.search(line_stripped):
+                        matched_lines.append({"line_number": i + 1, "text": line_stripped})
+                else:
+                    if case_sensitive:
+                        if query in line_stripped:
+                            matched_lines.append({"line_number": i + 1, "text": line_stripped})
+                    else:
+                        if query.lower() in line_stripped.lower():
+                            matched_lines.append({"line_number": i + 1, "text": line_stripped})
+
+                # Max 500 matched lines (Lesson #8)
+                if len(matched_lines) >= 500:
+                    break
+
+            return jsonify({
+                "name": os.path.basename(rel_path),
+                "content": "\n".join(m["text"] for m in matched_lines),
+                "total_size_bytes": file_size,
+                "lines_returned": len(matched_lines),
+                "query": query,
+                "matched_lines": matched_lines,
+                "regex_fallback": regex_fallback,
+            }), 200
+        else:
+            # Preview mode: return last N lines
+            content = "".join(last_lines)
+            return jsonify({
+                "name": os.path.basename(rel_path),
+                "content": content,
+                "total_size_bytes": file_size,
+                "lines_returned": len(last_lines),
+                "query": None,
+                "matched_lines": None,
+            }), 200
+    except Exception as e:
+        logger.error(f"Error previewing log: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@support_bp.route("/api/admin/logs/<path_key>/download")
+@require_admin_auth
+@limiter.limit("10 per minute")
+def download_log(path_key):
+    try:
+        abs_path, rel_path = _resolve_log_path(path_key)
+        if abs_path is None:
+            return jsonify({"error": "Invalid or unsafe path key"}), 400
+
+        if not os.path.isfile(abs_path):
+            return jsonify({"error": "Log file not found"}), 404
+
+        return send_file(
+            abs_path,
+            as_attachment=True,
+            download_name=os.path.basename(rel_path)
+        )
+    except FileNotFoundError:
+        return jsonify({"error": "Log file not found"}), 404
+    except Exception as e:
+        logger.error(f"Error downloading log: {e}")
+        return jsonify({"error": str(e)}), 500

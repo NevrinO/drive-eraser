@@ -71,6 +71,7 @@ def admin_policy():
                 "prewipe_health_gate_max_health_score_drop": (int, 0, 100),
                 "max_logo_size_mb": (float, 0.1, 50),
                 "max_bulk_cert_batch_size": (int, 1, 1000),
+                "log_retention_days": (int, 1, 365),
             }
 
             # Boolean policy fields

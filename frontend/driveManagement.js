@@ -248,4 +248,115 @@ async function handleZeroCheckAction(bay, action) {
 
 refreshButton.addEventListener("click", () => loadDrives(false, true));
 
+// --- Log tail polling for active wipe detail modal ---
+
+let _logTailInterval = null;
+let _logTailJobId = null;
+let _logTailPrevStatus = null;
+
+function encodePathKey(relPath) {
+  return btoa(unescape(encodeURIComponent(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function stopLogTailPolling() {
+  if (_logTailInterval) {
+    clearInterval(_logTailInterval);
+    _logTailInterval = null;
+  }
+  _logTailJobId = null;
+  _logTailPrevStatus = null;
+}
+
+async function fetchLogTail(relPath, lines) {
+  try {
+    const pathKey = encodePathKey(relPath);
+    const response = await safeFetch(`/api/admin/logs/${encodeURIComponent(pathKey)}/preview?lines=${lines}`);
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data.content || "";
+  } catch {
+    return null;
+  }
+}
+
+function updateLogTailElement(content) {
+  const el = document.getElementById("liveLogTail");
+  if (!el) return;
+  el.textContent = content || "(empty)";
+  el.scrollTop = el.scrollHeight;
+}
+
+async function pollActiveLogTail(jobId) {
+  const content = await fetchLogTail(`active/job-${jobId}.log`, 50);
+  if (content !== null) {
+    updateLogTailElement(content);
+  }
+
+  // Check if job status changed (completed/failed) — stop polling
+  const drive = currentDrives.find((d) => d.job_id === jobId);
+  if (drive) {
+    const status = String(drive.status || "").toUpperCase();
+    if (_logTailPrevStatus === "RUNNING" && status !== "RUNNING") {
+      stopLogTailPolling();
+      // Load final log content
+      const finalContent = await fetchLogTail(`active/job-${jobId}.log`, 50);
+      if (finalContent !== null) updateLogTailElement(finalContent);
+    }
+    _logTailPrevStatus = status;
+  }
+}
+
+function startLogTailPolling(jobId) {
+  stopLogTailPolling();
+  _logTailJobId = jobId;
+  const drive = currentDrives.find((d) => d.job_id === jobId);
+  _logTailPrevStatus = drive ? String(drive.status || "").toUpperCase() : "RUNNING";
+
+  // Immediately fetch once
+  pollActiveLogTail(jobId);
+
+  // Poll every 3 seconds
+  _logTailInterval = setInterval(() => pollActiveLogTail(jobId), 3000);
+}
+
+async function loadFailedLog(jobId) {
+  const content = await fetchLogTail(`failed/job-${jobId}.log`, 50);
+  if (content !== null) {
+    updateLogTailElement(content);
+  } else {
+    updateLogTailElement("(Failed log not available. Use Log Viewer to browse logs.)");
+  }
+}
+
+// Hook into bay detail modal open: start polling for running jobs, load failed log for failed jobs
+baysGrid.addEventListener("click", (event) => {
+  const card = event.target.closest("[data-bay]");
+  if (!card) return;
+  if (event.target.closest(".card-checkbox")) return;
+  if (isBatchMode) return;
+
+  const bay = card.getAttribute("data-bay");
+  const drive = currentDrives.find((d) => d.bay === bay);
+  if (!drive) return;
+
+  const status = String(drive.status || "").toUpperCase();
+  if (status === "RUNNING" && drive.job_id) {
+    startLogTailPolling(drive.job_id);
+  } else if (status === "FAILED" && drive.job_id) {
+    loadFailedLog(drive.job_id);
+  }
+});
+
+// Stop polling when bay detail modal closes (close button or backdrop click)
+document.addEventListener("click", (event) => {
+  const isCloseBtn = event.target.closest("[data-close-modal='true']");
+  const isBackdrop = event.target.classList && event.target.classList.contains("modal-backdrop");
+  if (isCloseBtn || isBackdrop) {
+    const modal = event.target.closest(".modal");
+    if (modal && modal.id === "bayDetailModal") {
+      stopLogTailPolling();
+    }
+  }
+});
+
 // --- END OF FILE frontend/driveManagement.js ---

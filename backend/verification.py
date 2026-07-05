@@ -24,9 +24,9 @@ from disk_utils import (
     PBKDF2_SALT,
 )
 
-# TTL cache for software versions (1 hour cache, per lesson-learned #56)
+# TTL cache for software versions (24 hour cache, per lesson-learned #56)
 _VERSIONS_CACHE = {"data": None, "timestamp": 0}
-_VERSIONS_CACHE_TTL = 3600  # 1 hour in seconds
+_VERSIONS_CACHE_TTL = 86400  # 24 hours in seconds - software versions only change on package updates
 _VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
 from smart_parsing import get_smart_data
 from crypto_verification import (
@@ -589,7 +589,7 @@ def _get_tool_version(tool_name, command_path, version_flag):
         return tool_name, "error"
 
 def get_software_versions():
-    """Capture versions of key software tools used for verification. Cached with 1-hour TTL."""
+    """Capture versions of key software tools used for verification. Cached with 24-hour TTL."""
     import logging
     logger = logging.getLogger("app")
     

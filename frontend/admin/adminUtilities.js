@@ -6,6 +6,7 @@ const testWebhookBtn = document.getElementById("testWebhookBtn");
 const webhookTestResult = document.getElementById("webhookTestResult");
 const exportCsvBtn = document.getElementById("exportCsvBtn");
 const downloadBundleBtn = document.getElementById("downloadBundleBtn");
+const viewLogsBtn = document.getElementById("viewLogsBtn");
 const bayMappingContainer = document.getElementById("bayMappingContainer");
 const saveBayMapBtn = document.getElementById("saveBayMapBtn");
 const saveBayMapBtnTop = document.getElementById("saveBayMapBtnTop");
@@ -108,6 +109,14 @@ exportCsvBtn.addEventListener("click", () => {
 downloadBundleBtn.addEventListener("click", () => {
   window.location.href = "/api/admin/support-bundle";
 });
+
+if (viewLogsBtn) {
+  viewLogsBtn.addEventListener("click", () => {
+    if (window.LogViewer && window.LogViewer.openLogViewer) {
+      window.LogViewer.openLogViewer();
+    }
+  });
+}
 
 function showLayoutStatus(message, isError = false) {
   if (!bayLayoutStatus) return;

@@ -14,12 +14,12 @@ from enclosure_discovery import is_enclosure_device, get_max_slot_from_enclosure
 
 # Cache for master slot map (hardware topology) to avoid redundant sysfs scans
 _MASTER_SLOT_CACHE = {'data': None, 'timestamp': 0}
-_MASTER_SLOT_CACHE_TTL = 3600  # seconds (1 hour - master slot map changes rarely; manual refresh on enclosure add/edit)
+_MASTER_SLOT_CACHE_TTL = 86400  # seconds (24 hours - master slot map changes rarely; manual refresh on enclosure add/edit)
 _MASTER_SLOT_CACHE_LOCK = threading.Lock()
 
 # Cache for SCSI host slot projections to avoid redundant full scans
 _SCSI_PROJECTIONS_CACHE = {'data': None, 'timestamp': 0}
-_SCSI_PROJECTIONS_CACHE_TTL = 3600  # seconds (1 hour - SCSI projections change rarely; manual refresh on enclosure add/edit)
+_SCSI_PROJECTIONS_CACHE_TTL = 86400  # seconds (24 hours - SCSI projections change rarely; manual refresh on enclosure add/edit)
 _SCSI_PROJECTIONS_CACHE_LOCK = threading.Lock()
 
 def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:

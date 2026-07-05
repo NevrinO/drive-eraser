@@ -201,6 +201,7 @@
           <div class="button-stack">
             <button type="button" id="exportCsvBtn" class="btn btn--primary w-full mb-2">Export Historic CSV Ledger</button>
             <button type="button" id="downloadBundleBtn" class="btn btn--secondary w-full">Download Support Bundle (.tar.gz)</button>
+            <button type="button" id="viewLogsBtn" class="btn btn--secondary w-full mt-2">View & Download Logs</button>
           </div>
         </div>
 
@@ -425,6 +426,58 @@
         <button type="button" id="bayDetailClose" class="close-button" data-close-modal="true">Close</button>
       </header>
       <div id="bayDetailContent" class="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- LOG VIEWER MODAL -->
+  <div id="logViewerModal" class="modal" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal="true"></div>
+    <div class="modal-dialog modal-dialog--lg" role="dialog" aria-modal="true" aria-labelledby="logViewerTitle">
+      <header class="modal-header">
+        <h3 id="logViewerTitle">Log Viewer</h3>
+        <button type="button" id="logViewerClose" class="close-button" data-close-modal="true">Close</button>
+      </header>
+      <div class="modal-content">
+        <div class="log-filter-controls">
+          <label>
+            Category
+            <select id="logCategoryFilter">
+              <option value="all">All</option>
+              <option value="main">Main</option>
+              <option value="active">Active</option>
+              <option value="failed">Failed</option>
+            </select>
+          </label>
+          <label>
+            Filter by name
+            <input type="text" id="logNameFilter" placeholder="Search filename...">
+          </label>
+          <button type="button" id="logRefreshBtn" class="btn btn--secondary">Refresh</button>
+        </div>
+        <div class="log-table-wrapper">
+          <table class="log-viewer-table">
+            <thead>
+              <tr>
+                <th>Name</th>
+                <th>Category</th>
+                <th>Size</th>
+                <th>Modified</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="logTableBody">
+              <tr><td colspan="5" class="text-muted-xs">Loading...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="log-search-bar">
+          <input type="text" id="logSearchInput" placeholder="Search content (regex supported)...">
+          <label class="log-cs-label"><input type="checkbox" id="logCaseSensitive"> Case-sensitive</label>
+          <button type="button" id="logSearchBtn" class="btn btn--secondary">Search</button>
+          <button type="button" id="logClearSearchBtn" class="btn btn--secondary">Clear</button>
+        </div>
+        <pre class="terminal-pre log-preview-pane" id="logPreviewPane">Select a log file to preview.</pre>
+      </div>
     </div>
   </div>
 
@@ -1206,6 +1259,11 @@
               </select>
               <small class="text-muted-xs">Enable verbose diagnostic logging during drive discovery</small>
             </label>
+            <label>
+              Log Retention (days)
+              <input type="number" id="log_retention_days" name="log_retention_days" min="1" max="365" step="1">
+              <small class="text-muted-xs">Purge log files older than this many days (default: 30)</small>
+            </label>
           </div>
 
           <button type="submit" id="systemConfigSubmit" class="btn btn--primary w-full py-3 mt-4">Save Settings</button>
@@ -1444,6 +1502,7 @@
   <script src="/admin/discoveryMapping.js" defer></script>
   <script src="/admin/discoveryModal.js" defer></script>
   <script src="/admin/triageConfig.js" defer></script>
+  <script src="/admin/logViewer.js" defer></script>
   <script src="/admin/systemConfig.js" defer></script>
   <script src="/admin/driveModels.js" defer></script>
   <script src="/app.js" defer></script>

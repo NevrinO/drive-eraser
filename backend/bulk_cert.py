@@ -6,7 +6,7 @@ import secrets
 import threading
 from datetime import datetime, timezone
 
-from common import get_config_dir, get_cert_dir, purge_old_logs, DEFAULT_LOG_RETENTION_DAYS
+from common import get_config_dir, get_cert_dir, purge_old_logs, DEFAULT_LOG_RETENTION_DAYS, load_policy
 from database import persist_job, load_job
 from certificates import build_certificate, build_bulk_certificate_html
 from notifier import send_slack_notification
@@ -274,7 +274,9 @@ def run_bulk_cert_job(job_id):
         logger.warning(f"Bulk cert job {job_id} PARTIAL SUCCESS: {len(certificates)} successful, {len(failed_jobs)} failed")
     
     try:
-        purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
+        _policy = load_policy(get_config_dir())
+        _retention = _policy.get("log_retention_days", DEFAULT_LOG_RETENTION_DAYS)
+        purge_old_logs(_retention)
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
 # --- END OF FILE backend/bulk_cert.py ---

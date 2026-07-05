@@ -1,5 +1,6 @@
 # --- START OF FILE backend/common.py ---
 import os
+import re
 import json
 import time
 import copy
@@ -11,7 +12,7 @@ from jsonschema import validate, ValidationError
 # Constants
 DEFAULT_LOG_RETENTION_DAYS = 30  # Default number of days to retain log files
 SIGNATURE_KDF_ITERATIONS = 200000  # Low #67: PBKDF2 iteration count for certificate signature (NIST recommendation: 100,000+)
-DRIVE_DATA_CACHE_TTL = 600  # seconds (10 minutes) - TTL for drive discovery cache
+DRIVE_DATA_CACHE_TTL = 900  # seconds (15 minutes) - TTL for drive discovery cache
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -78,6 +79,7 @@ DEFAULT_POLICY = {
     "prewipe_health_gate_max_interface_errors": 100,
     "prewipe_health_gate_max_health_score_drop": 20,
     "discovery_diag": False,
+    "log_retention_days": 30,
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -127,6 +129,7 @@ POLICY_SCHEMA = {
         "prewipe_health_gate_max_interface_errors": {"type": "integer", "minimum": 0, "maximum": 100000},
         "prewipe_health_gate_max_health_score_drop": {"type": "integer", "minimum": 0, "maximum": 100},
         "discovery_diag": {"type": "boolean"},
+        "log_retention_days": {"type": "integer", "minimum": 1, "maximum": 365},
         "max_logo_size_mb": {"type": "number", "minimum": 0.1, "maximum": 50},
         "max_bulk_cert_batch_size": {"type": "integer", "minimum": 1, "maximum": 1000},
         "triage_thresholds": {
@@ -345,8 +348,10 @@ def purge_old_logs(max_age_days=DEFAULT_LOG_RETENTION_DAYS):
             continue
         for entry in os.listdir(target_dir):
             full_path = os.path.join(target_dir, entry)
-            # Ensure we only delete log files, avoiding folders
-            if os.path.isfile(full_path) and entry.endswith(".log"):
+            # Ensure we only delete log files (.log and rotated .log.N), avoiding folders
+            if os.path.isfile(full_path) and (
+                entry.endswith(".log") or re.match(r"^.*\.log\.\d+$", entry)
+            ):
                 try:
                     mtime = os.path.getmtime(full_path)
                     if (now - mtime) > max_age_seconds:

@@ -377,3 +377,90 @@ input:focus, select:focus {
   margin-left: 0;
   color: var(--color-text-muted);
 }
+
+.log-viewer-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.log-viewer-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--color-border);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.65rem;
+  letter-spacing: 1px;
+  color: var(--color-text-muted);
+}
+
+.log-viewer-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.log-file-row:hover {
+  background: var(--color-surface-1);
+}
+
+.log-table-wrapper {
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  margin: 12px 0;
+}
+
+.log-preview-pane {
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+.log-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  flex-wrap: wrap;
+}
+
+.log-search-bar input[type="text"] {
+  flex: 1;
+  min-width: 200px;
+}
+
+.log-cs-label {
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.75rem;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.log-filter-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.log-filter-controls label {
+  flex: 1;
+  min-width: 140px;
+}
+
+.log-filter-controls .btn {
+  flex-shrink: 0;
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 0.7rem;
+}

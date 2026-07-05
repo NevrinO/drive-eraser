@@ -12,7 +12,7 @@ from enclosure_discovery import get_max_slot_from_enclosure
 
 # Cache for SAS expander detection results to avoid redundant by-path scans
 _SAS_EXPANDER_CACHE = {}  # Key: pci_address, Value: {'data': result, 'timestamp': time}
-_SAS_EXPANDER_CACHE_TTL = 3600  # seconds (1 hour - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
+_SAS_EXPANDER_CACHE_TTL = 86400  # seconds (24 hours - SAS expander topology changes rarely; manual refresh on enclosure add/edit)
 MAX_SAS_EXPANDER_CACHE_SIZE = 100  # Prevent unbounded growth
 _SAS_EXPANDER_CACHE_LOCK = threading.Lock()
 

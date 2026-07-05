@@ -36,6 +36,7 @@
   "background_smart_max_workers": 8,
   "max_concurrent_wipes": 34,
   "discovery_diag": false,
+  "log_retention_days": 30,
   "max_logo_size_mb": 1,
   "max_bulk_cert_batch_size": 100,
   "blockdev_post_wipe_retries": 3,

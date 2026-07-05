@@ -105,6 +105,9 @@ def get_drives():
                     "serial": req.get("serial"),
                     "model": req.get("model"),
                     "capacity_bytes": req.get("capacity_bytes"),
+                    "eta_seconds": job.get("eta_seconds"),
+                    "speed_mb_s": job.get("speed_mb_s"),
+                    "elapsed_seconds": job.get("elapsed_seconds"),
                 })
 
         # Match drives to jobs and perform DB queries outside lock
@@ -116,6 +119,10 @@ def get_drives():
                         d["status"] = job_snap["status"].upper()
                         d["progress_percent"] = job_snap["progress_percent"]
                         d["current_phase"] = job_snap["current_phase"]
+                        d["eta_seconds"] = job_snap.get("eta_seconds")
+                        d["speed_mb_s"] = job_snap.get("speed_mb_s")
+                        d["elapsed_seconds"] = job_snap.get("elapsed_seconds")
+                        d["job_id"] = job_snap.get("job_id")
 
                         if job_snap.get("serial"):
                             d["serial"] = job_snap["serial"]

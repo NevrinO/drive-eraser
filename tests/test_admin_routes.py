@@ -46,12 +46,17 @@ class TestAdminRoutes:
     def app(self, test_config_dir):
         """Create a test Flask app with test configuration."""
         test_db_path = os.path.join(test_config_dir, "test.db")
+        active_logs_dir = os.path.join(test_config_dir, "active")
+        failed_logs_dir = os.path.join(test_config_dir, "failed")
+        os.makedirs(active_logs_dir, exist_ok=True)
+        os.makedirs(failed_logs_dir, exist_ok=True)
         patches = [
             patch('common.get_config_dir', return_value=test_config_dir),
             patch('common.get_data_dir', return_value=test_config_dir),
             patch('common.get_logs_dir', return_value=test_config_dir),
             patch('common.get_db_path', return_value=test_db_path),
-            patch('common.get_failed_logs_dir', return_value=test_config_dir),
+            patch('common.get_active_logs_dir', return_value=active_logs_dir),
+            patch('common.get_failed_logs_dir', return_value=failed_logs_dir),
             patch('api_routes.get_config_dir', return_value=test_config_dir),
             patch('api_routes.get_db_path', return_value=test_db_path),
             patch('database.get_db_path', return_value=test_db_path),
@@ -60,7 +65,8 @@ class TestAdminRoutes:
             patch('routes.support_routes.get_config_dir', return_value=test_config_dir),
             patch('routes.support_routes.get_data_dir', return_value=test_config_dir),
             patch('routes.support_routes.get_logs_dir', return_value=test_config_dir),
-            patch('routes.support_routes.get_failed_logs_dir', return_value=test_config_dir),
+            patch('routes.support_routes.get_active_logs_dir', return_value=active_logs_dir),
+            patch('routes.support_routes.get_failed_logs_dir', return_value=failed_logs_dir),
             patch('routes.support_routes.get_db_path', return_value=test_db_path),
             patch('routes.policy_routes.get_config_dir', return_value=test_config_dir),
             patch('routes.enclosure_routes.get_config_dir', return_value=test_config_dir),
@@ -692,6 +698,201 @@ class TestAdminRoutes:
         ]
         for name in invalid_names:
             assert is_valid_device_name(name) is False, f"Invalid name accepted: {repr(name)}"
+
+    # --- Log viewer endpoint tests ---
+
+    def test_list_logs(self, admin_session):
+        """Test that list logs endpoint returns valid JSON array with expected fields."""
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir, get_active_logs_dir, get_failed_logs_dir
+            main_dir = get_logs_dir()
+            active_dir = get_active_logs_dir()
+            failed_dir = get_failed_logs_dir()
+
+            with open(os.path.join(main_dir, "app.log"), "w") as f:
+                f.write("test log line 1\ntest log line 2\n")
+            with open(os.path.join(active_dir, "job-test123.log"), "w") as f:
+                f.write("active job log\n")
+            with open(os.path.join(failed_dir, "job-failed456.log"), "w") as f:
+                f.write("failed job log\n")
+
+            response = admin_session.get('/api/admin/logs')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert isinstance(data, list)
+            assert len(data) >= 3
+            for entry in data:
+                assert "name" in entry
+                assert "category" in entry
+                assert "size_bytes" in entry
+                assert "modified_at" in entry
+                assert "path_key" in entry
+
+            # Clean up test files
+            for f in [os.path.join(main_dir, "app.log"),
+                      os.path.join(active_dir, "job-test123.log"),
+                      os.path.join(failed_dir, "job-failed456.log")]:
+                try:
+                    os.remove(f)
+                except FileNotFoundError:
+                    pass
+
+    def test_list_logs_empty(self, admin_session):
+        """Test that empty log directories don't cause errors."""
+        with patch('routes._shared.is_local_request', return_value=True):
+            response = admin_session.get('/api/admin/logs')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert isinstance(data, list)
+
+    def test_download_log(self, admin_session):
+        """Test that log file download works with correct headers."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir
+            logs_dir = get_logs_dir()
+            test_file = os.path.join(logs_dir, "test_download.log")
+            with open(test_file, "w") as f:
+                f.write("download test content\n")
+
+            rel_path = "test_download.log"
+            path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+
+            response = admin_session.get(f'/api/admin/logs/{path_key}/download')
+            assert response.status_code == 200
+            assert "attachment" in response.headers.get("Content-Disposition", "")
+
+            try:
+                os.remove(test_file)
+            except FileNotFoundError:
+                pass
+
+    def test_download_log_invalid_key(self, admin_session):
+        """Test that invalid path keys are rejected."""
+        with patch('routes._shared.is_local_request', return_value=True):
+            # Use a path key that decodes to a path outside logs dir
+            import base64
+            traversal_path = "../../etc/passwd"
+            path_key = base64.urlsafe_b64encode(traversal_path.encode("utf-8")).decode("ascii")
+            response = admin_session.get(f'/api/admin/logs/{path_key}/download')
+            assert response.status_code == 400
+
+    def test_preview_log(self, admin_session):
+        """Test that preview returns last N lines."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir
+            logs_dir = get_logs_dir()
+            test_file = os.path.join(logs_dir, "test_preview.log")
+            with open(test_file, "w") as f:
+                for i in range(50):
+                    f.write(f"line {i}\n")
+
+            rel_path = "test_preview.log"
+            path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+
+            response = admin_session.get(f'/api/admin/logs/{path_key}/preview?lines=10')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["lines_returned"] == 10
+            assert "line 49" in data["content"]
+            assert "line 40" in data["content"]
+            assert "line 39" not in data["content"]
+
+            try:
+                os.remove(test_file)
+            except FileNotFoundError:
+                pass
+
+    def test_preview_log_path_traversal(self, admin_session):
+        """Test that path traversal attempts are blocked."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            traversal_path = "../../etc/passwd"
+            path_key = base64.urlsafe_b64encode(traversal_path.encode("utf-8")).decode("ascii")
+            response = admin_session.get(f'/api/admin/logs/{path_key}/preview')
+            assert response.status_code == 400
+
+    def test_preview_log_search(self, admin_session):
+        """Test that content search returns only matching lines."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir
+            logs_dir = get_logs_dir()
+            test_file = os.path.join(logs_dir, "test_search.log")
+            with open(test_file, "w") as f:
+                f.write("INFO: starting process\n")
+                f.write("ERROR: something went wrong\n")
+                f.write("INFO: process completed\n")
+                f.write("DEBUG: debug message\n")
+
+            rel_path = "test_search.log"
+            path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+
+            response = admin_session.get(f'/api/admin/logs/{path_key}/preview?lines=100&q=ERROR')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["lines_returned"] == 1
+            assert "ERROR" in data["content"]
+            assert "INFO" not in data["content"]
+
+            try:
+                os.remove(test_file)
+            except FileNotFoundError:
+                pass
+
+    def test_preview_log_search_case_sensitive(self, admin_session):
+        """Test that case-sensitive search option works."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir
+            logs_dir = get_logs_dir()
+            test_file = os.path.join(logs_dir, "test_cs_search.log")
+            with open(test_file, "w") as f:
+                f.write("Error: lowercase error here\n")
+                f.write("ERROR: uppercase error here\n")
+
+            rel_path = "test_cs_search.log"
+            path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+
+            # Case-sensitive search for "ERROR" should only match the uppercase line
+            response = admin_session.get(f'/api/admin/logs/{path_key}/preview?lines=100&q=ERROR&case_sensitive=true')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data["lines_returned"] == 1
+            assert "uppercase" in data["content"]
+
+            try:
+                os.remove(test_file)
+            except FileNotFoundError:
+                pass
+
+    def test_preview_log_search_invalid_regex(self, admin_session):
+        """Test that invalid regex falls back to literal search."""
+        import base64
+        with patch('routes._shared.is_local_request', return_value=True):
+            from common import get_logs_dir
+            logs_dir = get_logs_dir()
+            test_file = os.path.join(logs_dir, "test_regex.log")
+            with open(test_file, "w") as f:
+                f.write("line with [brackets]\n")
+                f.write("normal line\n")
+
+            rel_path = "test_regex.log"
+            path_key = base64.urlsafe_b64encode(rel_path.encode("utf-8")).decode("ascii")
+
+            # Invalid regex "[" should fall back to literal search
+            response = admin_session.get(f'/api/admin/logs/{path_key}/preview?lines=100&q=[')
+            assert response.status_code == 200
+            data = json.loads(response.data)
+            assert data.get("regex_fallback") is True
+            assert data["lines_returned"] == 1
+            assert "brackets" in data["content"]
+
+            try:
+                os.remove(test_file)
+            except FileNotFoundError:
+                pass
 
 
 if __name__ == "__main__":

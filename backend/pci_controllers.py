@@ -17,12 +17,12 @@ _PCI_ADDRESS_RE = re.compile(r'^[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(\.[
 
 # Cache for PCI controller scan results to avoid redundant subprocess calls
 _PCI_CACHE = {'data': None, 'timestamp': 0}
-_PCI_CACHE_TTL = 3600  # seconds (1 hour - PCI topology changes rarely; manual refresh on enclosure add/edit)
+_PCI_CACHE_TTL = 86400  # seconds (24 hours - PCI topology changes rarely; manual refresh on enclosure add/edit)
 _PCI_CACHE_LOCK = threading.Lock()
 
 # Cache for device discovery results to avoid redundant full scans
 _DISCOVERY_CACHE = {'data': None, 'timestamp': 0}
-_DISCOVERY_CACHE_TTL = 60  # seconds
+_DISCOVERY_CACHE_TTL = 86400  # seconds (24 hours - only hit from admin discovery panel; data changes on hot-plug but panel is not real-time)
 _DISCOVERY_CACHE_LOCK = threading.Lock()
 
 def validate_pci_address(pci_address: str) -> bool:

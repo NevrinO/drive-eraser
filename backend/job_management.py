@@ -143,7 +143,9 @@ def finalize_failed_job(job_id, error_message):
     logger.error(f"Job {job_id} (Bay {job['request']['bay']}) initialization failed: {error_message}")
 
     try:
-        purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
+        _policy = load_policy(get_config_dir())
+        _retention = _policy.get("log_retention_days", DEFAULT_LOG_RETENTION_DAYS)
+        purge_old_logs(_retention)
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
 
@@ -160,6 +162,9 @@ def run_erase_job(job_id):
         job["started_at"] = datetime.now(timezone.utc).isoformat()
         job["progress_percent"] = 0.0
         job["current_phase"] = "Initializing Sanitization"
+        job["elapsed_seconds"] = 0
+        job["speed_mb_s"] = None
+        job["eta_seconds"] = None
         persist_job(job)
 
     send_slack_notification(job, "running")
@@ -380,6 +385,8 @@ def run_erase_job(job_id):
 
             progress = 0.0
             phase = "Sanitizing Drive..."
+            write_speed = None
+            eta_seconds = None
 
             if method == "overwrite":
                 current_sectors = get_device_sectors_written(device)
@@ -456,6 +463,11 @@ def run_erase_job(job_id):
                 if job:
                     job["progress_percent"] = round(progress, 1)
                     job["current_phase"] = phase
+                    job["elapsed_seconds"] = round(elapsed, 0)
+                    if write_speed is not None:
+                        job["speed_mb_s"] = round(write_speed / (1024 * 1024), 1)
+                    if eta_seconds is not None:
+                        job["eta_seconds"] = round(eta_seconds, 0)
 
             time.sleep(3)
 
@@ -613,7 +625,9 @@ def run_erase_job(job_id):
                 if job:
                     job["progress_percent"] = round(progress_pct, 1)
                     job["current_phase"] = phase_text
-                    
+                    total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    job["elapsed_seconds"] = round(total_elapsed_fw, 0)
+
             time.sleep(4)
 
     if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
@@ -790,7 +804,9 @@ def run_erase_job(job_id):
     send_slack_notification(job)
 
     try:
-        purge_old_logs(DEFAULT_LOG_RETENTION_DAYS)
+        _policy = load_policy(get_config_dir())
+        _retention = _policy.get("log_retention_days", DEFAULT_LOG_RETENTION_DAYS)
+        purge_old_logs(_retention)
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
 

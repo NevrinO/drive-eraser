@@ -22,7 +22,7 @@ bay_mapping_bp = Blueprint('bay_mapping_routes', __name__)
 # change while a drive remains physically present.
 _UNMAPPED_DRIVE_CACHE = {}  # dev_node -> {'data': dict, 'timestamp': float}
 _UNMAPPED_DRIVE_CACHE_LOCK = Lock()
-_UNMAPPED_DRIVE_CACHE_TTL = DRIVE_DATA_CACHE_TTL  # 10 minutes
+_UNMAPPED_DRIVE_CACHE_TTL = DRIVE_DATA_CACHE_TTL  # 15 minutes (inherits DRIVE_DATA_CACHE_TTL)
 
 
 def _get_cached_unmapped_drive(dev_node):

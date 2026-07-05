@@ -10,7 +10,7 @@ import logging
 
 # Cache for enclosure slot metadata to avoid redundant sysfs scans
 _ENCLOSURE_CACHE = {'data': None, 'timestamp': 0}
-_ENCLOSURE_CACHE_TTL = 3600  # seconds (1 hour - enclosure metadata changes rarely; manual refresh on enclosure add/edit)
+_ENCLOSURE_CACHE_TTL = 86400  # seconds (24 hours - enclosure metadata changes rarely; manual refresh on enclosure add/edit)
 _ENCLOSURE_CACHE_LOCK = threading.Lock()
 
 def is_enclosure_device(scsi_device_path: str, device_type_cache: Optional[Dict[str, bool]] = None) -> bool:

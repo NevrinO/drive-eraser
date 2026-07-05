@@ -107,6 +107,12 @@ async function loadSystemConfig() {
       discoveryDiagInput.value = policy.discovery_diag ? "true" : "false";
     }
 
+    // Log retention days
+    const logRetentionInput = document.getElementById("log_retention_days");
+    if (logRetentionInput) {
+      logRetentionInput.value = policy.log_retention_days || 30;
+    }
+
     // Zero detection settings
     const zeroDetectionEnabledInput = document.getElementById("prewipe_zero_detection_enabled");
     if (zeroDetectionEnabledInput) {
@@ -371,6 +377,19 @@ function validateForm() {
   const discoveryDiagInput = document.getElementById("discovery_diag");
   if (discoveryDiagInput) {
     formData.discovery_diag = discoveryDiagInput.value === "true";
+  }
+
+  // Log retention days (integer 1-365)
+  const logRetentionInput = document.getElementById("log_retention_days");
+  if (logRetentionInput) {
+    const value = parseInt(logRetentionInput.value, 10);
+    if (isNaN(value) || value < 1 || value > 365) {
+      isValid = false;
+      logRetentionInput.style.borderColor = "var(--color-danger)";
+    } else {
+      logRetentionInput.style.borderColor = "";
+      formData.log_retention_days = value;
+    }
   }
 
   // Zero detection settings
