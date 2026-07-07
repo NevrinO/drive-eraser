@@ -344,3 +344,45 @@ def get_smart_data(device, diagnostics=None):
         "_smartctl_exit_status": safe_int(data.get("smartctl", {}).get("exit_status"), 0),
         "_nvme_critical_warning": safe_int(nvme_log.get("critical_warning"), 0)
     }
+
+
+def stabilize_smart_writes(device, max_attempts=5, delay_seconds=3):
+    """Poll data_written_raw until it converges or max_attempts is reached.
+
+    Drive firmware updates SMART write counters asynchronously. After a large
+    write operation (e.g. full-disk overwrite), the counter may lag behind the
+    actual number of sectors written. This function reads the counter
+    repeatedly until two consecutive reads return the same value, indicating
+    the firmware has caught up.
+
+    Args:
+        device: Device path (e.g. /dev/sda)
+        max_attempts: Maximum number of polling attempts (default 5)
+        delay_seconds: Seconds to wait between reads (default 3)
+
+    Returns:
+        The converged data_written_raw value, or the last value if it never
+        converged. Returns None if the drive does not report data_written_raw.
+    """
+    import time as _time
+
+    first = get_smart_data(device).get("data_written_raw")
+    if first is None:
+        return None
+
+    prev = first
+    for attempt in range(1, max_attempts + 1):
+        _time.sleep(delay_seconds)
+        curr = get_smart_data(device).get("data_written_raw")
+        if curr is None:
+            return None
+        if curr == prev:
+            logger.info(f"SMART data_written_raw stabilized at {curr} after {attempt} poll(s)")
+            return curr
+        prev = curr
+
+    logger.warning(
+        f"SMART data_written_raw did not stabilize after {max_attempts} attempts "
+        f"({max_attempts * delay_seconds}s); using last value {curr}"
+    )
+    return curr

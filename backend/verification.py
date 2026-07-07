@@ -28,7 +28,7 @@ from disk_utils import (
 _VERSIONS_CACHE = {"data": None, "timestamp": 0}
 _VERSIONS_CACHE_TTL = 86400  # 24 hours in seconds - software versions only change on package updates
 _VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
-from smart_parsing import get_smart_data
+from smart_parsing import stabilize_smart_writes
 from crypto_verification import (
     verify_sampled_zero_check,
     capture_before_state,
@@ -472,8 +472,7 @@ def write_marker_and_verify(job, smart_baseline=None):
             if smart_baseline is not None:
                 raw_writes = smart_baseline
             else:
-                smart_metrics = get_smart_data(device)
-                raw_writes = smart_metrics.get("data_written_raw")
+                raw_writes = stabilize_smart_writes(device)
             job["request"]["data_written_at_wipe"] = raw_writes
             logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
 
@@ -507,7 +506,7 @@ def write_marker_and_verify(job, smart_baseline=None):
 
             if readback.get("status") == "checksum_valid":
                 stored_writes = readback.get("details", {}).get("data_written_at_wipe")
-                current_writes = get_smart_data(device).get("data_written_raw")
+                current_writes = stabilize_smart_writes(device)
                 logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
                 is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
                 readback["is_pristine"] = is_pristine
@@ -708,9 +707,10 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["secondary_status"] = "SKIPPED"
             primary_result["details"]["verification_level"] = "primary_verification_only"
 
-        # Capture SMART baseline after secondary verification to leverage natural delay from read pass
-        smart_metrics = get_smart_data(device)
-        smart_baseline = smart_metrics.get("data_written_raw")
+        # Capture SMART baseline after secondary verification, polling until
+        # data_written_raw stabilizes to avoid firmware accounting lag causing
+        # false "written_since_wipe" marker status.
+        smart_baseline = stabilize_smart_writes(device)
         primary_result["details"]["smart_baseline_for_marker"] = smart_baseline
 
     return primary_result
