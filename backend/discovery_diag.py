@@ -211,15 +211,17 @@ def _capture_orphaned_block_devices(by_path_entries=None):
 
     orphans = [d for d in sorted(disk_devs) if d not in mapped_devs]
     lines = [f"  orphaned block devices (in /sys/class/block but no by-path symlink) ({len(orphans)}):"]
+
+    # Build reverse map of block_dev -> scsi_entry once, avoiding O(n*m) directory listings
+    scsi_device_base = "/sys/class/scsi_device"
+    scsi_to_blocks = {}
+    for scsi_entry in _list_dir_safe(scsi_device_base):
+        block_dir = os.path.join(scsi_device_base, scsi_entry, "device", "block")
+        for block_dev in _list_dir_safe(block_dir):
+            scsi_to_blocks[block_dev] = scsi_entry
+
     for dev in orphans:
-        # Check if it's in scsi_device
-        in_scsi = False
-        scsi_device_base = "/sys/class/scsi_device"
-        for scsi_entry in _list_dir_safe(scsi_device_base):
-            block_dir = os.path.join(scsi_device_base, scsi_entry, "device", "block")
-            if dev in _list_dir_safe(block_dir):
-                in_scsi = True
-                break
+        in_scsi = dev in scsi_to_blocks
         lines.append(f"    {dev} (in scsi_device: {in_scsi})")
     return "\n".join(lines)
 

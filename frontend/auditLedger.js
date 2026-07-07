@@ -487,7 +487,11 @@ async function openBulkPrintWindow(friendlyId) {
   }
 }
 
-historyQuery.addEventListener("input", loadHistoryIndex);
+let historyQueryTimer = null;
+historyQuery.addEventListener("input", () => {
+  clearTimeout(historyQueryTimer);
+  historyQueryTimer = setTimeout(loadHistoryIndex, 300);
+});
 historyStatusFilter.addEventListener("change", loadHistoryIndex);
 historyRefreshButton.addEventListener("click", loadHistoryIndex);
 // --- END OF FILE frontend/auditLedger.js ---

@@ -201,27 +201,33 @@ function handleSmartDataUpdate(data) {
 
 // Application initialization
 (async () => {
-  setupKeyboardNavigation();
-  initWebSocket();
-  loadSecurityStatus(); // fire-and-forget — updates badge only, no downstream dependency
+  try {
+    setupKeyboardNavigation();
+    initWebSocket();
+    loadSecurityStatus(); // fire-and-forget — updates badge only, no downstream dependency
 
-  // Start drives fetch in background — overlaps with bay map config + enclosure loading
-  const drivesPromise = loadDrives(false);
+    // Start drives fetch in background — overlaps with bay map config + enclosure loading
+    const drivesPromise = loadDrives(false);
 
-  // loadBayMappingConfig internally calls loadLayoutTemplates, so no need to call it separately
-  // loadEnclosuresForWorkbench is needed for skeleton grouping — run in parallel
-  await Promise.all([
-    loadBayMappingConfig(),
-    loadEnclosuresForWorkbench()
-  ]);
+    // loadBayMappingConfig internally calls loadLayoutTemplates, so no need to call it separately
+    // loadEnclosuresForWorkbench is needed for skeleton grouping — run in parallel
+    await Promise.all([
+      loadBayMappingConfig(),
+      loadEnclosuresForWorkbench()
+    ]);
 
-  // Render skeleton cards from bay map config if drives haven't arrived yet
-  if (currentDrives.length === 0) {
-    renderSkeletonBays();
+    // Render skeleton cards from bay map config if drives haven't arrived yet
+    if (currentDrives.length === 0) {
+      renderSkeletonBays();
+    }
+
+    await drivesPromise;
+    pollActiveWipes();
+  } catch (err) {
+    console.error("Initialization failed:", err);
+    const apiStatusEl = document.getElementById("apiStatus");
+    if (apiStatusEl) apiStatusEl.textContent = `API Status: Initialization failed (${err.message})`;
   }
-
-  await drivesPromise;
-  pollActiveWipes();
 })();
 
 // Cleanup on page unload to prevent memory leaks

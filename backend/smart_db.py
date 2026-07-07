@@ -325,7 +325,7 @@ def get_historical_poh_for_serial(serial):
                         elif isinstance(poh, str):
                             # Remove decimal point for string floats, then check if numeric
                             poh_clean = poh.replace('.', '', 1)
-                            poh_int = int(poh) if poh_clean.isdigit() else None
+                            poh_int = int(float(poh)) if poh_clean.isdigit() else None
                         else:
                             poh_int = None
                         if poh_int is not None and (max_poh is None or poh_int > max_poh):

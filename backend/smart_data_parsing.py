@@ -83,7 +83,7 @@ def get_smart_identity(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "smart_polling": True
+        "model_profile": None, "interface_type": None, "smart_polling": True
     }
     if not validate_device_path(device):
         return empty_template
@@ -126,7 +126,7 @@ def get_smart_data(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "smart_polling": False
+        "model_profile": None, "interface_type": None, "smart_polling": False
     }
     if not validate_device_path(device):
         return empty_template
@@ -346,19 +346,20 @@ def get_smart_data(device, diagnostics=None):
     }
 
 
-def stabilize_smart_writes(device, max_attempts=5, delay_seconds=3):
+def stabilize_smart_writes(device, max_attempts=10, delay_seconds=5, required_consecutive=3):
     """Poll data_written_raw until it converges or max_attempts is reached.
 
     Drive firmware updates SMART write counters asynchronously. After a large
     write operation (e.g. full-disk overwrite), the counter may lag behind the
     actual number of sectors written. This function reads the counter
-    repeatedly until two consecutive reads return the same value, indicating
-    the firmware has caught up.
+    repeatedly until required_consecutive reads return the same value,
+    indicating the firmware has caught up.
 
     Args:
         device: Device path (e.g. /dev/sda)
-        max_attempts: Maximum number of polling attempts (default 5)
-        delay_seconds: Seconds to wait between reads (default 3)
+        max_attempts: Maximum number of polling attempts (default 10)
+        delay_seconds: Seconds to wait between reads (default 5)
+        required_consecutive: Number of consecutive equal reads required (default 3)
 
     Returns:
         The converged data_written_raw value, or the last value if it never
@@ -371,14 +372,19 @@ def stabilize_smart_writes(device, max_attempts=5, delay_seconds=3):
         return None
 
     prev = first
+    consecutive = 0
     for attempt in range(1, max_attempts + 1):
         _time.sleep(delay_seconds)
         curr = get_smart_data(device).get("data_written_raw")
         if curr is None:
             return None
         if curr == prev:
-            logger.info(f"SMART data_written_raw stabilized at {curr} after {attempt} poll(s)")
-            return curr
+            consecutive += 1
+            if consecutive >= required_consecutive:
+                logger.info(f"SMART data_written_raw stabilized at {curr} after {attempt} poll(s) ({consecutive} consecutive matches)")
+                return curr
+        else:
+            consecutive = 0
         prev = curr
 
     logger.warning(

@@ -474,9 +474,6 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
                 if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
                     is_os_drive = True
 
-                if os_by_path and os.path.basename(dev_node) == os.path.basename(os_by_path):
-                    is_os_drive = True
-
                 # Respect config role if already set to "os", otherwise use detection
                 if is_os_drive or bay_info.get("role") == "os":
                     bay_info["role"] = "os"

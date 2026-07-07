@@ -96,7 +96,7 @@ def poll_nvme_sanitize_progress(device):
     try:
         nvme_path = resolve_verify_command_path("nvme")
         if nvme_path:
-            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "sprog" in line.lower():
@@ -112,7 +112,7 @@ def poll_sas_sanitize_progress(device):
     try:
         sg_req_path = resolve_verify_command_path("sg_requests")
         if sg_req_path:
-            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower():
@@ -128,7 +128,7 @@ def poll_sata_sanitize_progress(device):
     try:
         hdparm_path = resolve_verify_command_path("hdparm")
         if hdparm_path:
-            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower() or "percent" in line.lower():

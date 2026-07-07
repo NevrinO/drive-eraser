@@ -358,10 +358,14 @@ def sweep_orphaned_jobs_background():
                     with ERASE_JOBS_LOCK:
                         job = ERASE_JOBS.get(job_id)
                         if job and job.get("status") == "running":
+                            failed_job = dict(job)
+                            failed_job["status"] = "failed"
+                            failed_job["finished_at"] = now_iso
+                            failed_job["error"] = f"Job timed out: {method} erase exceeded {timeout}s (elapsed {elapsed}s)"
+                            persist_job(failed_job)
                             job["status"] = "failed"
                             job["finished_at"] = now_iso
-                            job["error"] = f"Job timed out: {method} erase exceeded {timeout}s (elapsed {elapsed}s)"
-                            persist_job(job)
+                            job["error"] = failed_job["error"]
                             ERASE_JOBS.pop(job_id, None)
                             logger.error(f"Job sweep: marked stuck job {job_id} as failed ({method} exceeded {timeout}s)")
             except Exception as e:

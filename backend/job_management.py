@@ -650,7 +650,7 @@ def run_erase_job(job_id):
 
             time.sleep(4)
 
-    if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
+    if method in {"overwrite", "crypto", "block", "secure_erase", "enhanced_secure_erase"}:
         time.sleep(5)
 
     # Get before_state for crypto verification (inside lock to avoid race condition)

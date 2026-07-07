@@ -118,7 +118,7 @@ def export_csv_ledger():
                 req.get("bay", ""),
                 req.get("serial", ""),
                 req.get("model", ""),
-                format_capacity_bytes(req.get("capacity_bytes")),
+                format_capacity_bytes(req.get("capacity_bytes") or 0),
                 req.get("method", ""),
                 ver.get("status", "none"),
                 row["error"] or ""

@@ -53,7 +53,7 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
     
     # Skip SAS expander detection for ATA/SATA hosts
     # ATA hosts have paths like /sys/devices/.../ata1/hostX
-    if 'ata' in real_path.lower():
+    if re.search(r'/ata\d+/host\d+', real_path):
         return None
     
     # Try to extract expander ID from existing device by-paths in /dev/disk/by-path
