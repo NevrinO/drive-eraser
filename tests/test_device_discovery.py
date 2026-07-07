@@ -183,38 +183,38 @@ class TestMapPciClassToType:
 
     def test_sata_controller(self):
         """Test SATA controller mapping."""
-        result = _map_pci_class_to_type("0106", "SATA controller")
+        result = _map_pci_class_to_type("0106")
         assert result == "sata"
 
     def test_sas_controller(self):
         """Test SAS controller mapping."""
-        result = _map_pci_class_to_type("0107", "SAS controller")
+        result = _map_pci_class_to_type("0107")
         assert result == "sas"
 
     def test_nvme_controller(self):
         """Test NVMe controller mapping."""
-        result = _map_pci_class_to_type("0108", "NVMe controller")
+        result = _map_pci_class_to_type("0108")
         assert result == "nvme"
 
     def test_raid_controller(self):
         """Test RAID controller mapping."""
-        result = _map_pci_class_to_type("0104", "RAID controller")
+        result = _map_pci_class_to_type("0104")
         assert result == "raid"
 
     def test_scsi_controller(self):
         """Test SCSI controller mapping."""
-        result = _map_pci_class_to_type("0100", "SCSI controller")
+        result = _map_pci_class_to_type("0100")
         assert result == "scsi"
 
     def test_unknown_controller(self):
         """Test unknown controller mapping."""
-        result = _map_pci_class_to_type("0101", "Unknown controller")
+        result = _map_pci_class_to_type("0101")
         assert result == "ide"
 
-    def test_case_insensitive_description(self):
-        """Test that description matching is case-insensitive."""
-        result = _map_pci_class_to_type("0106", "SATA CONTROLLER")
-        assert result == "sata"
+    def test_unknown_class_code(self):
+        """Test that unknown class code maps to 'unknown'."""
+        result = _map_pci_class_to_type("9999")
+        assert result == "unknown"
 
 
 if __name__ == "__main__":

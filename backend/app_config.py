@@ -14,7 +14,7 @@ import hmac
 import hashlib
 import socket
 
-from common import get_logs_dir, load_policy
+from common import get_logs_dir, get_config_dir, load_policy
 
 class PollingFilter(logging.Filter):
     """

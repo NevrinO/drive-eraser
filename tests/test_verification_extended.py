@@ -618,9 +618,8 @@ class TestBuildMarkerPayload:
                 "method": "overwrite"
             }
         }
-        with patch('verification.load_policy', return_value={"wipe_passphrase": "testpass"}):
-            payload = build_marker_payload(job)
-            assert b"hmac" in payload
+        payload = build_marker_payload(job, passphrase="testpass")
+        assert b"hmac" in payload
 
     def test_payload_checksum(self):
         """Test that checksum is calculated."""

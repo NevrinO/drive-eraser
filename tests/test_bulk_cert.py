@@ -169,7 +169,7 @@ class TestCreateBulkCertJob:
         from bulk_cert import create_bulk_cert_job
         job = {"job_type": "erase", "status": "completed"}
         
-        with patch('common.load_policy', return_value={"max_bulk_cert_batch_size": 5}):
+        with patch('bulk_cert.load_policy', return_value={"max_bulk_cert_batch_size": 5}):
             with patch('bulk_cert.load_job', return_value=job):
                 result, error, status = create_bulk_cert_job([f"job-{i}" for i in range(6)])
                 assert result is None
@@ -235,7 +235,8 @@ class TestRunBulkCertJob:
         try:
             with patch('bulk_cert.persist_job'):
                 with patch('bulk_cert.send_slack_notification'):
-                    run_bulk_cert_job(job_id)
+                    with patch('bulk_cert._reset_bulk_cert_interrupted'):
+                        run_bulk_cert_job(job_id)
             
             with BULK_CERT_JOBS_LOCK:
                 assert BULK_CERT_JOBS[job_id]["status"] == "interrupted"
