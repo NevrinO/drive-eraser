@@ -4,9 +4,9 @@ import json
 import re
 import copy
 from flask import Blueprint, jsonify, request
-from app_config import logger, calculate_session_token, limiter
-from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map
-from routes.admin_routes import require_admin_auth
+from app_config import logger, limiter
+from common import get_config_dir, BAY_MAP_LOCK, save_bay_map
+from routes._shared import require_admin_auth
 from layout_templates import normalize_bay_map_document, compose_bay_map_document
 from device_discovery import (
     discover_controllers_and_devices,

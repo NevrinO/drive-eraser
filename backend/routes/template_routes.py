@@ -14,11 +14,10 @@ from layout_templates import (
     validate_template,
     save_layout_templates,
     SUPPORTED_TRAVERSALS,
-    DEFAULT_TEMPLATES,
     TEMPLATES_LOCK,
     validate_layout_metadata
 )
-from routes.admin_routes import require_admin_auth
+from routes._shared import require_admin_auth, is_valid_id
 
 template_bp = Blueprint('template_routes', __name__)
 
@@ -221,6 +220,9 @@ def layout_templates_import():
         # Validate each template
         validation_errors = []
         for template_id, template in imported_templates.items():
+            if not is_valid_id(str(template_id)):
+                validation_errors.append(f"Template ID '{template_id}' contains invalid characters")
+                continue
             if not isinstance(template, dict):
                 validation_errors.append(f"Template '{template_id}' is not a valid object")
                 continue

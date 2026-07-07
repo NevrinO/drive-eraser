@@ -277,25 +277,6 @@ ENCLOSURE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# JSON schema for new enclosure-based bay_map.json
-BAY_MAP_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "templates": {
-            "type": "array",
-            "items": TEMPLATE_SCHEMA,
-        },
-        "enclosures": {
-            "type": "object",
-            "patternProperties": {
-                r".+": ENCLOSURE_SCHEMA
-            },
-            "additionalProperties": False,
-        },
-    },
-    "required": ["enclosures"],
-    "additionalProperties": False,
-}
 
 def get_data_dir():
     candidates = [
@@ -440,8 +421,8 @@ def load_policy(config_dir=None):
                     f"(path: {'.'.join(str(p) for p in e.path)})"
                 )
 
-            # Merge with defaults
-            merged = DEFAULT_POLICY.copy()
+            # Merge with defaults (deepcopy to prevent nested dict mutations)
+            merged = copy.deepcopy(DEFAULT_POLICY)
             merged.update(data)
 
             # Migration: deprecated crypto_verification_mode -> secondary_verification_mode

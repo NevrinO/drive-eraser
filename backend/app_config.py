@@ -14,7 +14,7 @@ import hmac
 import hashlib
 import socket
 
-from common import get_logs_dir, load_policy, get_config_dir
+from common import get_logs_dir, load_policy
 
 class PollingFilter(logging.Filter):
     """
@@ -74,7 +74,10 @@ logger = logging.getLogger("app")
 app = Flask(__name__)
 
 # Initialize SocketIO for real-time WebSocket communication
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# Use same CORS policy as HTTP (Critical #2)
+policy = load_policy()
+allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
+socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='threading')
 
 # High #11: Initialize Flask-Limiter for rate limiting
 # NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.
@@ -89,9 +92,7 @@ limiter = Limiter(
     strategy="fixed-window"
 )
 
-# Critical #2: Load CORS origins from policy configuration
-policy = load_policy()
-allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
+# Critical #2: CORS origins loaded from policy configuration (above, shared with SocketIO)
 CORS(app, origins=allowed_origins)
 
 # Critical #4: Configure SameSite cookie attribute for CSRF protection
@@ -112,7 +113,7 @@ def get_wipe_semaphore():
     with WIPE_SEMAPHORE_LOCK:
         try:
             policy = load_policy()
-            max_concurrent = policy.get("max_concurrent_wipes", 64)
+            max_concurrent = policy.get("max_concurrent_wipes", 34)
             # Clamp to reasonable bounds
             max_concurrent = max(1, min(max_concurrent, 256))
         except Exception:

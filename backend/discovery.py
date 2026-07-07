@@ -6,6 +6,7 @@ import os
 import json
 import time
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from common import get_config_dir, load_policy
@@ -211,10 +212,12 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
     futures = {}
     future_start_times = {}  # dev_node -> monotonic timestamp when worker started executing
+    future_start_times_lock = threading.Lock()
 
     def _timed_collect(item):
         bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
-        future_start_times[dev_node] = time.monotonic()
+        with future_start_times_lock:
+            future_start_times[dev_node] = time.monotonic()
         return _collect_drive_data(dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)
 
     try:
@@ -249,7 +252,8 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                 for future in not_done:
                     item = futures[future]
                     dev_node = item[3]
-                    fut_start = future_start_times.get(dev_node)
+                    with future_start_times_lock:
+                        fut_start = future_start_times.get(dev_node)
                     if fut_start is not None and (now - fut_start) >= _PER_FUTURE_TIMEOUT:
                         timed_out.add(future)
                     elif fut_start is None and (now - batch_start) >= _BATCH_TIMEOUT:
@@ -261,7 +265,8 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                     future.cancel()  # Only effective for queued futures; running futures continue but are abandoned
                     item = futures[future]
                     dev_node = item[3]
-                    fut_start = future_start_times.get(dev_node)
+                    with future_start_times_lock:
+                        fut_start = future_start_times.get(dev_node)
                     elapsed = f"{now - fut_start:.0f}s" if fut_start else "never started"
                     logging.getLogger(__name__).warning(
                         f"Drive data collection timed out for {dev_node} (elapsed {elapsed}, per-future limit {_PER_FUTURE_TIMEOUT}s)"

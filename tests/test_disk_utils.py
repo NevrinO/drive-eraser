@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from disk_utils import validate_device_path, _find_json_bounds, read_marker_status, check_write_tolerance, get_command_path, safe_int, safe_float
+from disk_utils import validate_device_path, _find_json_bounds, read_marker_status, check_write_tolerance, get_command_path, safe_int
 
 
 class TestValidateDevicePath:
@@ -444,7 +444,7 @@ class TestCheckWriteTolerance:
         assert result is True
 
 
-class TestSafeIntAndSafeFloat:
+class TestSafeInt:
     """Test safe type conversion functions."""
 
     def test_safe_int_valid(self):
@@ -463,21 +463,6 @@ class TestSafeIntAndSafeFloat:
         assert safe_int("abc") == 0
         assert safe_int("abc", 10) == 10
 
-    def test_safe_float_valid(self):
-        """Test valid float conversion."""
-        assert safe_float("123.45") == 123.45
-        assert safe_float(123.45) == 123.45
-        assert safe_float("100") == 100.0
-
-    def test_safe_float_none(self):
-        """Test None returns default."""
-        assert safe_float(None) == 0.0
-        assert safe_float(None, 5.5) == 5.5
-
-    def test_safe_float_invalid(self):
-        """Test invalid string returns default."""
-        assert safe_float("abc") == 0.0
-        assert safe_float("abc", 10.5) == 10.5
 
 
 class TestCommandResolution:

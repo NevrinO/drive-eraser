@@ -77,7 +77,7 @@ def verify_overwrite(device):
         sample_data = result.get("output_bytes") or b""
         if not sample_data:
             return {"ok": False, "status": "verification_error", "error": "overwrite_sample_empty", "details": {"method": "overwrite", "block_offset": block_offset}}
-        if any(byte != 0 for byte in sample_data):
+        if any(sample_data):
             return {
                 "ok": False,
                 "status": "verification_failed",
@@ -435,7 +435,7 @@ def verify_sas_block(device, method):
 
     lowered = output.lower()
     in_progress_markers = ["in progress", "background operation in progress", "sanitize in progress", "progress indication"]
-    failed_markers = ["failed", "failure", "check condition", "medium error", "aborted"]
+    failed_markers = ["failed", "failure", "medium error", "aborted"]
     complete_markers = ["completed", "success", "no sanitize operation in progress", "idle", "not in progress"]
 
     if any(marker in lowered for marker in failed_markers):
@@ -464,7 +464,6 @@ def write_marker_and_verify(job, smart_baseline=None):
 
     # High #13: Acquire device lock for marker write using context manager
     device_lock = get_device_lock(device)
-    logger = logging.getLogger("app")
 
     with device_lock:
         try:
@@ -476,7 +475,13 @@ def write_marker_and_verify(job, smart_baseline=None):
             job["request"]["data_written_at_wipe"] = raw_writes
             logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
 
-            payload = build_marker_payload(job)
+            passphrase = None
+            try:
+                passphrase = load_policy().get("wipe_passphrase")
+            except Exception:
+                passphrase = None
+
+            payload = build_marker_payload(job, passphrase)
             if len(payload) > (MARKER_BLOCK_SIZE - 1):
                 return {"ok": False, "status": "marker_error", "error": "marker_payload_too_large", "details": {"payload_bytes": len(payload)}}
 
@@ -493,12 +498,6 @@ def write_marker_and_verify(job, smart_baseline=None):
                         "stderr": (result.stderr or b"").decode("utf-8", errors="replace").strip(),
                     },
                 }
-
-            passphrase = None
-            try:
-                passphrase = load_policy().get("wipe_passphrase")
-            except Exception:
-                passphrase = None
 
             readback = read_marker_status(device, interface_type, passphrase)
             if not readback.get("ok"):
@@ -533,7 +532,7 @@ def write_marker_and_verify(job, smart_baseline=None):
             logger.error(f"Marker write exception: {e}")
             return {"ok": False, "status": "marker_error", "error": f"marker_exception:{str(e)}", "details": {}}
 
-def build_marker_payload(job):
+def build_marker_payload(job, passphrase=None):
     request_data = job.get("request") or {}
     payload = {
         "signature": MARKER_SIGNATURE,
@@ -549,12 +548,6 @@ def build_marker_payload(job):
     serialized_fields = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     payload["checksum"] = hashlib.sha256(serialized_fields).hexdigest()
 
-    passphrase = None
-    try:
-        passphrase = load_policy().get("wipe_passphrase")
-    except Exception:
-        passphrase = None
-
     if passphrase:
         serialized_for_hmac = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
         derived_key = hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), PBKDF2_SALT, PBKDF2_ITERATIONS)
@@ -564,8 +557,6 @@ def build_marker_payload(job):
 
 def _get_tool_version(tool_name, command_path, version_flag):
     """Helper function to get version of a single tool. Used for parallel execution."""
-    import logging
-    logger = logging.getLogger("app")
     
     if not command_path:
         logger.warning(f"{tool_name} command not found")
@@ -589,8 +580,6 @@ def _get_tool_version(tool_name, command_path, version_flag):
 
 def get_software_versions():
     """Capture versions of key software tools used for verification. Cached with 24-hour TTL."""
-    import logging
-    logger = logging.getLogger("app")
     
     # Check cache first (per lesson-learned #56: only cache successful data)
     current_time = time.time()
@@ -634,6 +623,9 @@ def get_software_versions():
 def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
+
+    if not device or not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": selected_method, "interface_type": iface}}
 
     primary_result = None
 

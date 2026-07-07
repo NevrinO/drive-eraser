@@ -11,7 +11,7 @@ from app_config import logger, limiter, ERASE_JOBS, ERASE_JOBS_LOCK, SMART_TEST_
 from common import get_config_dir
 from disk_ops import get_os_by_path, discover_drives
 from smart_constants import correct_self_test_log_hours
-from routes._shared import require_admin_auth, is_valid_device_name, should_update_test_status, should_trust_completion_status
+from routes._shared import require_admin_auth, is_valid_device_name, should_trust_completion_status
 
 smart_bp = Blueprint('smart_routes', __name__)
 
@@ -494,14 +494,17 @@ def run_smart_test_endpoint(device):
         
         # Run the test
         test_result = run_smart_test(device_path, test_type)
-        
+
+        # Normalize test_type for audit log: smartctl uses "long" but DB schema expects "extended"
+        audit_test_type = "extended" if test_type == "long" else test_type
+
         if "error" in test_result:
             # Record failed test attempt
-            record_smart_test_run(device_path, serial, test_type, "failed", result=test_result.get("error"))
+            record_smart_test_run(device_path, serial, audit_test_type, "failed", result=test_result.get("error"))
             return jsonify(test_result), 400
         
         # Record test start in audit log and capture record ID for future updates
-        test_record_id = record_smart_test_run(device_path, serial, test_type, "started")
+        test_record_id = record_smart_test_run(device_path, serial, audit_test_type, "started")
         
         # Store record ID in response for frontend to use in status polling
         test_result["record_id"] = test_record_id
@@ -514,6 +517,9 @@ def run_smart_test_endpoint(device):
         # Only release the lock if it was acquired
         if lock_acquired:
             device_lock.release()
+            # Clean up lock entry to prevent unbounded dict growth
+            with SMART_TEST_LOCKS_LOCK:
+                SMART_TEST_LOCKS.pop(device_path, None)
 
 
 @smart_bp.route("/api/admin/drives/<device>/smart-test-status")

@@ -29,6 +29,17 @@ def _check_bulk_cert_interrupted():
     with _bulk_cert_interrupt_lock:
         return _bulk_cert_interrupted
 
+def _reset_bulk_cert_interrupted():
+    """Reset the interruption flag at the start of each bulk cert operation.
+
+    Rule #101: Global signal flags that are never reset cause cross-operation
+    contamination — a signal during one operation permanently disables all
+    subsequent operations.
+    """
+    global _bulk_cert_interrupted
+    with _bulk_cert_interrupt_lock:
+        _bulk_cert_interrupted = False
+
 def create_bulk_cert_job(job_ids):
     """
     Create a bulk certificate generation job for multiple completed erase jobs.
@@ -52,7 +63,6 @@ def create_bulk_cert_job(job_ids):
     # Medium #45: Load configurable batch size limit from policy
     max_batch_size = 100  # Default fallback
     try:
-        from common import load_policy
         policy = load_policy()
         max_batch_size = policy.get("max_bulk_cert_batch_size", 100)
     except Exception:
@@ -139,6 +149,7 @@ def run_bulk_cert_job(job_id):
     Args:
         job_id: The ID of the bulk certificate job to run
     """
+    _reset_bulk_cert_interrupted()
     with BULK_CERT_JOBS_LOCK:
         job = BULK_CERT_JOBS.get(job_id)
         if not job:
@@ -179,7 +190,7 @@ def run_bulk_cert_job(job_id):
             return
 
         # Update progress
-        progress = (idx / total_jobs) * 100
+        progress = (idx / total_jobs) * 100 if total_jobs > 0 else 0.0
         with BULK_CERT_JOBS_LOCK:
             job = BULK_CERT_JOBS.get(job_id)
             if job:

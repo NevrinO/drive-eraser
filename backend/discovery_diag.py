@@ -32,21 +32,22 @@ _PHY_COUNTER_FILES = [
 def _is_diag_enabled():
     """Check if diagnostics are enabled. Cached for 30 seconds to avoid re-reading policy."""
     global _DIAG_ENABLED, _DIAG_CHECKED_AT
-    now = time.monotonic()
-    if _DIAG_ENABLED is not None and (now - _DIAG_CHECKED_AT) < 30.0:
+    with _DIAG_LOCK:
+        now = time.monotonic()
+        if _DIAG_ENABLED is not None and (now - _DIAG_CHECKED_AT) < 30.0:
+            return _DIAG_ENABLED
+
+        env_flag = os.environ.get("DISCOVERY_DIAG", "").lower() in ("1", "true", "yes")
+        policy_flag = False
+        try:
+            policy = load_policy()
+            policy_flag = bool(policy.get("discovery_diag", False))
+        except Exception:
+            pass
+
+        _DIAG_ENABLED = env_flag or policy_flag
+        _DIAG_CHECKED_AT = now
         return _DIAG_ENABLED
-
-    env_flag = os.environ.get("DISCOVERY_DIAG", "").lower() in ("1", "true", "yes")
-    policy_flag = False
-    try:
-        policy = load_policy()
-        policy_flag = bool(policy.get("discovery_diag", False))
-    except Exception:
-        pass
-
-    _DIAG_ENABLED = env_flag or policy_flag
-    _DIAG_CHECKED_AT = now
-    return _DIAG_ENABLED
 
 
 def _get_log_path():

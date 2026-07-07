@@ -1,6 +1,5 @@
 # Drive-related routes
 import os
-import json
 import re
 import sqlite3
 from contextlib import closing
@@ -9,9 +8,9 @@ from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, limiter
 from common import get_config_dir, load_policy, get_db_path
 from disk_ops import discover_drives, invalidate_drive_cache, _is_eligible_for_zero_check
 from disk_utils import format_capacity_bytes
-from routes.admin_routes import require_admin_auth
+from routes._shared import require_admin_auth
 from zero_check_manager import get_manager as get_zero_check_manager
-from database import load_prior_visit, get_smart_test_history, get_smart_test_status_batch
+from database import load_prior_visit, get_smart_test_status_batch
 from device_discovery import (
     invalidate_sas_expander_cache,
     invalidate_scsi_projections_cache,
@@ -173,6 +172,7 @@ def get_drives():
         return jsonify({"error": str(e)}), 500
 
 @drive_bp.route("/api/status")
+@limiter.limit("60 per minute")
 def get_status():
     try:
         config_dir = get_config_dir()

@@ -376,7 +376,7 @@ def manage_enclosure(enclosure_id):
             if "expander_sas_address" in payload:
                 expander_sas_address = payload["expander_sas_address"]
                 if expander_sas_address is not None:
-                    if not expander_sas_address.startswith("0x") or len(expander_sas_address) < 3 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
+                    if not expander_sas_address.startswith("0x") or len(expander_sas_address) != 18 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
                         return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
             
             # Validate custom_labels, custom_roles, and slot_mappings if provided

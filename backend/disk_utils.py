@@ -18,7 +18,6 @@ MARKER_BLOCK_SIZE = 4096
 
 # Timeout for read-only discovery commands (smartctl/hdparm/nvme/sg_sanitize --status/dd reads).
 # Prevents a hung device from stalling discovery worker threads indefinitely.
-# Destructive commands (run_destructive_command) intentionally have NO timeout.
 _READONLY_COMMAND_TIMEOUT = 30  # seconds
 
 # Single source of truth for marker HMAC key derivation. Both the write path
@@ -29,10 +28,6 @@ PBKDF2_SALT = b"DWS_SALT_v1"
 
 def safe_int(val, default=0):
     try: return int(val) if val is not None else default
-    except (ValueError, TypeError): return default
-
-def safe_float(val, default=0.0):
-    try: return float(val) if val is not None else default
     except (ValueError, TypeError): return default
 
 _MAX_JSON_SIZE = 65536
@@ -187,7 +182,13 @@ def check_write_tolerance(interface_type, current, stored):
         diff = int(current) - int(stored)
         if diff < 0: return False
         iface = str(interface_type or "unknown").lower()
-        return (diff <= 4) if "nvme" in iface else (diff <= 4096)
+        # NVMe write accounting granularity is 1 unit = 1 block (512B or 4K),
+        # so tolerance of 4 accounts for metadata writes during sanitize.
+        # SATA/SAS report in 512B sectors, so 4096 sectors = 2MB tolerance
+        # for firmware accounting lag during sanitize operations.
+        NVME_WRITE_TOLERANCE = 4
+        OTHER_WRITE_TOLERANCE = 4096
+        return (diff <= NVME_WRITE_TOLERANCE) if "nvme" in iface else (diff <= OTHER_WRITE_TOLERANCE)
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to check write tolerance: {e}")
         return False
@@ -264,16 +265,6 @@ def run_command(command, diagnostics=None, key=None):
     except subprocess.CalledProcessError as e:
         if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": (e.stderr or "").strip() or f"exit_code_{e.returncode}", "exit_code": e.returncode}
         return (e.stdout or "").strip() if command and os.path.basename(command[0]) == "smartctl" else None
-
-def run_destructive_command(command):
-    if not command or not command[0]: return {"ok": False, "error": "command_not_resolved", "stdout": "", "stderr": "", "exit_code": None}
-    try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False)
-        return {"ok": True, "error": None, "stdout": (result.stdout or "").strip(), "stderr": (result.stderr or "").strip(), "exit_code": result.returncode}
-    except subprocess.CalledProcessError as e:
-        return {"ok": False, "error": "command_failed", "stdout": (e.stdout or "").strip(), "stderr": (e.stderr or "").strip(), "exit_code": e.returncode}
-    except FileNotFoundError:
-        return {"ok": False, "error": "sudo_or_command_not_found", "stdout": "", "stderr": "", "exit_code": None}
 
 def resolve_bay_device(target_path, path_to_dev):
     if target_path is None: return None, None

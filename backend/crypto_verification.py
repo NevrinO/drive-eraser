@@ -9,13 +9,9 @@ import random
 import logging
 import threading
 
-import disk_utils
-from disk_utils import resolve_command_path, validate_device_path, get_command_path
+from disk_utils import validate_device_path, get_command_path
 from common import get_device_lock, load_policy
 
-
-def resolve_verify_command_path(command_name):
-    return disk_utils.get_command_path(command_name)
 
 # High #12: Global flag for signal interruption
 _verification_interrupted = False
@@ -71,6 +67,37 @@ def _check_interrupted():
     with _verification_interrupt_lock:
         return _verification_interrupted
 
+def _reset_interrupted():
+    """Reset the interruption flag at the start of each verification operation.
+
+    Rule #101: Global signal flags that are never reset cause cross-operation
+    contamination — a signal during one operation permanently disables all
+    subsequent operations. This must be called at the start of every top-level
+    verification entry point.
+    """
+    global _verification_interrupted
+    with _verification_interrupt_lock:
+        _verification_interrupted = False
+
+_VERIFICATION_POLICY_DEFAULTS = {
+    "zero_check_total_bytes_gb": 2,
+    "zero_check_zone_count": 5,
+    "zero_check_block_size_mb": 16,
+    "zero_check_small_drive_threshold_gb": 2,
+    "blockdev_post_wipe_retries": 3,
+    "blockdev_post_wipe_retry_delay": 5,
+}
+
+def _load_verification_policy():
+    """Load verification policy with hardcoded fallbacks for all known keys."""
+    logger = logging.getLogger("app")
+    try:
+        policy = load_policy()
+        return {key: policy.get(key, default) for key, default in _VERIFICATION_POLICY_DEFAULTS.items()}
+    except Exception:
+        logger.warning("Failed to load verification policy, using defaults")
+        return dict(_VERIFICATION_POLICY_DEFAULTS)
+
 def _run_blockdev_getsize64(device, retries=3, retry_delay=5):
     """
     Run blockdev --getsize64 with retry logic for post-wipe transient failures.
@@ -96,7 +123,14 @@ def _run_blockdev_getsize64(device, retries=3, retry_delay=5):
     
     for attempt in range(attempts):
         blockdev_cmd = ["sudo", "blockdev", "--getsize64", device]
-        result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False)
+        try:
+            result = subprocess.run(blockdev_cmd, capture_output=True, text=True, shell=False, timeout=60)
+        except subprocess.TimeoutExpired:
+            last_stderr = "Timed out after 60s"
+            logger.warning(f"blockdev timed out on attempt {attempt + 1}/{attempts} for {device}")
+            if attempt < attempts - 1:
+                time.sleep(retry_delay)
+            continue
         
         if result.returncode == 0:
             try:
@@ -127,7 +161,7 @@ def _run_blockdev_getsize64(device, retries=3, retry_delay=5):
     
     return {"capacity": None, "error": error_code, "details": last_stderr}
 
-def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_delay=5):
+def _run_dd_read_with_retry(dd_cmd, device, bs, offset, count, retries=3, retry_delay=5):
     """
     Run dd read operation with retry logic for post-wipe transient failures.
     
@@ -139,7 +173,7 @@ def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_de
         dd_cmd: Path to dd command
         device: Device path (e.g., /dev/sda)
         bs: Block size for dd
-        skip: Skip blocks for dd
+        offset: Byte offset to start reading from (uses iflag=skip_bytes)
         count: Count for dd
         retries: Number of retry attempts (default 3, total attempts = retries + 1)
         retry_delay: Delay in seconds between retries (default 5)
@@ -155,9 +189,15 @@ def _run_dd_read_with_retry(dd_cmd, device, bs, skip, count, retries=3, retry_de
     last_stderr = ""
     
     for attempt in range(attempts):
-        dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={bs}", f"skip={skip}", f"count={count}", "status=none"]
+        dd_cmd_str = ["sudo", dd_cmd, f"if={device}", f"bs={bs}", f"skip={offset}", f"count={count}", "iflag=skip_bytes", "status=none"]
         try:
-            result = subprocess.run(dd_cmd_str, capture_output=True, shell=False)
+            result = subprocess.run(dd_cmd_str, capture_output=True, shell=False, timeout=60)
+        except subprocess.TimeoutExpired:
+            last_stderr = "Timed out after 60s"
+            logger.warning(f"dd read timed out on attempt {attempt + 1}/{attempts} for {device}")
+            if attempt < attempts - 1:
+                time.sleep(retry_delay)
+            continue
         except Exception as e:
             last_stderr = str(e)
             logger.warning(f"dd read exception on attempt {attempt + 1}/{attempts} for {device}: {last_stderr}")
@@ -334,31 +374,22 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=30):
         dict with keys: ok, result, is_zeroed, chunks_checked, bytes_checked,
         failed_at_chunk, error, details.
     """
+    _reset_interrupted()
     if not validate_device_path(device):
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "invalid_device_path", "details": "Device path validation failed"}
 
     logger = logging.getLogger("app")
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "result": "failed", "is_zeroed": False, "chunks_checked": 0, "bytes_checked": 0, "failed_at_chunk": None, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
-    # Load policy once for both zero-check and blockdev parameters
-    try:
-        policy = load_policy()
-        total_bytes_gb = policy.get("zero_check_total_bytes_gb", 2)
-        zone_count = policy.get("zero_check_zone_count", 5)
-        block_size_mb = policy.get("zero_check_block_size_mb", 16)
-        small_threshold_gb = policy.get("zero_check_small_drive_threshold_gb", 2)
-        blockdev_retries = policy.get("blockdev_post_wipe_retries", 3)
-        blockdev_retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
-    except Exception:
-        logger.warning("Failed to load policy for zero check, using defaults")
-        total_bytes_gb = 2
-        zone_count = 5
-        block_size_mb = 16
-        small_threshold_gb = 2
-        blockdev_retries = 3
-        blockdev_retry_delay = 5
+    vpolicy = _load_verification_policy()
+    total_bytes_gb = vpolicy["zero_check_total_bytes_gb"]
+    zone_count = vpolicy["zero_check_zone_count"]
+    block_size_mb = vpolicy["zero_check_block_size_mb"]
+    small_threshold_gb = vpolicy["zero_check_small_drive_threshold_gb"]
+    blockdev_retries = vpolicy["blockdev_post_wipe_retries"]
+    blockdev_retry_delay = vpolicy["blockdev_post_wipe_retry_delay"]
 
     total_bytes = total_bytes_gb * 1024 * 1024 * 1024
     block_size = block_size_mb * 1024 * 1024
@@ -403,10 +434,10 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=30):
             zone_size = block_size
         zones = [
             (0, zone_size),  # start
-            ((capacity // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 25% center
-            ((capacity // 2 - zone_size // 2) // block_size * block_size, zone_size),  # middle
-            (((3 * capacity) // 4 - zone_size // 2) // block_size * block_size, zone_size),  # 75% center
-            (((capacity - zone_size) // block_size) * block_size, zone_size),  # end
+            (max(0, (capacity // 4 - zone_size // 2) // block_size * block_size), zone_size),  # 25% center
+            (max(0, (capacity // 2 - zone_size // 2) // block_size * block_size), zone_size),  # middle
+            (max(0, ((3 * capacity) // 4 - zone_size // 2) // block_size * block_size), zone_size),  # 75% center
+            (max(0, ((capacity - zone_size) // block_size) * block_size), zone_size),  # end
         ]
 
     chunks_checked = 0
@@ -476,9 +507,10 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
     High #12: Signal handling for interruption. High #13: Device-level locking.
     Issue 14: Uses policy-configured retry logic for blockdev calls.
     """
+    _reset_interrupted()
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_zero_check", "details": "dd command not found"}
 
@@ -491,15 +523,9 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
         if _check_interrupted():
             return {"ok": False, "error": "verification_interrupted", "details": "Operation interrupted by signal"}
 
-        # Issue 14: Load policy for retry configuration with hardcoded fallback
-        try:
-            policy = load_policy()
-            retries = policy.get("blockdev_post_wipe_retries", 3)
-            retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
-        except Exception:
-            logger.warning("Failed to load policy, using default retry values")
-            retries = 3
-            retry_delay = 5
+        vpolicy = _load_verification_policy()
+        retries = vpolicy["blockdev_post_wipe_retries"]
+        retry_delay = vpolicy["blockdev_post_wipe_retry_delay"]
 
         # Get capacity using blockdev with retry logic
         result = _run_blockdev_getsize64(device, retries, retry_delay)
@@ -522,12 +548,11 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
                 return {"ok": False, "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
 
             # Use 32MB chunks for all reads, with dynamic bs for partial chunks
-            skip_blocks = offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
             
             # Feature C: Use retry logic for dd reads
-            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, offset, 1, retries, retry_delay)
             if dd_result["error"]:
                 return {"ok": False, "error": dd_result["error"], "details": f"dd read failed at offset {offset}: {dd_result['details']}"}
             data = dd_result["data"]
@@ -569,9 +594,10 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
     Returns a structure with offsets and hashes for post-wipe comparison.
     High #12: Signal handling for interruption. High #13: Device-level locking.
     """
+    _reset_interrupted()
     if not validate_device_path(device):
         return {"ok": False, "error": "invalid_device_path", "details": "Device path validation failed"}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "error": "dd_not_available_for_capture", "details": "dd command not found"}
 
@@ -584,15 +610,9 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
         if _check_interrupted():
             return {"ok": False, "error": "verification_interrupted", "details": "Operation interrupted by signal"}
 
-        # Feature C: Load policy for retry configuration with hardcoded fallback
-        try:
-            policy = load_policy()
-            retries = policy.get("blockdev_post_wipe_retries", 3)
-            retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
-        except Exception:
-            logger.warning("Failed to load policy, using default retry values")
-            retries = 3
-            retry_delay = 5
+        vpolicy = _load_verification_policy()
+        retries = vpolicy["blockdev_post_wipe_retries"]
+        retry_delay = vpolicy["blockdev_post_wipe_retry_delay"]
 
         # Get capacity using blockdev with retry logic
         result = _run_blockdev_getsize64(device, retries, retry_delay)
@@ -614,12 +634,11 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
                 return {"ok": False, "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
 
             # Use 32MB chunks for all reads, with dynamic bs for partial chunks
-            skip_blocks = offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
             
             # Feature C: Use retry logic for dd reads
-            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, offset, 1, retries, retry_delay)
             if dd_result["error"]:
                 return {"ok": False, "error": "capture_read_failed", "details": f"dd read failed at offset {offset}: {dd_result['details']}", "is_detached": dd_result["error"] == "drive_detached_post_wipe"}
             data = dd_result["data"]
@@ -660,22 +679,17 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
     Compares before/after hashes to verify crypto erase changed the data.
     Issue 14: Uses policy-configured retry logic for blockdev calls.
     """
+    _reset_interrupted()
     if not validate_device_path(device):
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {}}
-    dd_cmd = resolve_verify_command_path("dd")
+    dd_cmd = get_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_comparison", "details": {}}
     logger = logging.getLogger("app")
 
-    # Issue 14: Load policy for retry configuration with hardcoded fallback
-    try:
-        policy = load_policy()
-        retries = policy.get("blockdev_post_wipe_retries", 3)
-        retry_delay = policy.get("blockdev_post_wipe_retry_delay", 5)
-    except Exception:
-        logger.warning("Failed to load policy, using default retry values")
-        retries = 3
-        retry_delay = 5
+    vpolicy = _load_verification_policy()
+    retries = vpolicy["blockdev_post_wipe_retries"]
+    retry_delay = vpolicy["blockdev_post_wipe_retry_delay"]
 
     # High #13: Acquire device lock for all read operations (consistent with verify_sampled_zero_check)
     device_lock = get_device_lock(device)
@@ -707,12 +721,11 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
                 return {"ok": False, "status": "verification_interrupted", "error": "verification_interrupted", "details": f"Operation interrupted at offset {offset}"}
 
             # Use capacity-aware read size for end-of-drive chunks
-            skip_blocks = offset // chunk_size_bytes
             read_size = min(chunk_size_bytes, capacity - offset)
             actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
             
             # Feature C: Use retry logic for dd reads
-            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+            dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, offset, 1, retries, retry_delay)
             if dd_result["error"]:
                 return {"ok": False, "status": "verification_error", "error": "crypto_comparison_read_failed", "details": {"offset": offset, "exception": dd_result['error'], "retries_attempted": retries + 1, "stderr": dd_result['details']}}
             data = dd_result["data"]
@@ -731,13 +744,13 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             # If before-hash matches all-zeros hash, chunk was zero before wipe and is still
             # unchanged → still zero, no dd read needed. If before-hash differs, chunk was
             # non-zero before wipe and is still unchanged → partial wipe, no dd read needed.
-            if unchanged_indices:
-                _zeros_hash_cache = {}
-                def _get_zeros_hash(size):
-                    if size not in _zeros_hash_cache:
-                        _zeros_hash_cache[size] = hashlib.sha256(b'\x00' * size).hexdigest()
-                    return _zeros_hash_cache[size]
+            _zeros_hash_cache = {}
+            def _get_zeros_hash(size):
+                if size not in _zeros_hash_cache:
+                    _zeros_hash_cache[size] = hashlib.sha256(b'\x00' * size).hexdigest()
+                return _zeros_hash_cache[size]
 
+            if unchanged_indices:
                 unchanged_nonzero_found = False
                 first_nonzero_offset = None
                 for idx in unchanged_indices:
@@ -809,12 +822,11 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             # All hashes identical - check actual byte values to distinguish zeros from other patterns.
             try:
                 first_offset = offsets[0]
-                skip_blocks = first_offset // chunk_size_bytes
                 read_size = min(chunk_size_bytes, capacity - first_offset)
                 actual_bs = read_size if read_size < chunk_size_bytes else chunk_size_bytes
                 
                 # Feature C: Use retry logic for dd reads
-                dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, skip_blocks, 1, retries, retry_delay)
+                dd_result = _run_dd_read_with_retry(dd_cmd, device, actual_bs, first_offset, 1, retries, retry_delay)
                 if dd_result["error"]:
                     pass  # If read fails, proceed to unchanged data check below
                 else:

@@ -5,7 +5,6 @@
 import hmac
 import signal
 import threading
-import time
 from flask import jsonify
 from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
@@ -99,7 +98,6 @@ def update_smart_test_status_background():
     and stops polling. The database is updated based on drive status.
     Uses optimistic locking to prevent race conditions with frontend polling.
     """
-    import os
     from database import get_smart_test_history, update_smart_test_run
     from smart_parsing import get_smart_test_status
     from routes.admin_routes import should_update_test_status, should_trust_completion_status

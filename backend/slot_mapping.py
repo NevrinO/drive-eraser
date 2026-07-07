@@ -64,7 +64,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
                 break
 
             # phy_name format: phy-0:0:N  (where N = physical slot index)
-            phy_match = re.search(r'phy-\d+(?::\d+)?:(\d+)$', phy_name)
+            phy_match = re.search(r'phy-\d+(?::\d+)?:(\d+)\Z', phy_name)
             if not phy_match:
                 continue
             slot_number = int(phy_match.group(1))
@@ -281,7 +281,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
             if len(master_map) >= MAX_TOTAL_SLOTS:
                 logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
                 break
-            port_match = re.search(r'ata(\d+)$', port_name)
+            port_match = re.search(r'ata(\d+)\Z', port_name)
             if not port_match:
                 continue
             ata_num = int(port_match.group(1))
@@ -423,7 +423,7 @@ def resolve_multipath_parent(dev_name: str) -> str:
     # Note: 'mapper/' prefix is rejected by the regex above (contains '/'),
     # so only 'dm-' prefixed names reach this branch.
     if dev_name.startswith('dm-'):
-        return f"/dev/{dev_name}" if not dev_name.startswith('/') else dev_name
+        return f"/dev/{dev_name}"
 
     holders_dir = f"/sys/block/{dev_name}/holders"
     try:
@@ -573,7 +573,7 @@ def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
             # Standard SCSI slot projection
             # Find actual slots for this host by scanning SCSI device directories
             # Pattern: {host_num}:0:{slot}:0
-            slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0$')
+            slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0\Z')
 
             # Collect and sort slot numbers for deterministic ordering
             # Filter out SES/enclosure management devices by checking device type

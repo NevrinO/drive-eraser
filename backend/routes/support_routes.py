@@ -241,14 +241,15 @@ def download_support_bundle():
                 for device_name, device_path in valid_devices:
                     futures[executor.submit(_collect_smartctl_for_device, device_name, device_path)] = device_name
                 # Overall timeout for the entire batch (120 seconds)
-                for future in as_completed(futures, timeout=120):
-                    device_name = futures[future]
-                    try:
-                        future.result()
-                    except FuturesTimeoutError:
-                        logger.warning(f"smartctl collection timed out for {device_name}")
-                    except Exception as e:
-                        logger.warning(f"smartctl collection failed for {device_name}: {e}")
+                try:
+                    for future in as_completed(futures, timeout=120):
+                        device_name = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.warning(f"smartctl collection failed for {device_name}: {e}")
+                except FuturesTimeoutError:
+                    logger.warning("smartctl collection batch timed out after 120 seconds, continuing with partial results")
             finally:
                 executor.shutdown(wait=False)
                 
@@ -516,7 +517,7 @@ def list_logs():
                 if not os.path.isfile(full_path):
                     continue
                 # Filter to .log and .log.N (rotated) files only
-                if not (entry.endswith(".log") or re.match(r"^.*\.log\.\d+$", entry)):
+                if not (entry.endswith(".log") or re.match(r"^.*\.log\.\d+\Z", entry)):
                     continue
                 try:
                     stat = os.stat(full_path)

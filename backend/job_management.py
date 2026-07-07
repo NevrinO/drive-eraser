@@ -89,7 +89,7 @@ from zero_check_manager import get_manager as get_zero_check_manager
 from smart_parsing import get_raw_smart_diagnostics, get_smart_data
 from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger
 from erase_commands import (
-    SATA_SECURITY_PASSWORD,
+    _get_sata_security_password,
     get_device_logical_block_size,
     get_device_capacity_bytes,
     calculate_firmware_progress,
@@ -116,10 +116,11 @@ def finalize_failed_job(job_id, error_message):
         job["finished_at"] = datetime.now(timezone.utc).isoformat()
         job["error"] = error_message
         persist_job(job)
+        failed_bay = job['request']['bay']
 
     # Phase 2: I/O operations outside the lock
     active_log_path = os.path.join(get_active_logs_dir(), f"job-{job_id}.log")
-    failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{job['request']['bay']}.log")
+    failed_log_path = os.path.join(get_failed_logs_dir(), f"failed-job-{job_id}-bay{failed_bay}.log")
     try:
         os.rename(active_log_path, failed_log_path)
     except FileNotFoundError:
@@ -174,7 +175,10 @@ def run_erase_job(job_id):
     method = job["request"]["method"]
     capacity_bytes = job["request"].get("capacity_bytes")
     if capacity_bytes is None:
-        capacity_bytes = get_device_capacity_bytes(device) or (100 * 1024 * 1024 * 1024)
+        capacity_bytes = get_device_capacity_bytes(device)
+        if not capacity_bytes:
+            capacity_bytes = 100 * 1024 * 1024 * 1024
+            logger.warning(f"Job {job_id}: capacity_bytes unknown, using 100GB fallback for progress estimation")
 
     # High-signal event marking the active beginning of physical wipe commands
     logger.info(f"Job {job_id} (Bay {job['request']['bay']}) transitioning to RUNNING. Method: '{method}', Target: '{device}', Interface: '{interface_type}'")
@@ -272,7 +276,7 @@ def run_erase_job(job_id):
             finalize_failed_job(job_id, "hdparm_not_available")
             return
 
-        user_password = SATA_SECURITY_PASSWORD
+        user_password = _get_sata_security_password()
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
         try:
             set_pass_proc = subprocess.run(set_pass_cmd, capture_output=True, text=True, shell=False)
@@ -353,8 +357,8 @@ def run_erase_job(job_id):
         return
 
     try:
-        estimated_seconds = DEFAULT_SATA_ERASE_ESTIMATE_SECONDS
         max_erase_seconds = _get_erase_timeout(method)
+        estimated_seconds = DEFAULT_SATA_ERASE_ESTIMATE_SECONDS if interface_type == "sata" else max_erase_seconds // 2
 
         # Thread sleep telemetry updates loop (contained within individual job context)
         while process.poll() is None:
@@ -474,20 +478,16 @@ def run_erase_job(job_id):
                     progress = min(99.9, (elapsed / 120.0) * 100)
                     phase = "SAS Sanitize running..."
 
-            # Update progress without ERASE_JOBS_LOCK — drive_routes.py reads these
-            # telemetry fields under lock, but per-key dict assignments are atomic under
-            # the GIL. All keys are pre-initialized at job start, so no new keys appear
-            # mid-iteration. Worst case is cosmetic inconsistency (reader sees progress
-            # from one loop iteration and phase from the next). Safe under CPython GIL.
-            job = ERASE_JOBS.get(job_id)
-            if job:
-                job["progress_percent"] = round(progress, 1)
-                job["current_phase"] = phase
-                job["elapsed_seconds"] = round(elapsed, 0)
-                if write_speed is not None:
-                    job["speed_mb_s"] = round(write_speed / (1024 * 1024), 1)
-                if eta_seconds is not None:
-                    job["eta_seconds"] = round(eta_seconds, 0)
+            with ERASE_JOBS_LOCK:
+                job = ERASE_JOBS.get(job_id)
+                if job:
+                    job["progress_percent"] = round(progress, 1)
+                    job["current_phase"] = phase
+                    job["elapsed_seconds"] = round(elapsed, 0)
+                    if write_speed is not None:
+                        job["speed_mb_s"] = round(write_speed / (1024 * 1024), 1)
+                    if eta_seconds is not None:
+                        job["eta_seconds"] = round(eta_seconds, 0)
 
             time.sleep(3)
 
@@ -640,14 +640,13 @@ def run_erase_job(job_id):
                 fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
                 progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
                 
-            # Update firmware polling progress without lock — same rationale as above:
-            # per-key dict assignments are atomic under GIL, keys pre-initialized at job start
-            job = ERASE_JOBS.get(job_id)
-            if job:
-                job["progress_percent"] = round(progress_pct, 1)
-                job["current_phase"] = phase_text
-                total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
-                job["elapsed_seconds"] = round(total_elapsed_fw, 0)
+            with ERASE_JOBS_LOCK:
+                job = ERASE_JOBS.get(job_id)
+                if job:
+                    job["progress_percent"] = round(progress_pct, 1)
+                    job["current_phase"] = phase_text
+                    total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
+                    job["elapsed_seconds"] = round(total_elapsed_fw, 0)
 
             time.sleep(4)
 

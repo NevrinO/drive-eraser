@@ -3,7 +3,10 @@ import os
 import re
 import tempfile
 import hashlib
+import logging
 from threading import Lock
+
+logger = logging.getLogger("app")
 
 SUPPORTED_TRAVERSALS = {
     "top_left_down_then_across",
@@ -96,8 +99,6 @@ def load_layout_templates(config_dir):
     hash_path = os.path.join(config_dir, "layout_templates.json.sha256")
 
     if not os.path.exists(path):
-        import logging
-        logger = logging.getLogger("app")
         logger.warning(f"Template file not found: {path}. Using DEFAULT_TEMPLATES as fallback.")
         return DEFAULT_TEMPLATES, True
 
@@ -113,13 +114,9 @@ def load_layout_templates(config_dir):
                     stored_hash = hf.read().strip()
                 calculated_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
                 if stored_hash != calculated_hash:
-                    import logging
-                    logger = logging.getLogger("app")
                     logger.warning(f"Template file hash mismatch detected. File may have been tampered with: {path}. Using DEFAULT_TEMPLATES as fallback.")
                     return DEFAULT_TEMPLATES, True
             except Exception as e:
-                import logging
-                logger = logging.getLogger("app")
                 logger.warning(f"Failed to validate template file hash: {str(e)}")
                 # Continue loading despite hash validation failure
 
@@ -146,13 +143,9 @@ def load_layout_templates(config_dir):
             if result:
                 return result, False
             else:
-                import logging
-                logger = logging.getLogger("app")
                 logger.warning(f"Template file contains no valid templates: {path}. Using DEFAULT_TEMPLATES as fallback.")
                 return DEFAULT_TEMPLATES, True
     except Exception as e:
-        import logging
-        logger = logging.getLogger("app")
         logger.warning(f"Failed to load template file: {path}. Error: {str(e)}. Using DEFAULT_TEMPLATES as fallback.")
         return DEFAULT_TEMPLATES, True
 
@@ -227,7 +220,8 @@ def build_traversal_positions(rows, cols, traversal, bay_count, skip_positions=N
 def apply_template(existing_bays, template, traversal_preset=None, custom_overrides=None):
     rows = int(template.get("rows") or 1)
     cols = int(template.get("cols") or 1)
-    bay_count = int(template.get("bay_count") or (rows * cols))
+    bay_count_val = template.get("bay_count")
+    bay_count = int(bay_count_val) if bay_count_val is not None else (rows * cols)
     traversal = traversal_preset or template.get("traversal_preset") or "top_left_down_then_across"
     if traversal not in SUPPORTED_TRAVERSALS:
         traversal = "top_left_down_then_across"
@@ -519,9 +513,20 @@ def save_layout_templates(templates, config_dir):
         # Atomic rename on POSIX systems
         os.replace(temp_path, templates_path)
         
-        # Also save the hash for integrity validation
-        with open(hash_path, 'w', encoding='utf-8') as f:
-            f.write(content_hash)
+        # Also save the hash atomically for integrity validation
+        hash_fd, hash_temp_path = tempfile.mkstemp(dir=config_dir, prefix=".layout_templates_hash_tmp_", suffix=".sha256")
+        try:
+            with os.fdopen(hash_fd, 'w', encoding='utf-8') as f:
+                f.write(content_hash)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(hash_temp_path, hash_path)
+        except Exception:
+            try:
+                os.unlink(hash_temp_path)
+            except Exception:
+                pass
+            raise
         
     except Exception:
         # Clean up temp file if write failed

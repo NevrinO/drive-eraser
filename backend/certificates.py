@@ -22,9 +22,6 @@ from verification import get_software_versions
 # The signature integrity is verified by recomputing the HMAC with the known passphrase and comparing
 # it to the stored signature value. This is a simple integrity check, not a PKI chain validation.
 
-# Base64 encoded SVG logo placeholder (simple shield icon with company name)
-LOGO_BASE64 = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTIwIiBoZWlnaHQ9IjQwIiB2aWV3Qm94PSIwIDAgMTIwIDQwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPgogIDxyZWN0IHdpZHRoPSIxMjAiIGhlaWdodD0iNDAiIGZpbGw9IiNmOGZhZmMiLz4KICA8dGV4dCB4PSIxMCIgeT0iMjUiIGZvbnQtZmFtaWx5PSJBcmlhbCIgZm9udC1zaXplPSIxNCIgZm9udC13ZWlnaHQ9ImJvbGQiIGZpbGw9IiMxZTNhOGEiPkRyaXZlIFdhc2hlciBTdGF0aW9uPC90ZXh0Pgo8L3N2Zz4="
-
 # Certificate CSS has been externalized to frontend/css/certificate.css
 # Certificate HTML templates reference it via <link rel="stylesheet" href="/css/certificate.css">
 
@@ -65,8 +62,8 @@ def get_custom_logo_base64():
         
         # Open and validate image
         with Image.open(logo_path) as img:
-            # Validate format (only PNG, JPG, JPEG allowed)
-            if img.format not in ("PNG", "JPEG", "JPG"):
+            # Validate format (only PNG, JPEG allowed)
+            if img.format not in ("PNG", "JPEG"):
                 logger.warning(f"Unsupported logo format: {img.format}")
                 return ""
             
@@ -208,31 +205,58 @@ def build_verification_evidence(verification, marker):
         }
     }
 
-def build_certificate_html(certificate):
-    def esc(value):
-        return html.escape(str(value if value is not None else ""))
+def _esc(value):
+    return html.escape(str(value if value is not None else ""))
 
+def _apply_common_template_replacements(content, certificate, custom_logo=None):
+    """Apply common template placeholder replacements shared between full and bulk certificate templates.
+
+    Returns content with common replacements applied. Caller is responsible for
+    applying any template-specific replacements (e.g., SMART_DIFF_ROWS, VERIFICATION_DETAILS).
+    """
     verification = certificate.get("verification") or {}
     ok = verification.get("ok")
-    
-    # Dynamic header title and color accents based on physical wipe status
+
     title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
     title_class = "cert-title-ok" if ok else "cert-title-fail"
     status_class = "status-ok" if ok else "status-fail"
-    status_text = esc(verification.get("status"))
+    status_text = _esc(verification.get("status"))
 
     standard_rows = "".join(
-        f"<tr><th>Standard Claim: {esc(k)}</th><td>{json_cell(v)}</td></tr>"
+        f"<tr><th>Standard Claim: {_esc(k)}</th><td>{json_cell(v)}</td></tr>"
         for k, v in sorted((certificate.get("standard_claims") or {}).items(), key=lambda item: str(item[0]))
     )
-    evidence_rows = "".join(
-        f"<tr><th>Evidence: {esc(k)}</th><td><pre>{json_cell(v)}</pre></td></tr>"
-        for k, v in sorted((certificate.get("verification_evidence") or {}).items(), key=lambda item: str(item[0]))
-    )
-    
-    # Build software versions row
+
     software_versions = certificate.get("software_versions") or {}
     software_versions_text = "; ".join(f"{k}: {v}" for k, v in sorted(software_versions.items())) if software_versions else "Not available"
+
+    if custom_logo is None:
+        custom_logo = get_custom_logo_base64()
+    logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">' if custom_logo else ""
+
+    content = content.replace("{{TITLE}}", _esc(title))
+    content = content.replace("{{TITLE_CLASS}}", _esc(title_class))
+    content = content.replace("{{LOGO_IMG}}", logo_img)
+    content = content.replace("{{FRIENDLY_ID}}", _esc(certificate.get("friendly_id")))
+    content = content.replace("{{STARTED_AT}}", _esc(certificate.get("started_at")))
+    content = content.replace("{{FINISHED_AT}}", _esc(certificate.get("finished_at")))
+    content = content.replace("{{TICKET_NUMBER}}", _esc(certificate.get("ticket_number")))
+    content = content.replace("{{SERIAL}}", _esc(certificate.get("serial")))
+    content = content.replace("{{MODEL}}", _esc(certificate.get("model")))
+    content = content.replace("{{INTERFACE_TYPE}}", _esc(certificate.get("interface_type")))
+    content = content.replace("{{DRIVE_TYPE}}", _esc(certificate.get("drive_type")))
+    content = content.replace("{{METHOD}}", _esc(certificate.get("method")))
+    content = content.replace("{{SOFTWARE_VERSIONS}}", _esc(software_versions_text))
+    content = content.replace("{{STATUS_CLASS}}", _esc(status_class))
+    content = content.replace("{{STATUS_TEXT}}", _esc(status_text))
+    content = content.replace("{{STANDARD_ROWS}}", standard_rows)
+    content = content.replace("{{SIGNATURE_STATUS}}", _esc((certificate.get("signature_meta") or {}).get("status")))
+    content = content.replace("{{SIGNATURE}}", _esc(certificate.get("signature")))
+
+    return content
+
+def build_certificate_html(certificate):
+    verification = certificate.get("verification") or {}
 
     # Build SMART diff rows if available
     smart_diff = certificate.get("smart_diff") or {}
@@ -244,7 +268,7 @@ def build_certificate_html(certificate):
             post = metric.get("post_value", "N/A")
             delta = metric.get("delta", "N/A")
             metric_name = metric.get("metric", "Unknown")
-            smart_diff_rows += f"<tr><th>SMART Degradation: {esc(metric_name)}</th><td>Pre: {esc(pre)} → Post: {esc(post)} (Delta: {esc(delta)})</td></tr>"
+            smart_diff_rows += f"<tr><th>SMART Degradation: {_esc(metric_name)}</th><td>Pre: {_esc(pre)} → Post: {_esc(post)} (Delta: {_esc(delta)})</td></tr>"
     else:
         smart_diff_rows = '<tr><th>SMART Health Comparison</th><td>No significant SMART metric degradation detected during wipe</td></tr>'
 
@@ -293,43 +317,19 @@ def build_certificate_html(certificate):
 </html>
 """
 
-    # Run clean, robust text replacements to completely bypass quote-nesting quirks
-    content = template
-    content = content.replace("{{TITLE}}", esc(title))
-    content = content.replace("{{TITLE_CLASS}}", esc(title_class))
-    # Use custom logo if available, otherwise no logo
-    custom_logo = get_custom_logo_base64()
-    if custom_logo:
-        logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">'
-    else:
-        logo_img = ""
-    content = content.replace("{{LOGO_IMG}}", logo_img)
-    content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
-    content = content.replace("{{STARTED_AT}}", esc(certificate.get("started_at")))
-    content = content.replace("{{FINISHED_AT}}", esc(certificate.get("finished_at")))
-    content = content.replace("{{TICKET_NUMBER}}", esc(certificate.get("ticket_number")))
-    content = content.replace("{{STATION_ID}}", esc(certificate.get("station_id")))
-    content = content.replace("{{BAY}}", esc(certificate.get("bay")))
-    content = content.replace("{{DEVICE}}", esc(certificate.get("device")))
-    content = content.replace("{{SERIAL}}", esc(certificate.get("serial")))
-    content = content.replace("{{MODEL}}", esc(certificate.get("model")))
-    content = content.replace("{{CAPACITY_BYTES}}", esc(certificate.get("capacity_bytes")))
-    content = content.replace("{{INTERFACE_TYPE}}", esc(certificate.get("interface_type")))
-    content = content.replace("{{DRIVE_TYPE}}", esc(certificate.get("drive_type")))
-    content = content.replace("{{METHOD}}", esc(certificate.get("method")))
-    content = content.replace("{{SOFTWARE_VERSIONS}}", esc(software_versions_text))
-    content = content.replace("{{STATUS_CLASS}}", esc(status_class))
-    content = content.replace("{{STATUS_TEXT}}", esc(status_text))
-    # Include error in verification details for display
+    content = _apply_common_template_replacements(template, certificate)
+
+    # Apply full-template-specific replacements
+    content = content.replace("{{STATION_ID}}", _esc(certificate.get("station_id")))
+    content = content.replace("{{BAY}}", _esc(certificate.get("bay")))
+    content = content.replace("{{DEVICE}}", _esc(certificate.get("device")))
+    content = content.replace("{{CAPACITY_BYTES}}", _esc(certificate.get("capacity_bytes")))
     verification_details = verification.get("details") or {}
     if verification.get("error"):
         verification_details = dict(verification_details)
         verification_details["error"] = verification.get("error")
     content = content.replace("{{VERIFICATION_DETAILS}}", json_cell(verification_details))
-    content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
-    content = content.replace("{{SIGNATURE}}", esc(certificate.get("signature")))
     content = content.replace("{{SMART_DIFF_ROWS}}", smart_diff_rows)
-    content = content.replace("{{STANDARD_ROWS}}", standard_rows)
 
     return content
 
@@ -382,28 +382,7 @@ def build_bulk_single_certificate_html(certificate, custom_logo=None):
         certificate: Certificate data dictionary
         custom_logo: Pre-loaded base64 logo data (optional, to avoid repeated file I/O)
     """
-    def esc(value):
-        return html.escape(str(value if value is not None else ""))
-
-    verification = certificate.get("verification") or {}
-    ok = verification.get("ok")
-    
-    # Dynamic header title and color accents based on physical wipe status
-    title = "Certificate of Data Erasure" if ok else "Certificate of Sanitization Failure"
-    title_class = "cert-title-ok" if ok else "cert-title-fail"
-    status_class = "status-ok" if ok else "status-fail"
-    status_text = esc(verification.get("status"))
-
-    standard_rows = "".join(
-        f"<tr><th>Standard Claim: {esc(k)}</th><td>{json_cell(v)}</td></tr>"
-        for k, v in sorted((certificate.get("standard_claims") or {}).items(), key=lambda item: str(item[0]))
-    )
-    
-    # Build software versions row
-    software_versions = certificate.get("software_versions") or {}
-    software_versions_text = "; ".join(f"{k}: {v}" for k, v in sorted(software_versions.items())) if software_versions else "Not available"
-    
-    # Get verification level from evidence
+    # Get verification level from evidence (bulk template only)
     verification_evidence = certificate.get("verification_evidence") or {}
     verification_level = verification_evidence.get("verification_level") or "Not specified"
 
@@ -447,34 +426,10 @@ def build_bulk_single_certificate_html(certificate, custom_logo=None):
 </html>
 """
 
-    # Run clean, robust text replacements
-    content = template
-    content = content.replace("{{TITLE}}", esc(title))
-    content = content.replace("{{TITLE_CLASS}}", esc(title_class))
-    # Use provided custom_logo or load it if not provided (for backward compatibility)
-    if custom_logo is None:
-        custom_logo = get_custom_logo_base64()
-    if custom_logo:
-        logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">'
-    else:
-        logo_img = ""
-    content = content.replace("{{LOGO_IMG}}", logo_img)
-    content = content.replace("{{FRIENDLY_ID}}", esc(certificate.get("friendly_id")))
-    content = content.replace("{{STARTED_AT}}", esc(certificate.get("started_at")))
-    content = content.replace("{{FINISHED_AT}}", esc(certificate.get("finished_at")))
-    content = content.replace("{{TICKET_NUMBER}}", esc(certificate.get("ticket_number")))
-    content = content.replace("{{SERIAL}}", esc(certificate.get("serial")))
-    content = content.replace("{{MODEL}}", esc(certificate.get("model")))
-    content = content.replace("{{INTERFACE_TYPE}}", esc(certificate.get("interface_type")))
-    content = content.replace("{{DRIVE_TYPE}}", esc(certificate.get("drive_type")))
-    content = content.replace("{{METHOD}}", esc(certificate.get("method")))
-    content = content.replace("{{SOFTWARE_VERSIONS}}", esc(software_versions_text))
-    content = content.replace("{{STANDARD_ROWS}}", standard_rows)
-    content = content.replace("{{VERIFICATION_LEVEL}}", esc(verification_level))
-    content = content.replace("{{STATUS_CLASS}}", esc(status_class))
-    content = content.replace("{{STATUS_TEXT}}", esc(status_text))
-    content = content.replace("{{SIGNATURE_STATUS}}", esc((certificate.get("signature_meta") or {}).get("status")))
-    content = content.replace("{{SIGNATURE}}", esc(certificate.get("signature")))
+    content = _apply_common_template_replacements(template, certificate, custom_logo)
+
+    # Apply bulk-template-specific replacements
+    content = content.replace("{{VERIFICATION_LEVEL}}", _esc(verification_level))
 
     return content
 

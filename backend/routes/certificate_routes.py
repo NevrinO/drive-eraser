@@ -11,7 +11,7 @@ from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, calculate_session_to
 from common import get_config_dir, load_policy, get_db_path, get_cert_dir
 from bulk_cert import create_bulk_cert_job, run_bulk_cert_job
 from certificates import build_bulk_certificate_html
-from routes.admin_routes import require_admin_auth
+from routes._shared import require_admin_auth
 
 certificate_bp = Blueprint('certificate_routes', __name__)
 
@@ -20,12 +20,16 @@ def _validate_file_path(file_path, allowed_dir):
     if not file_path:
         return None, "File path is empty"
     
-    # Resolve to absolute paths
-    abs_file_path = os.path.abspath(file_path)
-    abs_allowed_dir = os.path.abspath(allowed_dir)
+    # Resolve to absolute paths (realpath resolves symlinks too)
+    abs_file_path = os.path.realpath(os.path.abspath(file_path))
+    abs_allowed_dir = os.path.realpath(os.path.abspath(allowed_dir))
     
     # Check if the resolved file path is within the allowed directory
-    if not os.path.commonprefix([abs_file_path, abs_allowed_dir]) == abs_allowed_dir:
+    # Use os.path.commonpath (component-level) instead of os.path.commonprefix (character-level)
+    try:
+        if os.path.commonpath([abs_file_path, abs_allowed_dir]) != abs_allowed_dir:
+            return None, "File path is outside allowed directory"
+    except ValueError:
         return None, "File path is outside allowed directory"
     
     return abs_file_path, None

@@ -20,24 +20,6 @@ def reset_interrupted_flag():
     yield
 
 
-class TestResolveVerifyCommandPath:
-    """Test command path resolution."""
-
-    def test_delegates_to_disk_utils(self):
-        """Test that resolve_verify_command_path delegates to disk_utils."""
-        with patch('disk_utils.get_command_path', return_value='/usr/bin/dd'):
-            from crypto_verification import resolve_verify_command_path
-            result = resolve_verify_command_path("dd")
-            assert result == '/usr/bin/dd'
-
-    def test_none_when_command_not_found(self):
-        """Test that None is returned when command not found."""
-        with patch('disk_utils.get_command_path', return_value=None):
-            from crypto_verification import resolve_verify_command_path
-            result = resolve_verify_command_path("dd")
-            assert result is None
-
-
 class TestSignalHandling:
     """Test signal interruption handling."""
 
@@ -150,7 +132,7 @@ class TestVerifySampledZeroCheck:
     def test_dd_not_available(self):
         """Test that missing dd command is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value=None):
+            with patch('crypto_verification.get_command_path', return_value=None):
                 from crypto_verification import verify_sampled_zero_check
                 result = verify_sampled_zero_check("/dev/sda")
                 assert result["ok"] is False
@@ -159,7 +141,7 @@ class TestVerifySampledZeroCheck:
     def test_blockdev_capacity_check_fails(self):
         """Test that blockdev failure is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -173,7 +155,7 @@ class TestVerifySampledZeroCheck:
     def test_interrupted_before_capacity_check(self):
         """Test that interruption before capacity check is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -186,7 +168,7 @@ class TestVerifySampledZeroCheck:
     def test_successful_zero_check_all_zeros(self):
         """Test successful verification when all data is zero."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -208,7 +190,7 @@ class TestVerifySampledZeroCheck:
     def test_non_zero_data_detected(self):
         """Test that non-zero data is detected."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -227,7 +209,7 @@ class TestVerifySampledZeroCheck:
     def test_dd_read_failure(self):
         """Test that dd read failure is handled with retry logic (retries=0 configuration)."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -245,7 +227,7 @@ class TestVerifySampledZeroCheck:
     def test_interrupted_during_reads(self):
         """Test that interruption during reads is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -264,7 +246,7 @@ class TestVerifySampledZeroCheck:
     def test_small_drive_capacity(self):
         """Test handling of very small drives."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -281,7 +263,7 @@ class TestVerifySampledZeroCheck:
     def test_max_read_bytes_limit(self):
         """Test that max_read_bytes limit is enforced."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -311,7 +293,7 @@ class TestCaptureBeforeState:
     def test_dd_not_available(self):
         """Test that missing dd command is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value=None):
+            with patch('crypto_verification.get_command_path', return_value=None):
                 from crypto_verification import capture_before_state
                 result = capture_before_state("/dev/sda")
                 assert result["ok"] is False
@@ -320,7 +302,7 @@ class TestCaptureBeforeState:
     def test_blockdev_capacity_check_fails(self):
         """Test that blockdev failure is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -334,7 +316,7 @@ class TestCaptureBeforeState:
     def test_successful_capture(self):
         """Test successful hash capture."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -356,7 +338,7 @@ class TestCaptureBeforeState:
     def test_interrupted_during_capture(self):
         """Test that interruption during capture is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -371,7 +353,7 @@ class TestCaptureBeforeState:
     def test_dd_read_failure_during_capture(self):
         """Test that dd read failure during capture is handled with retry logic."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -390,7 +372,7 @@ class TestCaptureBeforeState:
     def test_dd_read_failure_during_capture_detached(self):
         """Test that drive detachment is detected during capture with is_detached=True."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -474,7 +456,7 @@ class TestVerifyCryptoHashComparison:
     def test_dd_not_available(self):
         """Test that missing dd command is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value=None):
+            with patch('crypto_verification.get_command_path', return_value=None):
                 from crypto_verification import verify_crypto_hash_comparison
                 result = verify_crypto_hash_comparison("/dev/sda", {"ok": True}, 32*1024*1024)
                 assert result["ok"] is False
@@ -483,7 +465,7 @@ class TestVerifyCryptoHashComparison:
     def test_blockdev_capacity_check_fails(self):
         """Test that blockdev failure is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.return_value = MagicMock(returncode=1, stderr="blockdev error", stdout="")
                     from crypto_verification import verify_crypto_hash_comparison
@@ -494,7 +476,7 @@ class TestVerifyCryptoHashComparison:
     def test_before_state_no_offsets(self):
         """Test that missing offsets in before_state is rejected."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.return_value = MagicMock(returncode=0, stdout="1073741824")
                     from crypto_verification import verify_crypto_hash_comparison
@@ -505,7 +487,7 @@ class TestVerifyCryptoHashComparison:
     def test_before_state_offset_hash_mismatch(self):
         """Test that offset/hash count mismatch is rejected."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.return_value = MagicMock(returncode=0, stdout="1073741824")
                     from crypto_verification import verify_crypto_hash_comparison
@@ -517,7 +499,7 @@ class TestVerifyCryptoHashComparison:
     def test_all_hashes_changed(self):
         """Test successful verification when all hashes changed."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -532,7 +514,7 @@ class TestVerifyCryptoHashComparison:
     def test_no_hashes_changed_all_zeros(self):
         """Test that unchanged all-zero drive passes."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -550,7 +532,7 @@ class TestVerifyCryptoHashComparison:
     def test_no_hashes_changed_non_zero(self):
         """Test that unchanged non-zero drive fails."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -567,7 +549,7 @@ class TestVerifyCryptoHashComparison:
     def test_partial_wipe_detection(self):
         """Test that partial wipe (some changed, some non-zero unchanged) fails."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -593,7 +575,7 @@ class TestVerifyCryptoHashComparison:
     def test_partial_wipe_unchanged_are_zero(self):
         """Test that partial wipe with unchanged zero chunks passes."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -619,7 +601,7 @@ class TestVerifyCryptoHashComparison:
     def test_read_failure_with_retries(self):
         """Test that read failure with retries is handled."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     with patch('time.sleep') as mock_sleep:
                         mock_run.side_effect = [
@@ -636,7 +618,7 @@ class TestVerifyCryptoHashComparison:
     def test_read_success_after_retry(self):
         """Test that read success after retry works."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     with patch('time.sleep') as mock_sleep:
                         mock_run.side_effect = [
@@ -653,7 +635,7 @@ class TestVerifyCryptoHashComparison:
     def test_unchanged_nonzero_detected_via_hash_comparison(self):
         """Test that non-zero unchanged chunks are detected via before-hash comparison (A16 optimization)."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('subprocess.run') as mock_run:
                     mock_run.side_effect = [
                         MagicMock(returncode=0, stdout="1073741824"),  # capacity
@@ -683,7 +665,7 @@ class TestBlockdevRetryLogic:
     def test_retry_success_after_transient_failure(self):
         """Test that retry succeeds after initial transient failure."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -706,7 +688,7 @@ class TestBlockdevRetryLogic:
     def test_retry_exhaustion_drive_detached(self):
         """Test that retry exhaustion with detached drive returns correct error code."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -728,7 +710,7 @@ class TestBlockdevRetryLogic:
     def test_retry_exhaustion_other_failure(self):
         """Test that retry exhaustion with non-detached error returns secondary_capacity_check_failed."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -750,7 +732,7 @@ class TestBlockdevRetryLogic:
     def test_retry_with_policy_load_failure_uses_defaults(self):
         """Test that policy load failure uses hardcoded defaults (3 retries, 5s delay)."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -774,7 +756,7 @@ class TestBlockdevRetryLogic:
     def test_verify_crypto_hash_comparison_uses_retry_logic(self):
         """Test that verify_crypto_hash_comparison also uses retry logic."""
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/usr/bin/dd'):
                 with patch('crypto_verification.load_policy', return_value={"blockdev_post_wipe_retries": 1, "blockdev_post_wipe_retry_delay": 1}):
                     with patch('subprocess.run') as mock_run:
                         with patch('time.sleep') as mock_sleep:
@@ -846,7 +828,7 @@ class TestCheckDriveAlreadyZeroed:
 
     def test_dd_not_available(self):
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value=None):
+            with patch('crypto_verification.get_command_path', return_value=None):
                 from crypto_verification import check_drive_already_zeroed
                 result = check_drive_already_zeroed("/dev/sda")
                 assert result["ok"] is False
@@ -854,7 +836,7 @@ class TestCheckDriveAlreadyZeroed:
 
     def test_zeroed_large_drive(self):
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -881,7 +863,7 @@ class TestCheckDriveAlreadyZeroed:
 
     def test_data_present_detected(self):
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -915,7 +897,7 @@ class TestCheckDriveAlreadyZeroed:
 
     def test_small_drive_read_whole(self):
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -940,7 +922,7 @@ class TestCheckDriveAlreadyZeroed:
 
     def test_timeout_returns_inconclusive(self):
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)
@@ -973,7 +955,7 @@ class TestCheckDriveAlreadyZeroed:
         threading.Thread(target=trigger_cancel, daemon=True).start()
 
         with patch('crypto_verification.validate_device_path', return_value=True):
-            with patch('crypto_verification.resolve_verify_command_path', return_value='/bin/dd'):
+            with patch('crypto_verification.get_command_path', return_value='/bin/dd'):
                 with patch('crypto_verification.get_device_lock') as mock_lock:
                     mock_lock.return_value.__enter__ = Mock(return_value=None)
                     mock_lock.return_value.__exit__ = Mock(return_value=None)

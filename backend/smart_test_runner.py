@@ -342,11 +342,7 @@ def get_smart_test_status(device, diagnostics=None):
             # SCSI/SAS device with IE log - return status from IE
             test_status = "no_tests"
             percentage = 0
-            
-            if scsi_asc == 0x3F and scsi_ascq == 0x0E:
-                test_status = "in_progress"
-                percentage = 50  # SAS doesn't provide percentage, use midpoint
-            
+
             return {
                 "status": test_status,
                 "percentage": percentage,

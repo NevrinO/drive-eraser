@@ -31,7 +31,7 @@ class ZeroCheckManager:
         self._semaphore = threading.Semaphore(self._max_concurrency)
         self._semaphore_capacity = self._max_concurrency
         self._lock = threading.Lock()
-        self._queue = deque()  # (bay, device)
+        self._queue = deque()  # (bay, device) — pending zero-check requests
         self._running = {}  # bay -> Thread
         self._cancel_events = {}  # bay -> threading.Event
         self._status = {}  # bay -> status dict

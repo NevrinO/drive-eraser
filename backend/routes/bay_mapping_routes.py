@@ -6,9 +6,9 @@ import time
 from threading import Lock
 from flask import Blueprint, jsonify, request
 from app_config import logger, limiter
-from common import get_config_dir, load_policy, BAY_MAP_LOCK, save_bay_map, DRIVE_DATA_CACHE_TTL
+from common import get_config_dir, BAY_MAP_LOCK, save_bay_map, DRIVE_DATA_CACHE_TTL
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
-from routes.admin_routes import require_admin_auth
+from routes._shared import require_admin_auth
 from disk_ops import get_os_by_path, invalidate_drive_cache
 from device_discovery import invalidate_master_slot_cache
 from smart_parsing import get_smart_identity

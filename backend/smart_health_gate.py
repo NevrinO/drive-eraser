@@ -95,6 +95,8 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
     health_score, penalty_breakdown = calculate_drive_health_score(interface_type, smart, thresholds=thresholds)
     recommendation = get_drive_recommendation(interface_type, smart, health_score=health_score, thresholds=thresholds)
     smart_status = smart.get("status", "UNKNOWN")
+    if smart_status:
+        smart_status = smart_status.upper()
 
     # Extract critical attributes
     pending = safe_int(smart.get("pending_sectors"), 0)
@@ -127,8 +129,8 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
         if model_profile.get("high_risk"):
             model_risk = "high_risk"
 
-    # Intake history comparison (placeholder - requires database integration)
-    health_score_delta = None
+    # Intake history comparison (placeholder - requires database integration, not yet implemented)
+    health_score_delta = None  # TODO: Implement when prior-visit health history is available
 
     # Build details dict
     details = {
@@ -151,60 +153,61 @@ def pre_wipe_health_gate(device, interface_type, policy, diagnostics=None):
 
     # 2. Health score below DESTROY threshold
     destroy_threshold = thresholds.get("health_score_destroy_threshold", 25)
-    if block_destroy and health_score <= destroy_threshold:
+    if block_reason is None and block_destroy and health_score <= destroy_threshold:
         block_reason = "health_score_below_destroy_threshold"
 
     # 3. Recommendation is DESTROY
-    if block_destroy and recommendation.get("status") == "DESTROY":
+    if block_reason is None and block_destroy and recommendation.get("status") == "DESTROY":
         block_reason = "recommendation_destroy"
 
     # 4. Recommendation is SCRATCH (if configured)
-    if block_scratch and recommendation.get("status") == "SCRATCH":
+    if block_reason is None and block_scratch and recommendation.get("status") == "SCRATCH":
         block_reason = "recommendation_scratch"
 
     # 5. Critical attribute thresholds
-    if pending > max_pending:
+    if block_reason is None and pending > max_pending:
         block_reason = "pending_sectors_exceeded"
 
-    if reallocated > max_reallocated:
+    if block_reason is None and reallocated > max_reallocated:
         block_reason = "reallocated_sectors_exceeded"
 
-    if interface_errors > max_interface_errors:
+    if block_reason is None and interface_errors > max_interface_errors:
         block_reason = "interface_errors_exceeded"
 
     # 6. NVMe-specific checks
-    if interface_type == "nvme":
+    iface = (interface_type or "").strip().lower()
+    if iface == "nvme":
         nvme_available_spare = smart.get("reallocated_normalized")  # Available spare is stored here for NVMe
-        if nvme_available_spare is not None and nvme_available_spare < 10:
+        if block_reason is None and nvme_available_spare is not None and nvme_available_spare < 10:
             block_reason = "nvme_available_spare_low"
 
         nvme_critical_warning = safe_int(smart.get("_nvme_critical_warning"), 0)
-        if nvme_critical_warning & 0x04 or nvme_critical_warning & 0x08:
+        if block_reason is None and (nvme_critical_warning & 0x04 or nvme_critical_warning & 0x08):
             block_reason = "nvme_critical_warning"
 
     # 7. SAS-specific checks
-    if interface_type == "sas":
+    if iface == "sas":
         sas_grown_defect_fail_threshold = thresholds.get("sas_grown_defect_fail_threshold", 10000)
-        if sas_grown_defect_list is not None and sas_grown_defect_list > sas_grown_defect_fail_threshold:
+        if block_reason is None and sas_grown_defect_list is not None and sas_grown_defect_list > sas_grown_defect_fail_threshold:
             block_reason = "sas_grown_defect_list_exceeded"
 
-        if sas_scan_status and "halted" in str(sas_scan_status).lower():
+        if block_reason is None and sas_scan_status and "halted" in str(sas_scan_status).lower():
             block_reason = "sas_scan_halted"
 
-        if sas_uncorrectable_verify_errors >= 1:
+        if block_reason is None and sas_uncorrectable_verify_errors >= 1:
             block_reason = "sas_uncorrectable_verify_error"
 
-        if sas_uncorrectable_write_errors >= 1:
+        if block_reason is None and sas_uncorrectable_write_errors >= 1:
             block_reason = "sas_uncorrectable_write_error"
 
-        if sas_uncorrectable_read_errors >= 10:
+        if block_reason is None and sas_uncorrectable_read_errors >= 10:
             block_reason = "sas_uncorrectable_read_errors_exceeded"
 
-        if sas_sticky_lba:
+        if block_reason is None and sas_sticky_lba:
             block_reason = "sas_sticky_lba_detected"
 
     # 8. Device state check
-    if device_state in ("offline", "removed"):
+    if block_reason is None and device_state in ("offline", "removed"):
         block_reason = "device_offline_or_removed"
 
     # Determine if blocked
