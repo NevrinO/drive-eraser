@@ -287,8 +287,8 @@ function renderTriageTable() {
     const rec = drive.recommendation || { status: "UNKNOWN", comment: "" };
 
     let healthClass = "health-score-good";
-    if (drive.health_score !== null && drive.health_score <= 25) healthClass = "health-score-fail";
-    else if (drive.health_score !== null && drive.health_score <= 50) healthClass = "health-score-warning";
+    if (drive.health_score != null && drive.health_score <= 25) healthClass = "health-score-fail";
+    else if (drive.health_score != null && drive.health_score <= 50) healthClass = "health-score-warning";
 
     const bayLabel = _triageBayLabel(drive);
     const mediaType = (drive.drive_type || "unknown").toUpperCase();

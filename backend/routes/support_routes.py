@@ -386,6 +386,14 @@ def manage_logo():
             if file.filename == "":
                 return jsonify({"error": "No file selected"}), 400
             
+            # Validate upload size before PIL processing (A-B4-8)
+            MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+            file.seek(0, 2)
+            actual_size = file.tell()
+            file.seek(0)
+            if actual_size > MAX_UPLOAD_SIZE:
+                return jsonify({"error": f"File too large: {actual_size} bytes (max {MAX_UPLOAD_SIZE} bytes)"}), 413
+            
             # Validate format by reading with PIL
             try:
                 with Image.open(file) as img:

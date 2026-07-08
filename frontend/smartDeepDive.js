@@ -36,10 +36,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Event delegation for SMART test and refresh buttons
   smartDeepDiveModal.addEventListener('click', (event) => {
-    if (event.target.matches('[data-start-smart-test]')) {
-      startSmartTest(event.target.dataset.device);
-    } else if (event.target.matches('[data-refresh-smart-details]')) {
-      loadSmartDetails(event.target.dataset.device, '', '');
+    const testBtn = event.target.closest('[data-start-smart-test]');
+    if (testBtn) {
+      startSmartTest(testBtn.dataset.device);
+    } else {
+      const refreshBtn = event.target.closest('[data-refresh-smart-details]');
+      if (refreshBtn) {
+        loadSmartDetails(refreshBtn.dataset.device, '', '');
+      }
     }
   });
 });

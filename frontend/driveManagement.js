@@ -270,7 +270,6 @@ refreshButton.addEventListener("click", () => loadDrives(false, true));
 
 let _logTailInterval = null;
 let _logTailJobId = null;
-let _logTailPrevStatus = null;
 
 function encodePathKey(relPath) {
   return btoa(String.fromCharCode(...new TextEncoder().encode(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
@@ -282,7 +281,6 @@ function stopLogTailPolling() {
     _logTailInterval = null;
   }
   _logTailJobId = null;
-  _logTailPrevStatus = null;
 }
 
 async function fetchLogTail(relPath, lines) {
@@ -310,25 +308,22 @@ async function pollActiveLogTail(jobId) {
     updateLogTailElement(content);
   }
 
-  // Check if job status changed (completed/failed) — stop polling
+  // Check if job reached terminal status — stop polling
   const drive = currentDrives.find((d) => d.job_id === jobId);
   if (drive) {
     const status = String(drive.status || "").toUpperCase();
-    if (_logTailPrevStatus !== status && (status === "COMPLETED" || status === "FAILED" || status === "READY")) {
+    if (status === "COMPLETED" || status === "FAILED" || status === "READY") {
       stopLogTailPolling();
       // Load final log content
       const finalContent = await fetchLogTail(`active/job-${jobId}.log`, 50);
       if (finalContent !== null) updateLogTailElement(finalContent);
     }
-    _logTailPrevStatus = status;
   }
 }
 
 function startLogTailPolling(jobId) {
   stopLogTailPolling();
   _logTailJobId = jobId;
-  const drive = currentDrives.find((d) => d.job_id === jobId);
-  _logTailPrevStatus = drive ? String(drive.status || "").toUpperCase() : "RUNNING";
 
   // Immediately fetch once
   pollActiveLogTail(jobId);

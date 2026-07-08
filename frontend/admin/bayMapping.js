@@ -365,7 +365,8 @@ async function applyLayoutTemplate() {
       by_path: conf.by_path || "",
       by_path_nvme: conf.by_path_nvme || "",
       display_number: conf.display_number || "",
-      physical_position: conf.physical_position || null
+      physical_position: conf.physical_position || null,
+      enclosure_id: conf.enclosure_id ?? null
     };
   });
 
@@ -454,11 +455,14 @@ async function saveBayMappingConfiguration() {
             "by_path": primaryPath,
             "by_path_nvme": nvmePath,
             "display_number": displayNumber || null,
-            "physical_position": localBayMapCopy[bayId]?.physical_position || null
+            "physical_position": localBayMapCopy[bayId]?.physical_position || null,
+            "enclosure_id": localBayMapCopy[bayId]?.enclosure_id ?? null
         };
     });
 
+    let usedFallback = false;
     if (Object.keys(updatedBayMap).length === 0 || Object.keys(updatedBayMap).length !== Object.keys(localBayMapCopy).length) {
+        usedFallback = true;
         Object.keys(localBayMapCopy).forEach((bayId) => {
             const conf = localBayMapCopy[bayId];
             updatedBayMap[bayId] = {
@@ -469,7 +473,8 @@ async function saveBayMappingConfiguration() {
                 "by_path": conf.by_path || "",
                 "by_path_nvme": conf.by_path_nvme || "",
                 "display_number": conf.display_number || null,
-                "physical_position": conf.physical_position || null
+                "physical_position": conf.physical_position || null,
+                "enclosure_id": conf.enclosure_id ?? null
             };
         });
     }
@@ -490,7 +495,11 @@ async function saveBayMappingConfiguration() {
     });
 
     if (response.ok) {
-        alert("Bay mapping successfully saved!");
+        if (usedFallback) {
+            alert("Warning: Some bay rows could not be read from the UI. Saved with last known configuration. Please verify your changes were applied.");
+        } else {
+            alert("Bay mapping successfully saved!");
+        }
         hideUnsavedChangesIndicator();
         await loadDrives();
         await loadBayMappingConfig();
@@ -531,7 +540,8 @@ function bindDeleteBayButtons() {
   });
 }
 
-addBayBtn.addEventListener("click", () => {
+if (addBayBtn) {
+  addBayBtn.addEventListener("click", () => {
   if (Object.keys(localBayMapCopy).length >= 128) {
     alert("Add Blocked: Maximum threshold of 128 active configurations has been reached.");
     return;
@@ -585,9 +595,11 @@ addBayBtn.addEventListener("click", () => {
   renderBays(currentDrives);
   renderBayMappingConfig();
   showUnsavedChangesIndicator();
-});
+  });
+}
 
-saveBayMapBtn.addEventListener("click", async () => {
+if (saveBayMapBtn) {
+  saveBayMapBtn.addEventListener("click", async () => {
   saveBayMapBtn.disabled = true;
   saveBayMapBtn.textContent = "Saving...";
 
@@ -599,7 +611,8 @@ saveBayMapBtn.addEventListener("click", async () => {
     saveBayMapBtn.disabled = false;
     saveBayMapBtn.textContent = "Save Mapping Configuration";
   }
-});
+  });
+}
 
 if (saveBayMapBtnTop) {
   saveBayMapBtnTop.addEventListener("click", async () => {

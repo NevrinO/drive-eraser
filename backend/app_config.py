@@ -102,6 +102,7 @@ CORS(app, origins=allowed_origins)
 # Critical #4: Configure SameSite cookie attribute for CSRF protection
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()

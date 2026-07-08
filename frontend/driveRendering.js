@@ -707,7 +707,7 @@ function renderBayCard(drive) {
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray health-bar-fill--full"></div>
           </div>
-        ` : drive.health_score === null && drive.smart && String(drive.smart.status).toUpperCase() === "UNKNOWN" ? `
+        ` : drive.health_score == null && drive.smart && String(drive.smart.status).toUpperCase() === "UNKNOWN" ? `
           <div class="health-label">
             <span class="health-label-na">Life Expectancy</span>
             <span class="health-label-na">N/A</span>

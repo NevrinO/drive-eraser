@@ -34,7 +34,11 @@ async function loadHistoryIndex() {
   const query = historyQuery.value.trim();
   const filter = historyStatusFilter.value;
   try {
-    const response = await safeFetch(`/api/erase/history?query=${encodeURIComponent(query)}&limit=100`);
+    let url = `/api/erase/history?query=${encodeURIComponent(query)}&limit=100`;
+    if (filter !== "all") {
+      url += `&status=${encodeURIComponent(filter)}`;
+    }
+    const response = await safeFetch(url);
     if (!response.ok) throw new Error("HTTP " + response.status);
     let data;
     try {

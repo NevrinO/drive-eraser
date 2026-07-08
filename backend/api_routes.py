@@ -299,6 +299,7 @@ def register_routes(flask_app):
     def get_erase_history():
         limit_raw = request.args.get("limit", "100")
         query_str = request.args.get("query", "").strip().lower()
+        status_filter = request.args.get("status", "").strip().lower()
         
         try:
             limit = int(limit_raw)
@@ -310,16 +311,29 @@ def register_routes(flask_app):
         try:
             with closing(sqlite3.connect(get_db_path(), timeout=30.0)) as conn, conn:
                 conn.row_factory = sqlite3.Row
-                rows = conn.execute(
-                    """
-                    SELECT id, friendly_id, status, created_at, started_at, finished_at, error,
-                           request_json, result_json, verification_json, marker_json, certificate_json, job_type
-                    FROM erase_jobs
-                    ORDER BY job_number DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
+                if status_filter:
+                    rows = conn.execute(
+                        """
+                        SELECT id, friendly_id, status, created_at, started_at, finished_at, error,
+                               request_json, result_json, verification_json, marker_json, certificate_json, job_type
+                        FROM erase_jobs
+                        WHERE LOWER(status) = ?
+                        ORDER BY job_number DESC
+                        LIMIT ?
+                        """,
+                        (status_filter, limit),
+                    ).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT id, friendly_id, status, created_at, started_at, finished_at, error,
+                               request_json, result_json, verification_json, marker_json, certificate_json, job_type
+                        FROM erase_jobs
+                        ORDER BY job_number DESC
+                        LIMIT ?
+                        """,
+                        (limit,),
+                    ).fetchall()
 
             jobs = []
             for row in rows:

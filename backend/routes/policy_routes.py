@@ -117,6 +117,9 @@ def admin_policy():
                         return jsonify({"error": f"{field} exceeds maximum length of {max_len} characters"}), 400
                     if field == "secondary_verification_mode" and val not in _valid_secondary_verification_modes:
                         return jsonify({"error": f"secondary_verification_mode must be one of: {', '.join(sorted(_valid_secondary_verification_modes))}"}), 400
+                    if field == "slack_webhook_url" and val:
+                        if not val.startswith("https://hooks.slack.com/"):
+                            return jsonify({"error": "slack_webhook_url must be a valid Slack webhook URL starting with https://hooks.slack.com/"}), 400
                     current_policy[field] = val
                     
             lan_passphrase_changed = False

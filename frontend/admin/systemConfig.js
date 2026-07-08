@@ -15,7 +15,8 @@ const strictAuditConfirmYes = document.getElementById("strictAuditConfirmYes");
 const strictAuditConfirmNo = document.getElementById("strictAuditConfirmNo");
 const strictAuditConfirmClose = document.getElementById("strictAuditConfirmClose");
 
-let pendingFormData = null;
+let pendingPassphraseFormData = null;
+let pendingStrictAuditFormData = null;
 let currentStrictAuditMode = false;
 
 async function loadSystemConfig() {
@@ -37,22 +38,22 @@ async function loadSystemConfig() {
     
     const discoveryWorkersInput = document.getElementById("discovery_max_workers");
     if (discoveryWorkersInput) {
-      discoveryWorkersInput.value = policy.discovery_max_workers || 16;
+      discoveryWorkersInput.value = policy.discovery_max_workers ?? 16;
     }
     
     const maxConcurrentInput = document.getElementById("max_concurrent_wipes");
     if (maxConcurrentInput) {
-      maxConcurrentInput.value = policy.max_concurrent_wipes || 34;
+      maxConcurrentInput.value = policy.max_concurrent_wipes ?? 34;
     }
     
     const blockdevRetriesInput = document.getElementById("blockdev_post_wipe_retries");
     if (blockdevRetriesInput) {
-      blockdevRetriesInput.value = policy.blockdev_post_wipe_retries || 3;
+      blockdevRetriesInput.value = policy.blockdev_post_wipe_retries ?? 3;
     }
     
     const blockdevDelayInput = document.getElementById("blockdev_post_wipe_retry_delay");
     if (blockdevDelayInput) {
-      blockdevDelayInput.value = policy.blockdev_post_wipe_retry_delay || 5;
+      blockdevDelayInput.value = policy.blockdev_post_wipe_retry_delay ?? 5;
     }
     
     const strictAuditModeInput = document.getElementById("strict_audit_mode");
@@ -573,7 +574,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Check if passphrase is being changed
     if (formData.wipe_passphrase) {
       // Show confirmation dialog
-      pendingFormData = formData;
+      pendingPassphraseFormData = formData;
       openModal(passphraseConfirmModal);
       return;
     }
@@ -581,7 +582,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Check if strict audit mode is being enabled
     if (formData.strict_audit_mode && !currentStrictAuditMode) {
       // Show confirmation dialog
-      pendingFormData = formData;
+      pendingStrictAuditFormData = formData;
       openModal(strictAuditConfirmModal);
       return;
     }
@@ -594,9 +595,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (passphraseConfirmYes) {
     passphraseConfirmYes.addEventListener("click", async () => {
       closeModal(passphraseConfirmModal);
-      if (pendingFormData) {
-        await submitForm(pendingFormData);
-        pendingFormData = null;
+      if (pendingPassphraseFormData) {
+        await submitForm(pendingPassphraseFormData);
+        pendingPassphraseFormData = null;
       }
     });
   }
@@ -604,7 +605,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (passphraseConfirmNo || passphraseConfirmClose) {
     const cancelHandler = () => {
       closeModal(passphraseConfirmModal);
-      pendingFormData = null;
+      pendingPassphraseFormData = null;
     };
     if (passphraseConfirmNo) passphraseConfirmNo.addEventListener("click", cancelHandler);
     if (passphraseConfirmClose) passphraseConfirmClose.addEventListener("click", cancelHandler);
@@ -614,9 +615,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (strictAuditConfirmYes) {
     strictAuditConfirmYes.addEventListener("click", async () => {
       closeModal(strictAuditConfirmModal);
-      if (pendingFormData) {
-        await submitForm(pendingFormData);
-        pendingFormData = null;
+      if (pendingStrictAuditFormData) {
+        await submitForm(pendingStrictAuditFormData);
+        pendingStrictAuditFormData = null;
       }
     });
   }
@@ -624,7 +625,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (strictAuditConfirmNo || strictAuditConfirmClose) {
     const cancelHandler = () => {
       closeModal(strictAuditConfirmModal);
-      pendingFormData = null;
+      pendingStrictAuditFormData = null;
     };
     if (strictAuditConfirmNo) strictAuditConfirmNo.addEventListener("click", cancelHandler);
     if (strictAuditConfirmClose) strictAuditConfirmClose.addEventListener("click", cancelHandler);

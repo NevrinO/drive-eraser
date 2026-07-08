@@ -248,6 +248,15 @@ def manage_enclosures():
                     except (ValueError, TypeError):
                         return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
 
+                    # Safe numeric conversion for nvme_start_slot (A-B3-9)
+                    if nvme_start_slot is not None:
+                        try:
+                            nvme_start_slot = int(nvme_start_slot)
+                            if nvme_start_slot < 0 or nvme_start_slot > 9999:
+                                return jsonify({"error": "nvme_start_slot must be between 0 and 9999"}), 400
+                        except (ValueError, TypeError):
+                            return jsonify({"error": "Invalid nvme_start_slot: must be a valid integer"}), 400
+
                     # Build traversal positions if template has grid layout (rows/cols)
                     # Otherwise use linear iteration for simple slot_count-only templates
                     if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
@@ -385,6 +394,10 @@ def manage_enclosure(enclosure_id):
                     if not expander_sas_address.startswith("0x") or len(expander_sas_address) != 18 or not all(c in "0123456789abcdefABCDEF" for c in expander_sas_address[2:]):
                         return jsonify({"error": f"Invalid expander SAS address format: {expander_sas_address}"}), 400
             
+            # Validate enclosure name length if updated (A-B3-5)
+            if "name" in payload and len(str(payload["name"])) > 100:
+                return jsonify({"error": "Enclosure name must be 100 characters or less"}), 400
+
             # Validate custom_labels, custom_roles, and slot_mappings if provided
             custom_labels = payload.get("custom_labels", {})
             custom_roles = payload.get("custom_roles", {})
@@ -526,6 +539,10 @@ def add_enclosure_slot(enclosure_id):
             
             enclosure = enclosures[enclosure_id]
             slot_num = payload["physical_slot_number"]
+            if not isinstance(slot_num, int) or isinstance(slot_num, bool):
+                return jsonify({"error": "physical_slot_number must be an integer"}), 400
+            if slot_num < 0 or slot_num > 9999:
+                return jsonify({"error": "physical_slot_number must be between 0 and 9999"}), 400
             slot_key = str(slot_num)
             
             # Check if slot already exists
