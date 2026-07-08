@@ -102,6 +102,7 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         elif isinstance(physical_slot, str):
             if not physical_slot.isdigit():
                 return None
+            physical_slot = int(physical_slot)
         else:
             return None
 

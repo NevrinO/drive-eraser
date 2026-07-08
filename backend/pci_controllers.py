@@ -276,3 +276,27 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
             _DISCOVERY_CACHE['timestamp'] = time.time()
 
     return result
+
+
+def invalidate_pci_cache():
+    """Invalidate the PCI controller scan cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., enclosure add/edit/delete
+    or controller hot-plug) to ensure the next discovery uses fresh hardware data.
+    """
+    with _PCI_CACHE_LOCK:
+        _PCI_CACHE['data'] = None
+        _PCI_CACHE['timestamp'] = 0
+    logging.info("PCI controller cache invalidated")
+
+
+def invalidate_discovery_cache():
+    """Invalidate the device discovery cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., enclosure add/edit/delete
+    or device hot-plug) to ensure the next discovery uses fresh hardware data.
+    """
+    with _DISCOVERY_CACHE_LOCK:
+        _DISCOVERY_CACHE['data'] = None
+        _DISCOVERY_CACHE['timestamp'] = 0
+    logging.info("Device discovery cache invalidated")

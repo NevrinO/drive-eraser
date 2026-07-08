@@ -448,13 +448,14 @@ def validate_template(template):
             return f"hybrid_slots array too large (max 128 entries, got {len(hybrid_slots)})"
         
         # If grid fields are present, validate range and duplicates
+        # hybrid_slots use 0-based indexing (matching enumerate(positions) in backend and frontend)
         if has_grid:
             seen_slots = set()
             for slot in hybrid_slots:
                 try:
                     slot_num = int(slot)
-                    if slot_num < 1 or slot_num > (rows * cols):
-                        return f"hybrid_slots entry {slot_num} out of bounds (1-{rows * cols})"
+                    if slot_num < 0 or slot_num > (rows * cols - 1):
+                        return f"hybrid_slots entry {slot_num} out of bounds (0-{rows * cols - 1})"
                     # Check for duplicates
                     if slot_num in seen_slots:
                         return f"Duplicate hybrid_slots entry: {slot_num}"

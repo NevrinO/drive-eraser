@@ -316,7 +316,7 @@ async function renderConfiguration() {
           const data = await response.json();
           // Update the hardware info in the current render context
           // Re-render to show updated drive counts
-          renderConfiguration();
+          await renderConfiguration();
         }
       } catch (e) {
         console.error("Failed to refresh hardware info:", e);
@@ -414,7 +414,7 @@ function renderSlotAssignment() {
   if (rows > 0 && cols > 0 && SUPPORTED_TRAVERSALS.includes(traversal)) {
     positions = buildTraversalPositions(rows, cols, traversal, template.slot_count);
   } else {
-    positions = Array.from({ length: template.slot_count }, (_, i) => ({ row: i, col: 0 }));
+    positions = Array.from({ length: template.slot_count || template.bay_count || (rows * cols) }, (_, i) => ({ row: i, col: 0 }));
   }
 
   // When editing an existing enclosure, load saved slot data so custom HW IDs are preserved
@@ -468,6 +468,8 @@ function renderSlotAssignment() {
         const nvmeOffset = template.hybrid_slots.indexOf(slotIndex);
         const nvmeSlotNum = nvmeStartingSlot + nvmeOffset;
         nvmeHwId = String(nvmeSlotNum);
+      } else {
+        nvmeHwId = wizardData.nvme_starting_slot;
       }
     }
 

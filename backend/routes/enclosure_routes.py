@@ -10,6 +10,9 @@ from device_discovery import (
     invalidate_sas_expander_cache,
     invalidate_scsi_projections_cache,
     invalidate_master_slot_cache,
+    invalidate_enclosure_cache,
+    invalidate_pci_cache,
+    invalidate_discovery_cache,
     get_enclosure_hardware_info
 )
 from routes._shared import require_admin_auth, is_valid_id, _validate_slot_metadata, MAX_ENCLOSURES, MAX_SLOTS_PER_ENCLOSURE, MAX_TEMPLATES
@@ -316,6 +319,9 @@ def manage_enclosures():
                 invalidate_sas_expander_cache()
                 invalidate_scsi_projections_cache()
                 invalidate_master_slot_cache()
+                invalidate_enclosure_cache()
+                invalidate_pci_cache()
+                invalidate_discovery_cache()
             
             logger.info(f"Created enclosure: {payload['id']}")
             return jsonify({"status": "success", "enclosure": enclosure}), 201
@@ -458,6 +464,9 @@ def manage_enclosure(enclosure_id):
                 invalidate_sas_expander_cache()
                 invalidate_scsi_projections_cache()
                 invalidate_master_slot_cache()
+                invalidate_enclosure_cache()
+                invalidate_pci_cache()
+                invalidate_discovery_cache()
             
             logger.info(f"Updated enclosure: {enclosure_id}")
             return jsonify({"status": "success", "enclosure": enclosure}), 200
@@ -482,6 +491,9 @@ def manage_enclosure(enclosure_id):
                 invalidate_sas_expander_cache()
                 invalidate_scsi_projections_cache()
                 invalidate_master_slot_cache()
+                invalidate_enclosure_cache()
+                invalidate_pci_cache()
+                invalidate_discovery_cache()
             
             logger.info(f"Deleted enclosure: {enclosure_id}")
             return jsonify({"status": "success", "message": f"Enclosure {enclosure_id} deleted"}), 200

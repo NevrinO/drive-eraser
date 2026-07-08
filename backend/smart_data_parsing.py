@@ -37,13 +37,12 @@ def _load_drive_models():
     try:
         config_dir = get_config_dir()
         path = os.path.join(config_dir, "drive_models.json")
-        mtime = os.path.getmtime(path)
         with _DRIVE_MODELS_LOCK:
+            mtime = os.path.getmtime(path)
             if _DRIVE_MODELS_CACHE['data'] is not None and _DRIVE_MODELS_CACHE['mtime'] == mtime:
                 return _DRIVE_MODELS_CACHE['data']
-        with open(path, "r") as f:
-            data = json.load(f)
-        with _DRIVE_MODELS_LOCK:
+            with open(path, "r") as f:
+                data = json.load(f)
             _DRIVE_MODELS_CACHE['data'] = data
             _DRIVE_MODELS_CACHE['mtime'] = mtime
             return data

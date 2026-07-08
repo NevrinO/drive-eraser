@@ -202,8 +202,14 @@ async function saveSystemConfig(formData) {
     });
     
     if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || `HTTP ${response.status}`);
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorData = await response.json();
+        errorMessage = errorData.error || errorMessage;
+      } catch (e) {
+        // Response body is not JSON — use generic HTTP error
+      }
+      throw new Error(errorMessage);
     }
     
     const result = await response.json();

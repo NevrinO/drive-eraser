@@ -590,7 +590,7 @@ function renderNvmeErrorLog(errorLog) {
       const errorCount = entry.error_count !== undefined ? entry.error_count.toLocaleString() : '-';
       const sqid = entry.sqid !== undefined ? entry.sqid : '-';
       const cid = entry.cid !== undefined ? entry.cid : '-';
-      const status = entry.status !== undefined ? '0x' + entry.status.toString(16) : '-';
+      const status = entry.status !== undefined ? (typeof entry.status === 'number' ? '0x' + entry.status.toString(16) : String(entry.status)) : '-';
       const lba = entry.lba !== undefined ? entry.lba : '-';
       const nsid = entry.nsid !== undefined ? entry.nsid : '-';
       const command = entry.command_name || entry.command || '-';

@@ -63,17 +63,12 @@ function initializeTemplateManagement() {
     return;
   }
 
-  // Attach event listeners
-  if (createTemplateBtn) {
-    createTemplateBtn.addEventListener("click", () => {
-      openTemplateModal();
-    });
-  }
-  if (templateModalClose) {
-    templateModalClose.addEventListener("click", closeTemplateModal);
-  }
-  if (templateForm) {
-    templateForm.addEventListener("submit", async (e) => {
+  // Attach event listeners (guard at lines 51-64 already verified all elements are non-null)
+  createTemplateBtn.addEventListener("click", () => {
+    openTemplateModal();
+  });
+  templateModalClose.addEventListener("click", closeTemplateModal);
+  templateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       templateFormSubmit.disabled = true;
       templateFormSubmit.textContent = "Saving...";
@@ -90,8 +85,8 @@ function initializeTemplateManagement() {
         // Validate hybrid_slots
         if (hybridBayNumbers.length > 0) {
           const gridSize = parseInt(templateRows.value, 10) * parseInt(templateCols.value, 10);
-          if (hybridBayNumbers.some(bayNum => bayNum < 1 || bayNum > gridSize)) {
-            throw new Error("Hybrid slots must be between 1 and grid size (rows × columns)");
+          if (hybridBayNumbers.some(bayNum => bayNum < 0 || bayNum > gridSize - 1)) {
+            throw new Error("Hybrid slots must be between 0 and grid size - 1 (rows × columns - 1)");
           }
           // Check for duplicates
           const uniqueHybridSlots = new Set(hybridBayNumbers);
@@ -126,6 +121,9 @@ function initializeTemplateManagement() {
         if (!templateData.name) {
           throw new Error("Template name is required");
         }
+        if (isNaN(templateData.bay_count) || isNaN(templateData.rows) || isNaN(templateData.cols)) {
+          throw new Error("Bay count, rows, and columns must be valid numbers");
+        }
         if (templateData.bay_count < 1 || templateData.bay_count > 128) {
           throw new Error("Bay count must be between 1 and 128");
         }
@@ -158,30 +156,27 @@ function initializeTemplateManagement() {
         templateFormSubmit.textContent = editingTemplateId ? "Update Template" : "Create Template";
       }
     });
-  }
-  if (templateList) {
-    templateList.addEventListener("click", async (e) => {
+  templateList.addEventListener("click", async (e) => {
       const btn = e.target.closest(".btn-template-action");
       if (!btn) return;
 
-      const templateId = btn.getAttribute("data-template-id");
+      const clickedTemplateId = btn.getAttribute("data-template-id");
       const action = btn.getAttribute("data-action");
 
       if (action === "preview") {
-        const template = availableLayoutTemplates.find(t => t.id === templateId);
+        const template = availableLayoutTemplates.find(t => t.id === clickedTemplateId);
         if (template) {
           openTemplatePreview(template);
         }
       } else if (action === "edit") {
-        const template = availableLayoutTemplates.find(t => t.id === templateId);
+        const template = availableLayoutTemplates.find(t => t.id === clickedTemplateId);
         if (template) {
           openTemplateModal(template);
         }
       } else if (action === "delete") {
-        await deleteTemplate(templateId);
+        await deleteTemplate(clickedTemplateId);
       }
     });
-  }
   // Load template list when admin tab is activated
   const templateAdminTab = document.querySelector('[data-tab="adminPanel"]');
   if (templateAdminTab) {
@@ -322,7 +317,12 @@ async function loadTemplateList() {
 
   // Ensure availableLayoutTemplates is loaded before rendering
   if (availableLayoutTemplates.length === 0) {
-    await loadLayoutTemplates();
+    try {
+      await loadLayoutTemplates();
+    } catch (err) {
+      templateList.innerHTML = `<div class="template-error-msg">Failed to load template data: ${err.message}</div>`;
+      return;
+    }
   }
 
   try {

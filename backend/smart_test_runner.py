@@ -9,6 +9,7 @@ from disk_utils import get_command_path, run_command
 from smart_constants import correct_self_test_log_hours
 from smart_utils import validate_device_path
 from smart_data_parsing import get_smart_data
+from smart_db import get_historical_poh_for_serial
 
 logger = logging.getLogger(__name__)
 
@@ -260,7 +261,6 @@ def get_smart_test_status(device, diagnostics=None):
                 historical_poh = None
                 if serial:
                     try:
-                        from database import get_historical_poh_for_serial
                         historical_poh = get_historical_poh_for_serial(serial)
                     except Exception as e:
                         logger.warning(f"Failed to get historical POH for {serial}: {e}")

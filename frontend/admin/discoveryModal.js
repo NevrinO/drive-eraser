@@ -5,6 +5,9 @@
 // - discoveryState.js (state management)
 // - discoveryMapping.js (mapping business logic)
 
+(function() {
+'use strict';
+
 // Defensive namespace checks (CRITIQUE.md #2)
 // Throw errors to halt execution if required modules are not initialized
 if (typeof window.DiscoveryValidation === 'undefined') {
@@ -668,4 +671,5 @@ if (undoMappingBtn) {
     }
   });
 }
+})();
 // --- END OF FILE frontend/admin/discoveryModal.js ---

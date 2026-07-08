@@ -112,7 +112,7 @@
         // Validate device path format (Rule #9, #15)
         // Check in order: projected SCSI path, udev by-path, regular /dev/ device path
         const isProjectedPath = device.device_path.startsWith('pci-') && device.device_path.includes('-scsi-');
-        const isUdevByPath = /^(pci|usb|ieee1394|virtio|platform)-/.test(device.device_path);
+        const isUdevByPath = /^(pci|usb|ieee1394|virtio|platform)-/.test(device.device_path) && !isProjectedPath;
         
         if (isProjectedPath) {
           if (!validateProjectedByPath(device.device_path)) {

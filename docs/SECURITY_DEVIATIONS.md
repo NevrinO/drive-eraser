@@ -5,7 +5,7 @@
 **For general architectural decisions**, see `docs/ARCHITECTURE.md`.
 
 ## [2025-06-07] - Weak Default LAN Passphrase
-- **Deviation**: Using weak default credentials (lan_passphrase: "change_me") in config/policy.json instead of enforcing strong passphrase generation
+- **Deviation**: Using weak default credentials (lan_passphrase: "eraser123") in config/policy.json instead of enforcing strong passphrase generation
 - **Reason**: Development convenience and ease of initial setup for testing purposes
 - **Context**: The default LAN passphrase is intentionally weak to facilitate quick development and testing workflows. This is a known security deviation that must be addressed during production deployment. The install.sh script and documentation should clearly instruct administrators to change this passphrase to a strong value (minimum 12 characters, mixed case, numbers, symbols) before production use. The application does not enforce passphrase strength at runtime to avoid blocking development, but production deployments must manually update this configuration.
 

@@ -117,6 +117,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     # so we always run the by-path scan to ensure expander entries are present.
     # Deduplication via _seen_sas_phy prevents duplicates.
     by_path_base = "/dev/disk/by-path"  # defined here for use by all subsequent scans
+    by_path_entries = []  # default in case os.listdir fails
     try:
         by_path_entries = os.listdir(by_path_base)
         # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
@@ -193,7 +194,6 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     # Scan SAS direct-attached topology (no expander)
     # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
     try:
-        by_path_entries = os.listdir(by_path_base)
         # Pattern for direct-attached SAS: pci-{pci_addr}-scsi-{host}:0:{slot}:{lun}
         # Use \Z for strict end-of-string (lesson #12) and flexible LUN (\d+) for multi-LUN devices
         sas_direct_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-scsi-(\d+):0:(\d+):\d+\Z')
@@ -238,7 +238,6 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     # Scan motherboard SATA ports (ATA)
     # Pattern: pci-{pci_addr}-ata-{ata_num}
     try:
-        by_path_entries = os.listdir(by_path_base)
         # Pattern for motherboard SATA: pci-{pci_addr}-ata-{ata_num}
         # Use \Z for strict end-of-string (lesson #12)
         sata_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-ata-(\d+)\Z')

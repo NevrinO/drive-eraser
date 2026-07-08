@@ -93,12 +93,12 @@ def _auto_enqueue_zero_checks(results):
         logging.getLogger(__name__).info("Skipping zero-check auto-enrollment (startup delay window active)")
         return
 
-    present_bays = set()
+    seen_bays = set()
     for bay_info in results:
         bay = bay_info.get("bay")
         if not bay:
             continue
-        present_bays.add(bay)
+        seen_bays.add(bay)
         if not bay_info.get("present"):
             manager.clear_state(bay)
             continue
@@ -117,7 +117,7 @@ def _auto_enqueue_zero_checks(results):
 
     # Clear stale state for any bays that disappeared from the results entirely
     for bay in list(manager.get_all_status().keys()):
-        if bay not in present_bays:
+        if bay not in seen_bays:
             manager.clear_state(bay)
 
 # Performance: parallel collection settings

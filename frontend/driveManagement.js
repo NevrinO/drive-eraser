@@ -198,7 +198,7 @@ async function loadDrives(silent = false, forceRefresh = false) {
   }
 }
 
-baysGrid.addEventListener("click", (event) => {
+if (baysGrid) baysGrid.addEventListener("click", (event) => {
   const checkbox = event.target.closest(".card-checkbox");
   if (checkbox) {
     const bay = checkbox.getAttribute("data-checkbox-bay");
@@ -225,10 +225,11 @@ baysGrid.addEventListener("click", (event) => {
 
 async function handleZeroCheckAction(bay, action) {
   const button = document.querySelector(`[data-zero-check-action][data-bay="${CSS.escape(bay)}"]`);
+  let originalText = "";
   if (button) {
     if (button.disabled) return;
     button.disabled = true;
-    const originalText = button.textContent;
+    originalText = button.textContent;
     button.textContent = action === "start" ? "Starting..." : "Cancelling...";
   }
   try {
@@ -272,7 +273,7 @@ let _logTailJobId = null;
 let _logTailPrevStatus = null;
 
 function encodePathKey(relPath) {
-  return btoa(unescape(encodeURIComponent(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
+  return btoa(String.fromCharCode(...new TextEncoder().encode(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function stopLogTailPolling() {
@@ -313,7 +314,7 @@ async function pollActiveLogTail(jobId) {
   const drive = currentDrives.find((d) => d.job_id === jobId);
   if (drive) {
     const status = String(drive.status || "").toUpperCase();
-    if (_logTailPrevStatus === "RUNNING" && status !== "RUNNING") {
+    if (_logTailPrevStatus !== status && (status === "COMPLETED" || status === "FAILED" || status === "READY")) {
       stopLogTailPolling();
       // Load final log content
       const finalContent = await fetchLogTail(`active/job-${jobId}.log`, 50);
@@ -346,7 +347,7 @@ async function loadFailedLog(jobId) {
 }
 
 // Hook into bay detail modal open: start polling for running jobs, load failed log for failed jobs
-baysGrid.addEventListener("click", (event) => {
+if (baysGrid) baysGrid.addEventListener("click", (event) => {
   const card = event.target.closest("[data-bay]");
   if (!card) return;
   if (event.target.closest(".card-checkbox")) return;

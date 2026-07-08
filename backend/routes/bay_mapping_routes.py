@@ -219,54 +219,54 @@ def auto_detect_bays():
                 continue
 
             for slot_id in slot_ids:
-                    if slot_id in METADATA_DIRS:
-                        continue
-                    slot_path = os.path.join(enc_path, slot_id)
+                if slot_id in METADATA_DIRS:
+                    continue
+                slot_path = os.path.join(enc_path, slot_id)
 
-                    block_devs = []
+                block_devs = []
 
-                    # Find associated block device nodes under slot path
-                    dev_block_path = os.path.join(slot_path, "device", "block")
-                    try:
-                        for b in os.listdir(dev_block_path):
-                            block_devs.append(b)
-                    except (OSError, IOError):
-                        pass
+                # Find associated block device nodes under slot path
+                dev_block_path = os.path.join(slot_path, "device", "block")
+                try:
+                    for b in os.listdir(dev_block_path):
+                        block_devs.append(b)
+                except (OSError, IOError):
+                    pass
 
-                    dev_path = os.path.join(slot_path, "device")
-                    try:
-                        for name in os.listdir(dev_path):
-                            if name.startswith("sd") or name.startswith("nvme"):
-                                block_devs.append(name)
-                    except (OSError, IOError):
-                        pass
+                dev_path = os.path.join(slot_path, "device")
+                try:
+                    for name in os.listdir(dev_path):
+                        if name.startswith("sd") or name.startswith("nvme"):
+                            block_devs.append(name)
+                except (OSError, IOError):
+                    pass
 
-                    # Process found devices for this slot
-                    for sd_node in sorted(list(set(block_devs))):
-                        real_dev = f"/dev/{sd_node}"
-                        digits = re.findall(r'\d+', slot_id)
-                        if digits:
-                            try:
-                                slot_num = int(digits[0])
-                                # Validate slot number is within reasonable bounds
-                                if slot_num < 0 or slot_num > 9999:
-                                    continue
-                            except (ValueError, IndexError):
+                # Process found devices for this slot
+                for sd_node in sorted(list(set(block_devs))):
+                    real_dev = f"/dev/{sd_node}"
+                    digits = re.findall(r'\d+', slot_id)
+                    if digits:
+                        try:
+                            slot_num = int(digits[0])
+                            # Validate slot number is within reasonable bounds
+                            if slot_num < 0 or slot_num > 9999:
                                 continue
-                            # Map Slot 0-7 directly to bay0-bay7
-                            bay_id = f"bay{slot_num}"
-                            
-                            if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
-                                bay_id = f"bay{slot_num:02d}"
-                            
-                            by_path_link = None
-                            for link_entry, node_path in path_to_dev.items():
-                                if os.path.realpath(node_path) == os.path.realpath(real_dev):
-                                    by_path_link = link_entry
-                                    break
-                            
-                            if by_path_link:
-                                discovered_slots[bay_id] = by_path_link
+                        except (ValueError, IndexError):
+                            continue
+                        # Map Slot 0-7 directly to bay0-bay7
+                        bay_id = f"bay{slot_num}"
+                        
+                        if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
+                            bay_id = f"bay{slot_num:02d}"
+                        
+                        by_path_link = None
+                        for link_entry, node_path in path_to_dev.items():
+                            if os.path.realpath(node_path) == os.path.realpath(real_dev):
+                                by_path_link = link_entry
+                                break
+                        
+                        if by_path_link:
+                            discovered_slots[bay_id] = by_path_link
 
         # --- METHOD B: SAS Transport Subsystem bay_identifier Fallback (For Passive Direct-Attach Backplanes) ---
         if not discovered_slots:
@@ -277,52 +277,52 @@ def auto_detect_bays():
                 block_names = []
 
             for name in block_names:
-                    if not name.startswith("sd"):
-                        continue
-                        
-                    real_path = os.path.realpath(os.path.join(sys_block_dir, name))
+                if not name.startswith("sd"):
+                    continue
                     
-                    # Walk up the parent directory tree to find the SCSI/SAS transport target node
-                    npath = real_path
-                    found_bay = None
-                    
-                    while npath and npath != "/":
-                        sas_device_dir = os.path.join(npath, "sas_device")
-                        try:
-                            end_dev_ids = os.listdir(sas_device_dir)
-                        except (OSError, IOError):
-                            end_dev_ids = []
+                real_path = os.path.realpath(os.path.join(sys_block_dir, name))
+                
+                # Walk up the parent directory tree to find the SCSI/SAS transport target node
+                npath = real_path
+                found_bay = None
+                
+                while npath and npath != "/":
+                    sas_device_dir = os.path.join(npath, "sas_device")
+                    try:
+                        end_dev_ids = os.listdir(sas_device_dir)
+                    except (OSError, IOError):
+                        end_dev_ids = []
 
-                        for end_dev_id in end_dev_ids:
-                            bay_id_path = os.path.join(sas_device_dir, end_dev_id, "bay_identifier")
-                            try:
-                                with open(bay_id_path, "r") as f:
-                                    slot_str = f.read().strip()
-                                if slot_str.isdigit():
-                                    found_bay = int(slot_str)
-                                    break
-                            except Exception:
-                                pass
-                        if found_bay is not None:
-                            break
-                        npath = os.path.dirname(npath)
-                        
-                    if found_bay is not None:
-                        slot_num = found_bay
-                        bay_id = f"bay{slot_num}"
-                        
-                        if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
-                            bay_id = f"bay{slot_num:02d}"
-                        
-                        real_dev = f"/dev/{name}"
-                        by_path_link = None
-                        for link_entry, node_path in path_to_dev.items():
-                            if os.path.realpath(node_path) == os.path.realpath(real_dev):
-                                by_path_link = link_entry
+                    for end_dev_id in end_dev_ids:
+                        bay_id_path = os.path.join(sas_device_dir, end_dev_id, "bay_identifier")
+                        try:
+                            with open(bay_id_path, "r") as f:
+                                slot_str = f.read().strip()
+                            if slot_str.isdigit():
+                                found_bay = int(slot_str)
                                 break
-                                
-                        if by_path_link:
-                            discovered_slots[bay_id] = by_path_link
+                        except Exception:
+                            pass
+                    if found_bay is not None:
+                        break
+                    npath = os.path.dirname(npath)
+                    
+                if found_bay is not None:
+                    slot_num = found_bay
+                    bay_id = f"bay{slot_num}"
+                    
+                    if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
+                        bay_id = f"bay{slot_num:02d}"
+                    
+                    real_dev = f"/dev/{name}"
+                    by_path_link = None
+                    for link_entry, node_path in path_to_dev.items():
+                        if os.path.realpath(node_path) == os.path.realpath(real_dev):
+                            by_path_link = link_entry
+                            break
+                            
+                    if by_path_link:
+                        discovered_slots[bay_id] = by_path_link
 
         # If both scans yielded 0 populated slots, report back to the user
         if not discovered_slots:
@@ -334,35 +334,36 @@ def auto_detect_bays():
             }), 200
 
         updates_count = 0
-        for bay_id, by_path_val in discovered_slots.items():
-            if bay_id in bay_map:
-                if bay_map[bay_id].get("by_path") != by_path_val:
-                    bay_map[bay_id]["by_path"] = by_path_val
-                    updates_count += 1
-            else:
-                bay_map[bay_id] = {
-                    "role": "wipe",
-                    "locked": False,
-                    "type": "sas_sata",
-                    "label": "Work Bay",
-                    "by_path": by_path_val,
-                    "by_path_nvme": None
-                }
-                updates_count += 1
-
-        # Preserve existing enclosures section to prevent data loss when saving bay map
-        # Use BAY_MAP_LOCK to ensure atomic read-modify-write (Lesson #2)
+        # Re-read bay map inside lock and merge discovered slots to avoid TOCTOU
+        # (another request could have modified bay_map.json between the initial read and this save)
         with BAY_MAP_LOCK:
-            existing_bay_map = {}
+            current_bay_map_doc = {}
             try:
-                bay_map_path = os.path.join(config_dir, "bay_map.json")
                 with open(bay_map_path, "r", encoding="utf-8") as f:
-                    existing_bay_map = json.load(f)
+                    current_bay_map_doc = json.load(f)
             except Exception:
                 pass
-            
-            enclosures = existing_bay_map.get("enclosures") if isinstance(existing_bay_map, dict) else None
-            save_bay_map(compose_bay_map_document(bay_map, layout_metadata, enclosures), config_dir)
+            current_bay_map, current_layout_metadata = normalize_bay_map_document(current_bay_map_doc)
+            enclosures = current_bay_map_doc.get("enclosures") if isinstance(current_bay_map_doc, dict) else None
+
+            for bay_id, by_path_val in discovered_slots.items():
+                if bay_id in current_bay_map:
+                    if current_bay_map[bay_id].get("by_path") != by_path_val:
+                        current_bay_map[bay_id]["by_path"] = by_path_val
+                        updates_count += 1
+                else:
+                    current_bay_map[bay_id] = {
+                        "role": "wipe",
+                        "locked": False,
+                        "type": "sas_sata",
+                        "label": "Work Bay",
+                        "by_path": by_path_val,
+                        "by_path_nvme": None
+                    }
+                    updates_count += 1
+
+            save_bay_map(compose_bay_map_document(current_bay_map, current_layout_metadata, enclosures), config_dir)
+            bay_map = current_bay_map
         # Bay mapping changed: drop cached drive data so the next discovery re-resolves everything
         invalidate_drive_cache()
         # Also invalidate master slot map cache to refresh hardware topology

@@ -199,9 +199,9 @@ def _validate_slot_metadata(custom_labels, custom_roles, slot_mappings, default_
 
     return None
 
-def is_local_request(request):
+def is_local_request(req):
     """Check if the request is from localhost or local network."""
-    remote_addr = request.remote_addr
+    remote_addr = req.remote_addr
     if not remote_addr:
         return False
     

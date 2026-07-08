@@ -18,6 +18,21 @@ const docViewerTitle = document.getElementById("docViewerTitle");
 let currentDrives = [];
 let currentHistoryJobs = [];
 let selectedBays = new Set();
+
+function sanitizeHtml(html) {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  temp.querySelectorAll('script, style, iframe, object, embed, link, meta, base').forEach(el => el.remove());
+  temp.querySelectorAll('*').forEach(el => {
+    [...el.attributes].forEach(attr => {
+      if (attr.name.startsWith('on') ||
+          (attr.name === 'href' && (attr.value || '').trim().toLowerCase().startsWith('javascript:'))) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  return temp.innerHTML;
+}
 let isBatchMode = false;
 let ledgerExpandedJobs = new Set();
 let localBayMapCopy = {};
@@ -125,7 +140,7 @@ document.addEventListener("click", async (event) => {
     }
     const md = await resp.text();
     if (typeof marked !== "undefined" && marked.parse) {
-      docViewerContent.innerHTML = `<div class="markdown-body">${marked.parse(md)}</div>`;
+      docViewerContent.innerHTML = `<div class="markdown-body">${sanitizeHtml(marked.parse(md))}</div>`;
     } else {
       docViewerContent.innerHTML = `<pre class="terminal-pre">${escapeHtml(md)}</pre>`;
     }

@@ -1,10 +1,13 @@
 import sqlite3
 import json
+import logging
 import time
 import threading
 from contextlib import closing
 from datetime import datetime, timezone, timedelta
 from common import get_db_path
+
+logger = logging.getLogger(__name__)
 
 
 def record_intake_snapshot(serial, smart, recommendation, health_score=None):
@@ -54,8 +57,7 @@ def record_intake_snapshot(serial, smart, recommendation, health_score=None):
             conn.commit()
             return True
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to record intake snapshot for serial {serial}: {e}")
+        logger.warning(f"Failed to record intake snapshot for serial {serial}: {e}")
         return False
 
 
@@ -105,8 +107,7 @@ def load_prior_visit(serial):
             "snapshot": json.loads(row["snapshot_json"]) if row["snapshot_json"] else None
         }
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to load prior visit for serial {serial}: {e}")
+        logger.warning(f"Failed to load prior visit for serial {serial}: {e}")
         return None
 
 
@@ -139,8 +140,7 @@ def save_wipe_smart_snapshot(job_id, phase, snapshot):
             conn.commit()
             return True
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to save wipe SMART snapshot for job {job_id} phase {phase}: {e}")
+        logger.warning(f"Failed to save wipe SMART snapshot for job {job_id} phase {phase}: {e}")
         return False
 
 
@@ -277,8 +277,7 @@ def record_smart_test_run(device, serial, test_type, status, result=None, output
             conn.commit()
             return cursor.lastrowid
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to record SMART test run for device {device}: {e}")
+        logger.warning(f"Failed to record SMART test run for device {device}: {e}")
         return None
 
 
@@ -334,8 +333,7 @@ def get_historical_poh_for_serial(serial):
                     continue
             return max_poh
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to get historical POH for serial {serial}: {e}")
+        logger.warning(f"Failed to get historical POH for serial {serial}: {e}")
         return None
 
 
@@ -385,8 +383,7 @@ def update_smart_test_run(record_id, status, result=None, output_json=None, curr
             # Check if any row was actually updated
             return cursor.rowcount > 0
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to update SMART test run for record {record_id}: {e}")
+        logger.warning(f"Failed to update SMART test run for record {record_id}: {e}")
         return False
 
 
@@ -478,8 +475,7 @@ def get_smart_test_history(device=None, serial=None, limit=20):
                 for row in rows
             ]
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to get SMART test history: {e}")
+        logger.warning(f"Failed to get SMART test history: {e}")
         return []
 
 
@@ -530,12 +526,10 @@ def cleanup_stale_smart_tests():
             conn.commit()
             total_updated = cursor1.rowcount + cursor2.rowcount
             if total_updated > 0:
-                import logging
-                logging.getLogger(__name__).info(f"Cleaned up {total_updated} stale SMART test records")
+                logger.info(f"Cleaned up {total_updated} stale SMART test records")
             return total_updated
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to cleanup stale SMART tests: {e}")
+        logger.warning(f"Failed to cleanup stale SMART tests: {e}")
         return 0
 
 
@@ -552,7 +546,8 @@ def get_smart_test_status_batch(devices):
     Returns:
         Dict mapping device path to latest test status dict, or None if no test
     """
-    # Clean up stale records at most once per 60 seconds to avoid write-on-read
+    # TODO: Move cleanup to a background timer or scheduled task instead of triggering from a read path.
+    # The 60-second throttle mitigates the write-on-read issue for now.
     global _last_cleanup_time
     with _cleanup_lock:
         now = time.time()
@@ -611,6 +606,5 @@ def get_smart_test_status_batch(devices):
                     }
             return result
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"Failed to get batch SMART test status: {e}")
+        logger.warning(f"Failed to get batch SMART test status: {e}")
         return {}

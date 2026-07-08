@@ -4,6 +4,7 @@ import os
 import re
 import secrets
 import time
+import logging
 from contextlib import closing
 from datetime import datetime, timezone
 from common import get_db_path, get_cert_dir
@@ -275,7 +276,7 @@ def load_job(job_id):
         try:
             return json.loads(json_str or "{}")
         except (json.JSONDecodeError, TypeError, ValueError) as e:
-            logger = __import__("logging").getLogger("app")
+            logger = logging.getLogger("app")
             logger.warning(f"Failed to parse JSON for field '{field_name}' in job {row['id']}: {str(e)}")
             return {}
 

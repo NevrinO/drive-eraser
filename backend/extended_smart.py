@@ -13,6 +13,9 @@ from smart_utils import detect_interface_type, is_drive_ssd
 from smart_health import calculate_drive_health_score, get_drive_recommendation
 from disk_capabilities import detect_drive_capabilities
 from database import record_intake_snapshot
+# These functions are shared across disk_ops.py, discovery.py, and extended_smart.py.
+# They are prefixed with _ but are intentionally cross-module — they are internal to
+# the drive data collection subsystem and not part of any public API.
 from drive_collection import _process_marker_status, _build_drive_payload, _store_drive_payload, _get_cached_drive_payload
 from discovery_state import _shutdown_event
 

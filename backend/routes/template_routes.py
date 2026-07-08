@@ -142,10 +142,12 @@ def layout_templates_export():
         config_dir = get_config_dir()
         templates, _ = load_layout_templates(config_dir)
         
+        now = datetime.now(timezone.utc)
+
         # Prepare export data
         export_data = {
             "templates": templates,
-            "exported_at": datetime.now(timezone.utc).isoformat(),
+            "exported_at": now.isoformat(),
             "version": "1.0"
         }
         
@@ -161,7 +163,7 @@ def layout_templates_export():
             buffer,
             mimetype='application/json',
             as_attachment=True,
-            download_name=f'layout_templates_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json'
+            download_name=f'layout_templates_{now.strftime("%Y%m%d_%H%M%S")}.json'
         ), 200
         
     except Exception as e:

@@ -12,10 +12,15 @@ from device_discovery import (
     discover_controllers_and_devices,
     scan_pci_controllers,
     validate_pci_address,
-    get_scsi_host_slot_projections
+    get_scsi_host_slot_projections,
+    invalidate_master_slot_cache,
+    invalidate_enclosure_cache,
+    invalidate_pci_cache,
+    invalidate_discovery_cache
 )
 from disk_utils import validate_device_path
 from smart_parsing import get_smart_data
+from disk_ops import invalidate_drive_cache
 
 discovery_bp = Blueprint('discovery_routes', __name__)
 
@@ -415,6 +420,13 @@ def apply_slot_mapping():
             except Exception as e:
                 logger.error(f"Failed to save bay map: {str(e)}", exc_info=True)
                 return jsonify({"error": f"Failed to save bay map: {str(e)}"}), 500
+            
+            # Invalidate caches since bay map was modified
+            invalidate_drive_cache()
+            invalidate_master_slot_cache()
+            invalidate_enclosure_cache()
+            invalidate_pci_cache()
+            invalidate_discovery_cache()
         
         logger.info(f"Slot mapping applied: {updated_bays} bays updated by administrator")
         return jsonify({
