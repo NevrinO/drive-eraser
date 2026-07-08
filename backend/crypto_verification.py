@@ -499,7 +499,7 @@ def check_drive_already_zeroed(device, cancel_event=None, timeout_seconds=30):
     }
 
 
-def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*1024*1024, max_read_bytes=10*1024*1024*1024):
+def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*1024*1024, max_read_bytes=10*1024*1024*1024, progress_callback=None):
     """
     Performs a secondary zero-validation check by reading the first 32MB and
     spatially distributed samples across the drive LBA range. Combines random
@@ -557,6 +557,12 @@ def verify_sampled_zero_check(device, sample_ratio=0.10, chunk_size_bytes=32*102
                 return {"ok": False, "error": dd_result["error"], "details": f"dd read failed at offset {offset}: {dd_result['details']}"}
             data = dd_result["data"]
             total_verified_bytes += len(data)
+
+            if progress_callback:
+                try:
+                    progress_callback(offset, capacity, total_verified_bytes)
+                except Exception:
+                    pass
 
             if data.count(0) != len(data):
                 non_zero_found = True
@@ -657,7 +663,7 @@ def capture_before_state(device, sample_ratio=0.01, chunk_size_bytes=32*1024*102
             }
         }
 
-def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, chunk_size_bytes=32*1024*1024, max_read_bytes=512*1024*1024, before_state=None):
+def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, chunk_size_bytes=32*1024*1024, max_read_bytes=512*1024*1024, before_state=None, progress_callback=None):
     """
     Verifies crypto erase by comparing before/after hashes of sampled blocks.
     If before_state is provided, performs hash comparison. Otherwise falls back to
@@ -669,12 +675,12 @@ def verify_crypto_probe(device, mode="conservative_probe", sample_ratio=0.01, ch
 
     # If before_state is available, perform hash comparison
     if before_state and before_state.get("ok"):
-        return verify_crypto_hash_comparison(device, before_state, chunk_size_bytes)
+        return verify_crypto_hash_comparison(device, before_state, chunk_size_bytes, progress_callback=progress_callback)
 
     # Fallback to sampled zero check for strong verification
-    return verify_sampled_zero_check(device, sample_ratio=sample_ratio, chunk_size_bytes=chunk_size_bytes, max_read_bytes=max_read_bytes)
+    return verify_sampled_zero_check(device, sample_ratio=sample_ratio, chunk_size_bytes=chunk_size_bytes, max_read_bytes=max_read_bytes, progress_callback=progress_callback)
 
-def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
+def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes, progress_callback=None):
     """
     Compares before/after hashes to verify crypto erase changed the data.
     Issue 14: Uses policy-configured retry logic for blockdev calls.
@@ -732,6 +738,12 @@ def verify_crypto_hash_comparison(device, before_state, chunk_size_bytes):
             total_verified_bytes += len(data)
             after_hash = hashlib.sha256(data).hexdigest()
             after_hashes.append(after_hash)
+
+            if progress_callback:
+                try:
+                    progress_callback(offset, capacity, total_verified_bytes)
+                except Exception:
+                    pass
 
             if hmac.compare_digest(after_hash, before_hashes[idx]):
                 unchanged_indices.append(idx)

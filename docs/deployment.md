@@ -105,6 +105,36 @@ journalctl -u drive-eraser -f
 - After a fresh OS install, `bay_map.json` must be reconfigured because `/dev/disk/by-path/` values may differ between servers
 - Bay mapping can be configured through the web UI under the System Administration tab
 
+### Network Access Configuration
+
+The station's network exposure is controlled by two layers:
+
+**1. Bind Address (network layer)**
+
+The `bind_address` field in `config/policy.json` controls which network interfaces the server listens on:
+
+- `"0.0.0.0"` — Listen on all interfaces (remote access allowed, authentication required)
+- `"127.0.0.1"` — Listen on localhost only (no remote machine can connect)
+
+This is set during installation via the interactive prompt. To change it post-install:
+
+```bash
+sudo nano /opt/drive-eraser/config/policy.json
+# Change "bind_address" to "127.0.0.1" or "0.0.0.0"
+sudo systemctl restart drive-eraser
+```
+
+A service restart is required for bind address changes to take effect.
+
+**2. Allowed Remote IPs (application layer)**
+
+The `allowed_remote_ips` field in `config/policy.json` restricts which remote IPs can access the station. This takes effect immediately (no restart needed) and can be managed from the web UI under System Administration > Configure System Settings > Network Access.
+
+- `[]` (empty list) — Allow any remote IP (authentication still required)
+- `["10.20.34.0/24", "192.168.1.50"]` — Only allow IPs in the specified ranges
+
+Localhost (`127.0.0.1`, `::1`) always has full access regardless of this setting. Both individual IPs and CIDR ranges (e.g. `10.20.34.0/24`) are supported.
+
 ---
 
 ## 2. GitHub Releases

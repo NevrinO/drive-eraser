@@ -74,10 +74,14 @@ logger = logging.getLogger("app")
 app = Flask(__name__)
 
 # Initialize SocketIO for real-time WebSocket communication
-# Use same CORS policy as HTTP (Critical #2)
+# SocketIO CORS is set to '*' because the station is accessed from LAN IPs
+# that aren't in the policy's allowed_cors_origins list (which only covers
+# localhost). HTTP CORS (below) still enforces the policy-based origins.
+# Access control is provided by the IP allowlist and authentication in
+# security_gate, not by SocketIO CORS.
 policy = load_policy()
 allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
-socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
 
 # High #11: Initialize Flask-Limiter for rate limiting
 # NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.
@@ -154,7 +158,10 @@ def calculate_session_token(passphrase):
     return hmac.new(passphrase.encode('utf-8'), b"dws_admin_session", hashlib.sha256).hexdigest()
 
 def is_localhost(ip):
-    return ip in ("127.0.0.1", "::1", "localhost")
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # Handle IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+    return ip.startswith("::ffff:127.0.0.1")
 
 # Blueprint registration and security middleware are deferred to app.py to break circular imports.
 # Route modules import from app_config.py (logger, limiter, etc.),

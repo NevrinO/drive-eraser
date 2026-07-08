@@ -1267,6 +1267,15 @@
             </label>
           </div>
 
+          <div class="modal-section-header">Network Access</div>
+          <div class="form-fields-stack">
+            <label>
+              Allowed Remote IPs
+              <textarea id="allowed_remote_ips" name="allowed_remote_ips" rows="3" placeholder="Leave empty to allow all remote IPs&#10;e.g. 10.20.34.0/24, 192.168.1.50"></textarea>
+              <small class="text-muted-xs">Restrict remote access to specific IPs or CIDR ranges (one per line). Localhost always has full access. Leave empty to allow any remote IP (authentication still required).</small>
+            </label>
+          </div>
+
           <div class="modal-section-header">Diagnostics</div>
           <div class="form-fields-stack">
             <label>

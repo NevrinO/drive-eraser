@@ -665,6 +665,25 @@ def run_erase_job(job_id):
         method = job["request"]["method"]
         full_verification = job["request"].get("full_verification", False)
         sample_ratio = 1.0 if full_verification else 0.10
+        job_id_local = job_id
+
+    # Update phase: verifying sanitization
+    with ERASE_JOBS_LOCK:
+        job = ERASE_JOBS.get(job_id_local)
+        if job:
+            job["current_phase"] = "Verifying sanitization..."
+            job["progress_percent"] = 100.0
+
+    def _verification_progress_callback(offset, capacity, total_read_bytes):
+        try:
+            pct = min(100.0, (total_read_bytes / capacity * 100) if capacity else 0)
+            with ERASE_JOBS_LOCK:
+                job = ERASE_JOBS.get(job_id_local)
+                if job:
+                    job["current_phase"] = f"Verifying sanitization... ({pct:.0f}%)"
+                    job["progress_percent"] = 100.0
+        except Exception:
+            pass
 
     verification = verification_for_method(
         device,
@@ -672,7 +691,8 @@ def run_erase_job(job_id):
         method,
         execution,
         before_state,
-        sample_ratio=sample_ratio
+        sample_ratio=sample_ratio,
+        progress_callback=_verification_progress_callback
     )
 
     with ERASE_JOBS_LOCK:
@@ -737,6 +757,7 @@ def run_erase_job(job_id):
 
             if post_erase_marker and not disable_marker_request:
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
+                job["current_phase"] = "Writing post-erase marker..."
                 smart_baseline = verification.get("details", {}).get("smart_baseline_for_marker")
                 marker_result = write_marker_and_verify(job, smart_baseline=smart_baseline)
                 job["marker"] = marker_result
@@ -762,6 +783,7 @@ def run_erase_job(job_id):
                 logger.warning(f"Failed to remove active log: {e}")
                     
             try:
+                job["current_phase"] = "Generating certificate..."
                 job["certificate"] = build_certificate(job)
                 job["status"] = "completed"
                 job["error"] = None

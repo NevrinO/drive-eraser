@@ -107,6 +107,13 @@ async function loadSystemConfig() {
       discoveryDiagInput.value = policy.discovery_diag ? "true" : "false";
     }
 
+    // Allowed remote IPs
+    const allowedRemoteIpsInput = document.getElementById("allowed_remote_ips");
+    if (allowedRemoteIpsInput) {
+      const ips = policy.allowed_remote_ips || [];
+      allowedRemoteIpsInput.value = Array.isArray(ips) ? ips.join("\n") : "";
+    }
+
     // Log retention days
     const logRetentionInput = document.getElementById("log_retention_days");
     if (logRetentionInput) {
@@ -387,6 +394,17 @@ function validateForm() {
   const discoveryDiagInput = document.getElementById("discovery_diag");
   if (discoveryDiagInput) {
     formData.discovery_diag = discoveryDiagInput.value === "true";
+  }
+
+  // Allowed remote IPs (array of strings, one per line)
+  const allowedRemoteIpsInput = document.getElementById("allowed_remote_ips");
+  if (allowedRemoteIpsInput) {
+    const rawText = allowedRemoteIpsInput.value.trim();
+    if (rawText) {
+      formData.allowed_remote_ips = rawText.split("\n").map(s => s.trim()).filter(s => s.length > 0);
+    } else {
+      formData.allowed_remote_ips = [];
+    }
   }
 
   // Log retention days (integer 1-365)

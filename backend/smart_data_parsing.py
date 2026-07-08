@@ -346,7 +346,7 @@ def get_smart_data(device, diagnostics=None):
     }
 
 
-def stabilize_smart_writes(device, max_attempts=10, delay_seconds=5, required_consecutive=3):
+def stabilize_smart_writes(device, max_attempts=24, delay_seconds=5, required_consecutive=5):
     """Poll data_written_raw until it converges or max_attempts is reached.
 
     Drive firmware updates SMART write counters asynchronously. After a large
@@ -357,9 +357,9 @@ def stabilize_smart_writes(device, max_attempts=10, delay_seconds=5, required_co
 
     Args:
         device: Device path (e.g. /dev/sda)
-        max_attempts: Maximum number of polling attempts (default 10)
+        max_attempts: Maximum number of polling attempts (default 24)
         delay_seconds: Seconds to wait between reads (default 5)
-        required_consecutive: Number of consecutive equal reads required (default 3)
+        required_consecutive: Number of consecutive equal reads required (default 5)
 
     Returns:
         The converged data_written_raw value, or the last value if it never

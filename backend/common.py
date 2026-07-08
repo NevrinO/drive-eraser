@@ -81,6 +81,7 @@ DEFAULT_POLICY = {
     "prewipe_health_gate_max_health_score_drop": 20,
     "discovery_diag": False,
     "log_retention_days": 30,
+    "allowed_remote_ips": [],
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -116,6 +117,7 @@ POLICY_SCHEMA = {
         "slack_webhook_url": {"type": "string"},
         "lan_passphrase": {"type": "string"},
         "allowed_cors_origins": {"type": "array", "items": {"type": "string"}},
+        "allowed_remote_ips": {"type": "array", "items": {"type": "string"}},
         "discovery_max_workers": {"type": "integer", "minimum": 1, "maximum": 32},
         "background_smart_max_workers": {"type": "integer", "minimum": 1, "maximum": 32},
         "max_concurrent_wipes": {"type": "integer", "minimum": 1, "maximum": 256},

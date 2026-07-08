@@ -28,7 +28,7 @@ from disk_utils import (
 _VERSIONS_CACHE = {"data": None, "timestamp": 0}
 _VERSIONS_CACHE_TTL = 86400  # 24 hours in seconds - software versions only change on package updates
 _VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
-from smart_parsing import stabilize_smart_writes
+from smart_parsing import stabilize_smart_writes, get_smart_data
 from crypto_verification import (
     verify_sampled_zero_check,
     capture_before_state,
@@ -467,11 +467,15 @@ def write_marker_and_verify(job, smart_baseline=None):
 
     with device_lock:
         try:
-            # Use provided SMART baseline if available, otherwise capture it now
+            # Use provided SMART baseline if available, otherwise capture it now.
+            # Overwrite needs stabilization (host-written counter lag); firmware
+            # methods only need a single read (counter already settled).
             if smart_baseline is not None:
                 raw_writes = smart_baseline
-            else:
+            elif str((job.get("request") or {}).get("method", "")).lower() == "overwrite":
                 raw_writes = stabilize_smart_writes(device)
+            else:
+                raw_writes = get_smart_data(device).get("data_written_raw")
             job["request"]["data_written_at_wipe"] = raw_writes
             logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
 
@@ -505,7 +509,7 @@ def write_marker_and_verify(job, smart_baseline=None):
 
             if readback.get("status") == "checksum_valid":
                 stored_writes = readback.get("details", {}).get("data_written_at_wipe")
-                current_writes = stabilize_smart_writes(device)
+                current_writes = get_smart_data(device).get("data_written_raw")
                 logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
                 is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
                 readback["is_pristine"] = is_pristine
@@ -620,7 +624,7 @@ def get_software_versions():
     
     return versions
 
-def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10):
+def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10, progress_callback=None):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
 
@@ -660,7 +664,7 @@ def verification_for_method(device, interface_type, method, execution, before_st
 
         # Unified secondary verification: hash comparison if before_state available, otherwise sampled zero check
         if before_state and before_state.get("ok"):
-            crypto_probe = verify_crypto_probe(device, secondary_mode, before_state=before_state, sample_ratio=sample_ratio)
+            crypto_probe = verify_crypto_probe(device, secondary_mode, before_state=before_state, sample_ratio=sample_ratio, progress_callback=progress_callback)
             if not crypto_probe.get("ok"):
                 return {
                     "ok": False,
@@ -679,7 +683,7 @@ def verification_for_method(device, interface_type, method, execution, before_st
                 primary_result["details"]["secondary_status"] = "PASSED_HASH_COMPARISON"
             primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_hash_comparison")
         elif secondary_mode not in {"disabled", "controller_only"}:
-            secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio)
+            secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio, progress_callback=progress_callback)
             if not secondary_result.get("ok"):
                 return {
                     "ok": False,
@@ -699,10 +703,16 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["secondary_status"] = "SKIPPED"
             primary_result["details"]["verification_level"] = "primary_verification_only"
 
-        # Capture SMART baseline after secondary verification, polling until
-        # data_written_raw stabilizes to avoid firmware accounting lag causing
-        # false "written_since_wipe" marker status.
-        smart_baseline = stabilize_smart_writes(device)
+        # Capture SMART baseline after secondary verification.
+        # For overwrite: the host wrote zeroes, so the firmware write counter
+        # may lag — poll until it stabilizes to avoid false "written_since_wipe".
+        # For firmware-based methods (crypto/block/secure_erase): the controller
+        # completed the sanitize internally, so the counter is already settled
+        # by the time verification finishes — a single read is sufficient.
+        if selected_method == "overwrite":
+            smart_baseline = stabilize_smart_writes(device)
+        else:
+            smart_baseline = get_smart_data(device).get("data_written_raw")
         primary_result["details"]["smart_baseline_for_marker"] = smart_baseline
 
     return primary_result

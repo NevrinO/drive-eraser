@@ -141,7 +141,10 @@ function initWebSocket() {
     return;
   }
 
-  socket = io();
+  // Polling-only: Flask-SocketIO with async_mode='threading' doesn't support
+  // WebSocket transport. Without this, the client attempts WebSocket first,
+  // gets a 400, then falls back to polling — adding latency on each reconnect.
+  socket = io({ transports: ['polling'] });
 
   socket.on('connect', () => {
     console.log('WebSocket connected');

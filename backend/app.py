@@ -5,6 +5,7 @@
 import hmac
 import signal
 import threading
+import ipaddress
 from flask import jsonify
 from app_config import app, logger, get_config_dir, load_policy, socketio
 from routes import register_blueprints
@@ -16,28 +17,66 @@ register_blueprints(app)
 
 # Critical #4: Security gate middleware for remote access authentication
 # Must be registered after blueprints to avoid Flask's "first request" state
+
+def _is_ip_allowed(client_ip, allowed_ips):
+    """Check if a client IP matches any entry in the allowed IPs list.
+
+    Supports both individual IP addresses (e.g. '10.20.34.50') and
+    CIDR ranges (e.g. '10.20.34.0/24').
+    """
+    try:
+        client = ipaddress.ip_address(client_ip)
+        # Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:10.20.34.50)
+        if getattr(client, 'ipv4_mapped', None) is not None:
+            client = client.ipv4_mapped
+    except (ValueError, TypeError):
+        return False
+    for entry in allowed_ips:
+        try:
+            if "/" in entry:
+                network = ipaddress.ip_network(entry, strict=False)
+                if client in network:
+                    return True
+            else:
+                if client == ipaddress.ip_address(entry):
+                    return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
 @app.before_request
 def security_gate():
     from flask import request
     from app_config import is_localhost, load_policy, calculate_session_token
-    
-    if not request.path.startswith("/api/"):
-        return None
-    if request.path in ("/api/auth/verify", "/api/status"):
-        return None
-    if is_localhost(request.remote_addr):
-        return None
 
-    policy = load_policy()
-    lan_passphrase = policy.get("lan_passphrase", "eraser123")
+    is_local = is_localhost(request.remote_addr)
 
-    expected_token = calculate_session_token(lan_passphrase)
-    cookie_token = request.cookies.get("admin_session")
+    # IP allowlist check — applies to ALL requests (not just /api/).
+    # Localhost always bypasses. If allowed_remote_ips is non-empty,
+    # remote IPs must match an entry (individual IP or CIDR range).
+    if not is_local:
+        policy = load_policy()
+        allowed_ips = policy.get("allowed_remote_ips", [])
+        if allowed_ips:
+            client_ip = request.remote_addr
+            if not _is_ip_allowed(client_ip, allowed_ips):
+                return jsonify({"error": "Access denied: IP not allowed"}), 403
 
-    if hmac.compare_digest(cookie_token or "", expected_token):
-        return None
+        if not request.path.startswith("/api/"):
+            return None
+        if request.path in ("/api/auth/verify", "/api/status"):
+            return None
 
-    return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+        lan_passphrase = policy.get("lan_passphrase", "eraser123")
+        expected_token = calculate_session_token(lan_passphrase)
+        cookie_token = request.cookies.get("admin_session")
+
+        if hmac.compare_digest(cookie_token or "", expected_token):
+            return None
+
+        return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+
+    return None
 
 from database import init_wipe_db
 from common import validate_policy
