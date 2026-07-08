@@ -435,12 +435,34 @@ class TestCheckWriteTolerance:
         result = check_write_tolerance("nvme", 999, 1000)
         assert result is False
 
+    def test_sas_within_tolerance(self):
+        """Test SAS write tolerance (100,000 sectors ~ 49 MB).
+
+        SAS drives report via gigabytes_processed with 1 MB granularity,
+        so tolerance must account for counter granularity and firmware drift.
+        """
+        result = check_write_tolerance("sas", 101000, 1000)
+        assert result is True
+
+    def test_sas_exceeds_tolerance(self):
+        """Test SAS write exceeds tolerance."""
+        result = check_write_tolerance("sas", 101001, 1000)
+        assert result is False
+
+    def test_sas_real_world_drift(self):
+        """Test SAS real-world drift scenario: 9766-sector diff should be within tolerance."""
+        result = check_write_tolerance("sas", 63673021484, 63673011718)
+        assert result is True
+
     def test_interface_type_case_insensitive(self):
         """Test that interface type is case-insensitive."""
         result = check_write_tolerance("NVME", 1004, 1000)
         assert result is True
 
         result = check_write_tolerance("SATA", 5000, 1000)
+        assert result is True
+
+        result = check_write_tolerance("SAS", 101000, 1000)
         assert result is True
 
 

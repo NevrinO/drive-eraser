@@ -184,11 +184,23 @@ def check_write_tolerance(interface_type, current, stored):
         iface = str(interface_type or "unknown").lower()
         # NVMe write accounting granularity is 1 unit = 1 block (512B or 4K),
         # so tolerance of 4 accounts for metadata writes during sanitize.
-        # SATA/SAS report in 512B sectors, so 4096 sectors = 2MB tolerance
-        # for firmware accounting lag during sanitize operations.
+        # SATA SMART attr 241 reports in 512B sectors, so 4096 sectors = 2MB
+        # tolerance for firmware accounting lag during sanitize operations.
+        # SAS drives report via scsi_error_counter_log.write.gigabytes_processed
+        # with only 3 decimal places of GB (1 MB granularity). Each 0.001 GB
+        # increment = ~1953 sectors, and the counter naturally drifts over time
+        # due to firmware accounting lag. A 100,000-sector tolerance (~49 MB)
+        # accounts for ~50 counter increments of drift while still detecting
+        # any significant post-wipe write activity.
         NVME_WRITE_TOLERANCE = 4
-        OTHER_WRITE_TOLERANCE = 4096
-        return (diff <= NVME_WRITE_TOLERANCE) if "nvme" in iface else (diff <= OTHER_WRITE_TOLERANCE)
+        SATA_WRITE_TOLERANCE = 4096
+        SAS_WRITE_TOLERANCE = 100000
+        if "nvme" in iface:
+            return diff <= NVME_WRITE_TOLERANCE
+        elif "sas" in iface:
+            return diff <= SAS_WRITE_TOLERANCE
+        else:
+            return diff <= SATA_WRITE_TOLERANCE
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to check write tolerance: {e}")
         return False
