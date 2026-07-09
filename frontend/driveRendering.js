@@ -102,18 +102,19 @@ function _sortByPhysicalPosition(a, b, fallbackFn) {
   return fallbackFn(a, b);
 }
 
-function _renderSkeletonByEnclosure(bayEntries) {
-  const baysByEnclosure = {};
+function _renderGridByEnclosureHtml(items, getEnclosureId, getPosition, cardRenderer, sortUnassignedFn) {
+  const itemsByEnclosure = {};
   const unassigned = [];
 
-  bayEntries.forEach(([bayId, conf]) => {
-    if (conf.enclosure_id && workbenchEnclosures[conf.enclosure_id]) {
-      if (!baysByEnclosure[conf.enclosure_id]) {
-        baysByEnclosure[conf.enclosure_id] = [];
+  items.forEach(item => {
+    const encId = getEnclosureId(item);
+    if (encId && workbenchEnclosures[encId]) {
+      if (!itemsByEnclosure[encId]) {
+        itemsByEnclosure[encId] = [];
       }
-      baysByEnclosure[conf.enclosure_id].push([bayId, conf]);
+      itemsByEnclosure[encId].push(item);
     } else {
-      unassigned.push([bayId, conf]);
+      unassigned.push(item);
     }
   });
 
@@ -131,18 +132,18 @@ function _renderSkeletonByEnclosure(bayEntries) {
     const skipPositions = template.skip_positions || [];
     const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
-    const enclosureBays = baysByEnclosure[enclosureId] || [];
-    const bayByPosition = _buildPositionMap(
-      enclosureBays,
-      ([, conf]) => conf.physical_position,
-      ([bayId, conf]) => [bayId, conf]
+    const enclosureItems = itemsByEnclosure[enclosureId] || [];
+    const itemByPosition = _buildPositionMap(
+      enclosureItems,
+      getPosition,
+      item => item
     );
 
     gridHtml += `
       <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
         <div class="enclosure-section-header">
           <h3 class="enclosure-section-title enclosure-section-title--primary">${escapeHtml(enclosure.name || enclosureId)}</h3>
-          <small class="enclosure-section-count">${enclosureBays.length} slots</small>
+          <small class="enclosure-section-count">${enclosureItems.length} slots</small>
         </div>
         <div class="enclosure-bays-grid" data-grid-cols="${templateCols}">
     `;
@@ -153,9 +154,9 @@ function _renderSkeletonByEnclosure(bayEntries) {
         if (skipSet.has(posKey)) {
           gridHtml += _blockedCardHtml(row, col);
         } else {
-          const entry = bayByPosition.get(posKey);
-          if (entry) {
-            gridHtml += _skeletonCardHtml(entry[0], entry[1]);
+          const item = itemByPosition.get(posKey);
+          if (item) {
+            gridHtml += cardRenderer(item);
           } else {
             gridHtml += _emptyCardHtml(row, col);
           }
@@ -170,6 +171,9 @@ function _renderSkeletonByEnclosure(bayEntries) {
   });
 
   if (unassigned.length > 0) {
+    if (sortUnassignedFn) {
+      unassigned.sort(sortUnassignedFn);
+    }
     gridHtml += `
       <div class="enclosure-section">
         <div class="enclosure-section-header">
@@ -178,8 +182,8 @@ function _renderSkeletonByEnclosure(bayEntries) {
         </div>
         <div class="enclosure-bays-grid">
     `;
-    unassigned.forEach(([bayId, conf]) => {
-      gridHtml += _skeletonCardHtml(bayId, conf);
+    unassigned.forEach(item => {
+      gridHtml += cardRenderer(item);
     });
     gridHtml += `
         </div>
@@ -187,35 +191,25 @@ function _renderSkeletonByEnclosure(bayEntries) {
     `;
   }
 
-  baysGrid.innerHTML = gridHtml;
-  baysGrid.style.display = 'block';
-  applyDynamicStyles(baysGrid);
+  return gridHtml;
 }
 
-function _renderSkeletonLegacy(bayEntries) {
+function _renderGridLegacyHtml(items, getPosition, cardRenderer, gridCols) {
   const template = _getLocalTemplate();
   const skipPositions = (template && template.skip_positions) || [];
   const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
   let templateRows = 1;
-  let templateCols = 4;
+  let templateCols = gridCols;
   if (template) {
     templateRows = template.rows || 1;
-    templateCols = template.cols || 4;
-  } else {
-    const bayCount = bayEntries.length;
-    if (bayCount <= 4) templateCols = 4;
-    else if (bayCount <= 8) templateCols = 4;
-    else if (bayCount <= 10) templateCols = 5;
-    else templateCols = 4;
+    templateCols = template.cols || gridCols;
   }
 
-  baysGrid.style.gridTemplateColumns = `repeat(${templateCols}, minmax(0, 1fr))`;
-
-  const bayByPosition = _buildPositionMap(
-    bayEntries,
-    ([, conf]) => conf.physical_position,
-    ([bayId, conf]) => [bayId, conf]
+  const itemByPosition = _buildPositionMap(
+    items,
+    getPosition,
+    item => item
   );
 
   let gridHtml = "";
@@ -225,9 +219,9 @@ function _renderSkeletonLegacy(bayEntries) {
       if (skipSet.has(posKey)) {
         gridHtml += _blockedCardHtml(row, col);
       } else {
-        const entry = bayByPosition.get(posKey);
-        if (entry) {
-          gridHtml += _skeletonCardHtml(entry[0], entry[1]);
+        const item = itemByPosition.get(posKey);
+        if (item) {
+          gridHtml += cardRenderer(item);
         } else {
           gridHtml += _emptyCardHtml(row, col);
         }
@@ -235,6 +229,41 @@ function _renderSkeletonLegacy(bayEntries) {
     }
   }
 
+  return gridHtml;
+}
+
+function _renderSkeletonByEnclosure(bayEntries) {
+  const gridHtml = _renderGridByEnclosureHtml(
+    bayEntries,
+    ([, conf]) => conf.enclosure_id,
+    ([, conf]) => conf.physical_position,
+    ([bayId, conf]) => _skeletonCardHtml(bayId, conf)
+  );
+  baysGrid.innerHTML = gridHtml;
+  baysGrid.style.display = 'block';
+  applyDynamicStyles(baysGrid);
+}
+
+function _renderSkeletonLegacy(bayEntries) {
+  const template = _getLocalTemplate();
+  let templateCols = 4;
+  if (template && template.cols) {
+    templateCols = template.cols;
+  } else {
+    const bayCount = bayEntries.length;
+    if (bayCount <= 4) templateCols = 4;
+    else if (bayCount <= 8) templateCols = 4;
+    else if (bayCount <= 10) templateCols = 5;
+    else templateCols = 4;
+  }
+  baysGrid.style.gridTemplateColumns = `repeat(${templateCols}, minmax(0, 1fr))`;
+
+  const gridHtml = _renderGridLegacyHtml(
+    bayEntries,
+    ([, conf]) => conf.physical_position,
+    ([bayId, conf]) => _skeletonCardHtml(bayId, conf),
+    templateCols
+  );
   baysGrid.innerHTML = gridHtml;
   baysGrid.style.display = 'block';
   applyDynamicStyles(baysGrid);
@@ -252,121 +281,32 @@ function renderBays(drives) {
 }
 
 function renderBaysByEnclosure(drives) {
-  // Group drives by enclosure
-  const drivesByEnclosure = {};
-  const unassignedDrives = [];
-
-  drives.forEach(drive => {
-    if (drive.enclosure_id && workbenchEnclosures[drive.enclosure_id]) {
-      if (!drivesByEnclosure[drive.enclosure_id]) {
-        drivesByEnclosure[drive.enclosure_id] = [];
-      }
-      drivesByEnclosure[drive.enclosure_id].push(drive);
-    } else {
-      unassignedDrives.push(drive);
-    }
+  // Pre-collect drives with invalid positions (only those assigned to an enclosure)
+  const invalidPositionDrives = drives.filter(drive => {
+    if (!drive.enclosure_id || !workbenchEnclosures[drive.enclosure_id]) return false;
+    const pos = drive.physical_position;
+    return !(pos && Number.isInteger(pos.row) && Number.isInteger(pos.col));
   });
 
-  let gridHtml = "";
-  const allDrivesWithInvalidPositions = [];
-
-  // Render each enclosure
-  Object.keys(workbenchEnclosures).sort((a, b) => {
-    const orderA = workbenchEnclosures[a].display_order || 0;
-    const orderB = workbenchEnclosures[b].display_order || 0;
-    return orderA - orderB;
-  }).forEach(enclosureId => {
-    const enclosure = workbenchEnclosures[enclosureId];
-    const enclosureDrives = drivesByEnclosure[enclosureId] || [];
-    const template = enclosure.template || {};
-
-    // Get template dimensions
-    const templateRows = template.rows || 1;
-    const templateCols = template.cols || 1;
-    const skipPositions = template.skip_positions || [];
-    const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
-
-    // Create a map of drives by their physical position
-    const driveByPosition = _buildPositionMap(
-      enclosureDrives,
-      d => d.physical_position,
-      d => d
-    );
-
-    // Also collect drives with invalid positions
-    enclosureDrives.forEach(drive => {
-      const pos = drive.physical_position;
-      if (!(pos && Number.isInteger(pos.row) && Number.isInteger(pos.col))) {
-        allDrivesWithInvalidPositions.push(drive);
-      }
-    });
-
-    gridHtml += `
-      <div class="enclosure-section" data-enclosure-id="${escapeHtml(enclosureId)}">
-        <div class="enclosure-section-header">
-          <h3 class="enclosure-section-title enclosure-section-title--primary">${escapeHtml(enclosure.name || enclosureId)}</h3>
-          <small class="enclosure-section-count">${enclosureDrives.length} slots</small>
-        </div>
-        <div class="enclosure-bays-grid" data-grid-cols="${templateCols}">
-    `;
-
-    // Generate grid cells based on template dimensions
-    for (let row = 0; row < templateRows; row++) {
-      for (let col = 0; col < templateCols; col++) {
-        const posKey = `${row},${col}`;
-        const isSkipped = skipSet.has(posKey);
-        const drive = driveByPosition.get(posKey);
-
-        if (isSkipped) {
-          gridHtml += _blockedCardHtml(row, col);
-        } else if (drive) {
-          gridHtml += renderBayCard(drive);
-        } else {
-          gridHtml += _emptyCardHtml(row, col);
-        }
-      }
-    }
-
-    gridHtml += `
-        </div>
-      </div>
-    `;
-  });
-
-  // Render unassigned drives if any
-  if (unassignedDrives.length > 0) {
-    gridHtml += `
-      <div class="enclosure-section">
-        <div class="enclosure-section-header">
-          <h3 class="enclosure-section-title enclosure-section-title--warning">Unassigned Drives</h3>
-          <small class="enclosure-section-count">${unassignedDrives.length} drives</small>
-        </div>
-        <div class="enclosure-bays-grid">
-    `;
-
-    // Sort unassigned drives by physical position (row, col) to follow traversal pattern
-    unassignedDrives.sort((a, b) => _sortByPhysicalPosition(a, b, (a, b) => {
+  // Render main grid (unified function handles enclosure grouping + unassigned)
+  const gridHtml = _renderGridByEnclosureHtml(
+    drives,
+    d => d.enclosure_id,
+    d => d.physical_position,
+    renderBayCard,
+    (a, b) => _sortByPhysicalPosition(a, b, (a, b) => {
       const slotA = a.physical_slot_number || 0;
       const slotB = b.physical_slot_number || 0;
       return slotA - slotB;
-    }));
+    })
+  );
 
-    unassignedDrives.forEach(drive => {
-      gridHtml += renderBayCard(drive);
-    });
-
-    gridHtml += `
-        </div>
-      </div>
-    `;
-  }
-
-  // Render drives with invalid positions if any
-  // Filter to exclude: duplicates (MPIO), loops, dvdroms, usbs, and other unwanted device types
-  if (allDrivesWithInvalidPositions.length > 0) {
+  // Build invalid positions section
+  let invalidHtml = "";
+  if (invalidPositionDrives.length > 0) {
     // Deduplicate by serial number to avoid MPIO duplicates
     const seenSerials = new Set();
-    const filteredDrives = allDrivesWithInvalidPositions.filter(drive => {
+    const filteredDrives = invalidPositionDrives.filter(drive => {
       const serial = drive.serial;
       if (!serial) return false;
       if (seenSerials.has(serial)) return false;
@@ -385,15 +325,6 @@ function renderBaysByEnclosure(drives) {
     if (filteredDrives.length > 0) {
       console.warn(`Warning: ${filteredDrives.length} drive(s) have invalid or missing physical_position data and are rendered in fallback section`);
 
-      gridHtml += `
-        <div class="enclosure-section">
-          <div class="enclosure-section-header">
-            <h3 class="enclosure-section-title enclosure-section-title--warning">Drives with Invalid Positions</h3>
-            <small class="enclosure-section-count">${filteredDrives.length} drives</small>
-          </div>
-          <div class="enclosure-bays-grid">
-      `;
-
       // Sort by bay for consistent ordering
       filteredDrives.sort((a, b) => {
         const bayA = a.bay || "";
@@ -401,27 +332,31 @@ function renderBaysByEnclosure(drives) {
         return bayA.localeCompare(bayB);
       });
 
+      invalidHtml += `
+        <div class="enclosure-section">
+          <div class="enclosure-section-header">
+            <h3 class="enclosure-section-title enclosure-section-title--warning">Drives with Invalid Positions</h3>
+            <small class="enclosure-section-count">${filteredDrives.length} drives</small>
+          </div>
+          <div class="enclosure-bays-grid">
+      `;
       filteredDrives.forEach(drive => {
-        gridHtml += renderBayCard(drive);
+        invalidHtml += renderBayCard(drive);
       });
-
-      gridHtml += `
+      invalidHtml += `
           </div>
         </div>
       `;
     }
   }
 
-  baysGrid.innerHTML = gridHtml;
+  baysGrid.innerHTML = gridHtml + invalidHtml;
   baysGrid.style.display = 'grid';
   applyDynamicStyles(baysGrid);
 }
 
 function renderBaysLegacy(drives) {
-  // Get skip positions from template if available
   const template = _getLocalTemplate();
-  const skipPositions = (template && template.skip_positions) || [];
-  const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
 
   const orderedDrives = [...drives].sort((a, b) => _sortByPhysicalPosition(a, b, (a, b) => {
     const aNum = parseInt(String(a.display_number || a.bay).replace(/\D/g, ""), 10) || 0;
@@ -458,39 +393,12 @@ function renderBaysLegacy(drives) {
   }
   baysGrid.style.gridTemplateColumns = `repeat(${gridCols}, minmax(0, 1fr))`;
 
-  // Get template dimensions for grid generation
-  let templateRows = 1;
-  let templateCols = gridCols;
-  if (template) {
-    templateRows = template.rows || 1;
-    templateCols = template.cols || gridCols;
-  }
-
-  // Create a map of drives by their physical position
-  const driveByPosition = _buildPositionMap(
+  const gridHtml = _renderGridLegacyHtml(
     dedupedDrives,
     d => d.physical_position,
-    d => d
+    renderBayCard,
+    gridCols
   );
-
-  // Generate grid cells
-  let gridHtml = "";
-  for (let row = 0; row < templateRows; row++) {
-    for (let col = 0; col < templateCols; col++) {
-      const posKey = `${row},${col}`;
-      const isSkipped = skipSet.has(posKey);
-      const drive = driveByPosition.get(posKey);
-
-      if (isSkipped) {
-        gridHtml += _blockedCardHtml(row, col);
-      } else if (drive) {
-        gridHtml += renderBayCard(drive);
-      } else {
-        gridHtml += _emptyCardHtml(row, col);
-      }
-    }
-  }
-
   baysGrid.innerHTML = gridHtml;
   baysGrid.style.display = 'grid';
   applyDynamicStyles(baysGrid);
@@ -525,7 +433,7 @@ function getZeroCheckBannerLabel(drive) {
   return null;
 }
 
-function renderBayCard(drive) {
+function _classifyDriveState(drive) {
   const isReady = drive.present && !drive.locked && drive.role !== "os" && drive.role !== "reserved";
   const isEmpty = !drive.present;
   const driveStatus = (drive.status || "READY").toUpperCase();
@@ -586,13 +494,18 @@ function renderBayCard(drive) {
     bannerLabel = "⚠️ UNCONFIGURED BAY";
   }
 
+  return { isReady, isEmpty, isCritical, isRunning, isCompletedSecure, isCompletedInsecure, isMarkerError, isWrittenSinceWipe, isMarkerDisabled, isUnconfigured, isSmartTestRunning, isCompleted, zeroCheckClass, zeroCheckLabel, stateClass, bannerLabel };
+}
+
+function _computeRecommendationTint(state, drive) {
   // Recommendation tint: override internal card background based on recommendation status.
   // Applies to ready (healthy) and completed (sanitized) states. Does not change border color.
   // Checked before the unconfigured string mutation so stateClass is still a clean single value.
   const recStatus = drive.recommendation ? String(drive.recommendation.status).toUpperCase() : "";
-  const isTintable = stateClass === "healthy" || stateClass === "completed" || stateClass === "written-since-wipe";
+  const isTintable = state.stateClass === "healthy" || state.stateClass === "completed" || state.stateClass === "written-since-wipe";
 
-  if (isUnconfigured) {
+  let stateClass = state.stateClass;
+  if (state.isUnconfigured) {
     stateClass += " unconfigured";
   }
   let recClass = "";
@@ -603,13 +516,17 @@ function renderBayCard(drive) {
     else if (recStatus === "USED_GOOD" || recStatus === "NEW_STOCK") recClass = "rec-used-good";
   }
 
+  return { recClass, stateClass, recStatus };
+}
+
+function _renderSubBanner(drive, state, recStatus) {
   // Sub-banner: shows recommendation or SMART status below the main banner.
   // Shown on all states with drive health data, except mid-operation states
   // (running, smart test, zero check running) and states with no drive data
   // (empty, OS, locked, unconfigured).
-  const isZeroCheckRunning = zeroCheckClass === "zero_check_running";
-  const showSubBanner = !isEmpty && drive.role !== "os" && !drive.locked &&
-    !isRunning && !isSmartTestRunning && !isUnconfigured && !isZeroCheckRunning;
+  const isZeroCheckRunning = state.zeroCheckClass === "zero_check_running";
+  const showSubBanner = !state.isEmpty && drive.role !== "os" && !drive.locked &&
+    !state.isRunning && !state.isSmartTestRunning && !state.isUnconfigured && !isZeroCheckRunning;
 
   let subBannerHtml = "";
   if (showSubBanner) {
@@ -647,6 +564,10 @@ function renderBayCard(drive) {
     }
   }
 
+  return subBannerHtml;
+}
+
+function _computeDisplayValues(drive, stateClass, recClass, subBannerHtml) {
   const healthScore = calculateDriveHealthScore(drive);
   const classes = ["bay-card", stateClass];
   if (recClass) classes.push(recClass);
@@ -683,34 +604,38 @@ function renderBayCard(drive) {
   // Display MPIO device path if available
   const devicePath = drive.mpio_device || drive.device || "-";
 
+  return { healthScore, classes, ifaceLabel, badgeClass, driveTypeLabel, driveTypeClass, progressPercent, phaseLabel, bayPrimaryText, devicePath };
+}
+
+function _renderCardHtml(drive, state, subBannerHtml, display) {
   return `
-    <article class="${classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
-      <input type="checkbox" class="card-checkbox ${isBatchMode && isReady ? 'card-checkbox--visible' : ''}" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""}>
-      <div class="bay-banner">${escapeHtml(bannerLabel)}</div>
+    <article class="${display.classes.join(" ")}" data-bay="${escapeHtml(drive.bay)}">
+      <input type="checkbox" class="card-checkbox ${isBatchMode && state.isReady ? 'card-checkbox--visible' : ''}" data-checkbox-bay="${escapeHtml(drive.bay)}" ${selectedBays.has(drive.bay) ? "checked" : ""}>
+      <div class="bay-banner">${escapeHtml(state.bannerLabel)}</div>
       ${subBannerHtml}
       <div class="bay-header-row">
         <div class="bay-number">
-          ${escapeHtml(bayPrimaryText)}
+          ${escapeHtml(display.bayPrimaryText)}
         </div>
-        ${isEmpty ? "" : `
+        ${state.isEmpty ? "" : `
           <div class="bay-card-badges">
-            <div class="drive-type-badge ${badgeClass}">${escapeHtml(ifaceLabel)}</div>
-            ${driveTypeLabel ? `<div class="drive-type-badge ${driveTypeClass} drive-type-badge--xs">${escapeHtml(driveTypeLabel)}</div>` : ""}
-            ${isUnconfigured ? `<div class="unconfigured-badge" title="This bay has no device path configured in bay_map.json">⚠️ Unconfigured</div>` : ""}
+            <div class="drive-type-badge ${display.badgeClass}">${escapeHtml(display.ifaceLabel)}</div>
+            ${display.driveTypeLabel ? `<div class="drive-type-badge ${display.driveTypeClass} drive-type-badge--xs">${escapeHtml(display.driveTypeLabel)}</div>` : ""}
+            ${state.isUnconfigured ? `<div class="unconfigured-badge" title="This bay has no device path configured in bay_map.json">⚠️ Unconfigured</div>` : ""}
           </div>
         `}
       </div>
-      ${isEmpty ? `<div class="empty-label">${isUnconfigured ? "— UNCONFIGURED —" : "— Empty slot —"}</div>` : `
+      ${state.isEmpty ? `<div class="empty-label">${state.isUnconfigured ? "— UNCONFIGURED —" : "— Empty slot —"}</div>` : `
         <div class="drive-serial">S/N: ${escapeHtml(drive.serial || "-")}</div>
         <div class="drive-model">${escapeHtml(drive.model || "Generic Drive")}</div>
 
-        ${isRunning ? `
+        ${state.isRunning ? `
           <div class="health-label">
-            <span class="health-label-running">${escapeHtml(phaseLabel)}</span>
-            <span class="health-label-running">${progressPercent}%</span>
+            <span class="health-label-running">${escapeHtml(display.phaseLabel)}</span>
+            <span class="health-label-running">${display.progressPercent}%</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill fill-blue" data-width="${progressPercent}"></div>
+            <div class="health-bar-fill fill-blue" data-width="${display.progressPercent}"></div>
           </div>
         ` : drive.smart && drive.smart.smart_polling ? `
           <div class="health-label">
@@ -728,7 +653,7 @@ function renderBayCard(drive) {
           <div class="health-bar-track">
             <div class="health-bar-fill fill-gray health-bar-fill--full"></div>
           </div>
-        ` : healthScore === null ? `
+        ` : display.healthScore === null ? `
           <div class="health-label">
             <span class="health-label-na">Life Expectancy</span>
             <span class="health-label-na">Calculating...</span>
@@ -739,18 +664,26 @@ function renderBayCard(drive) {
         ` : `
           <div class="health-label">
             <span>Life Expectancy</span>
-            <span>${healthScore}%</span>
+            <span>${display.healthScore}%</span>
           </div>
           <div class="health-bar-track">
-            <div class="health-bar-fill ${healthScore > 75 ? 'fill-green' : healthScore > 40 ? 'fill-yellow' : 'fill-red'}" data-width="${healthScore}"></div>
+            <div class="health-bar-fill ${display.healthScore > 75 ? 'fill-green' : display.healthScore > 40 ? 'fill-yellow' : 'fill-red'}" data-width="${display.healthScore}"></div>
           </div>
         `}
 
         <div class="drive-meta">
           <span>${escapeHtml(drive.capacity_str)}</span>
-          <span>${escapeHtml(devicePath)}</span>
+          <span>${escapeHtml(display.devicePath)}</span>
         </div>
       `}
     </article>
   `;
+}
+
+function renderBayCard(drive) {
+  const state = _classifyDriveState(drive);
+  const rec = _computeRecommendationTint(state, drive);
+  const subBannerHtml = _renderSubBanner(drive, state, rec.recStatus);
+  const display = _computeDisplayValues(drive, rec.stateClass, rec.recClass, subBannerHtml);
+  return _renderCardHtml(drive, state, subBannerHtml, display);
 }

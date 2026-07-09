@@ -560,59 +560,6 @@ let previewAnimationInterval = null;
 let previewCurrentIndex = 0;
 let previewTraversalOrder = [];
 
-function buildTraversalOrder(template) {
-  const rows = template.rows || 1;
-  const cols = template.cols || 1;
-  const bayCount = template.bay_count || (rows * cols);
-  const traversal = template.traversal_preset || "top_left_down_then_across";
-  const skipPositions = template.skip_positions || [];
-
-  const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
-  const positions = [];
-
-  // Build traversal order - bayNum is not used for display, only for tracking
-  if (traversal === "bottom_left_up_then_across") {
-    for (let col = 0; col < cols; col++) {
-      for (let row = rows - 1; row >= 0; row--) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else if (traversal === "top_left_across_then_down") {
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else if (traversal === "bottom_left_across_then_up") {
-    for (let row = rows - 1; row >= 0; row--) {
-      for (let col = 0; col < cols; col++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else {
-    // top_left_down_then_across (default)
-    for (let col = 0; col < cols; col++) {
-      for (let row = 0; row < rows; row++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  }
-
-  return positions;
-}
-
 function renderTemplatePreviewGrid(template) {
   const rows = template.rows || 1;
   const cols = template.cols || 1;
@@ -825,7 +772,12 @@ function openTemplatePreview(template) {
     </div>
   `;
 
-  previewTraversalOrder = buildTraversalOrder(template);
+  previewTraversalOrder = buildTraversalPositions(
+    template.rows || 1, template.cols || 1,
+    template.traversal_preset || "top_left_down_then_across",
+    template.bay_count || (template.rows * template.cols),
+    template.skip_positions || []
+  );
   renderTemplatePreviewGrid(template);
   resetPreviewGrid();
 

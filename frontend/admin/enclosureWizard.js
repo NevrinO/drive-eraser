@@ -339,56 +339,6 @@ async function renderConfiguration() {
   }
 }
 
-// Supported traversal presets (mirrors backend SUPPORTED_TRAVERSALS)
-const SUPPORTED_TRAVERSALS = [
-  "top_left_down_then_across",
-  "bottom_left_up_then_across",
-  "top_left_across_then_down",
-  "bottom_left_across_then_up"
-];
-
-// Build traversal positions (mirrors backend build_traversal_positions function)
-function buildTraversalPositions(rows, cols, traversal, slotCount) {
-  const positions = [];
-  const r = Math.max(1, rows || 1);
-  const c = Math.max(1, cols || 1);
-  // Respect provided slotCount; only fall back to rows * cols if not provided
-  const count = (slotCount !== null && slotCount !== undefined && slotCount > 0) ? slotCount : (r * c);
-
-  if (traversal === "bottom_left_up_then_across") {
-    for (let col = 0; col < c; col++) {
-      for (let row = r - 1; row >= 0; row--) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else if (traversal === "top_left_across_then_down") {
-    for (let row = 0; row < r; row++) {
-      for (let col = 0; col < c; col++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else if (traversal === "bottom_left_across_then_up") {
-    for (let row = r - 1; row >= 0; row--) {
-      for (let col = 0; col < c; col++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else {
-    // top_left_down_then_across (default)
-    for (let col = 0; col < c; col++) {
-      for (let row = 0; row < r; row++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  }
-
-  return positions;
-}
-
 // Render slot validation (Step 3)
 // Render slot assignment step with live recalc and editable HW identifiers
 function renderSlotAssignment() {
@@ -416,7 +366,7 @@ function renderSlotAssignment() {
   // Build traversal positions
   let positions;
   if (rows > 0 && cols > 0 && SUPPORTED_TRAVERSALS.includes(traversal)) {
-    positions = buildTraversalPositions(rows, cols, traversal, template.slot_count);
+    positions = buildTraversalPositions(rows, cols, traversal, template.slot_count, template.skip_positions || []);
   } else {
     positions = Array.from({ length: template.slot_count || template.bay_count || (rows * cols) }, (_, i) => ({ row: i, col: 0 }));
   }

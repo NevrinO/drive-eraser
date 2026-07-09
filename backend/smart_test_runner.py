@@ -133,6 +133,299 @@ def _scsi_in_progress_result(entry):
     }
 
 
+def _check_ata_in_progress(data):
+    """Check if an ATA/SATA self-test is currently in progress.
+
+    Uses ata_smart_data.self_test.status (the drive's status register),
+    which updates immediately during a test — unlike the log table which
+    only updates when a test completes.
+
+    Returns:
+        In-progress result dict, or None if no test is running.
+    """
+    ata_current_test = data.get("ata_smart_data", {}).get("self_test", {}).get("status", {})
+    if "in progress" in ata_current_test.get("string", "").lower():
+        remaining = ata_current_test.get("remaining_percent", 50)
+        percentage = max(0, min(100, (90 - remaining) / 90 * 100)) if remaining is not None else 0
+        return {
+            "status": "in_progress",
+            "percentage": round(percentage, 1),
+            "self_test_log_table": None,
+            "latest_result": {
+                "type": "unknown",
+                "status": ata_current_test.get("string", ""),
+                "passed": None,
+                "remaining": remaining,
+                "lba": None,
+                "hours": None,
+                "corrected_hours": None,
+                "rollover_corrected": False,
+                "ambiguous": False
+            }
+        }
+    return None
+
+
+def _check_nvme_in_progress(data):
+    """Check if an NVMe self-test is currently in progress.
+
+    Uses nvme_self_test_log.current_operation.status.value, which is 0
+    when no test is running and non-zero when a test is in progress.
+
+    Returns:
+        In-progress result dict, or None if no test is running.
+    """
+    nvme_log = data.get("nvme_self_test_log", {})
+    nvme_current_op = nvme_log.get("current_operation", {})
+    if nvme_current_op.get("status", {}).get("value", 0) != 0:
+        completion_pct = nvme_current_op.get("completion_percent", 0)
+        return {
+            "status": "in_progress",
+            "percentage": float(completion_pct),
+            "self_test_log_table": None,
+            "latest_result": {
+                "type": "unknown",
+                "status": nvme_current_op.get("status", {}).get("string", ""),
+                "remaining": 100 - completion_pct,
+                "lba": None,
+                "hours": None
+            }
+        }
+    return None
+
+
+def _check_scsi_in_progress(data):
+    """Check if a SCSI/SAS self-test is currently in progress.
+
+    Uses two mechanisms:
+    1. scsi_ie ASC 0x3F/ASCQ 0x0E (Informational Exceptions)
+    2. scsi_self_test_N entries with result value 15 or "in progress" string
+
+    Returns:
+        In-progress result dict, or None if no test is running.
+    """
+    scsi_ie = data.get("scsi_ie", {})
+    scsi_asc = scsi_ie.get("asc", "")
+    scsi_ascq = scsi_ie.get("ascq", "")
+
+    if scsi_asc == 0x3F and scsi_ascq == 0x0E:
+        return {
+            "status": "in_progress",
+            "percentage": 50,
+            "self_test_log_table": None,
+            "latest_result": {
+                "type": "unknown",
+                "status": scsi_ie.get("string", "Self test in progress"),
+                "remaining": 0,
+                "lba": None,
+                "hours": None
+            }
+        }
+    for entry in _parse_scsi_self_test_entries(data):
+        if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
+            return _scsi_in_progress_result(entry)
+    return None
+
+
+def _parse_ata_test_status(data, device_path, diagnostics):
+    """Parse completed ATA/SATA self-test status from smartctl JSON data.
+
+    Extracts the self-test log table (standard/extended/table formats),
+    parses the latest entry, applies POH rollover correction, and maps
+    status strings to test_status enum values.
+
+    Returns:
+        Result dict with status/percentage/latest_result, or None if no
+        ATA self-test log table is present (not an ATA device).
+    """
+    self_test_log = data.get("ata_smart_self_test_log", {})
+    table = (self_test_log.get("standard", {}).get("table", [])
+             or self_test_log.get("extended", {}).get("table", [])
+             or self_test_log.get("table", []))
+
+    if not table:
+        return None
+
+    latest = table[0]
+    test_type = latest.get("type", {}).get("string", "unknown")
+    status_obj = latest.get("status", {})
+    status = status_obj.get("string", "unknown")
+    passed = status_obj.get("passed")
+    remaining_raw = status_obj.get("remaining_percent", status_obj.get("remaining", 0))
+    remaining = None if remaining_raw == "null" or remaining_raw is None else remaining_raw
+    log_hours = latest.get("hours") or latest.get("lifetime_hours")
+
+    corrected_hours = log_hours
+    rollover_corrected = False
+    ambiguous = False
+
+    try:
+        current_poh = None
+        serial = None
+        from disk_ops import get_cached_smart_data
+        cached_payload = get_cached_smart_data(device_path)
+        if cached_payload:
+            smart_info = cached_payload.get('smart')
+            if smart_info:
+                current_poh = smart_info.get('power_on_hours')
+                serial = smart_info.get('serial')
+
+        if current_poh is None:
+            current_smart = get_smart_data(device_path, diagnostics)
+            current_poh = current_smart.get("power_on_hours")
+            serial = current_smart.get("serial")
+
+        historical_poh = None
+        if serial:
+            try:
+                historical_poh = get_historical_poh_for_serial(serial)
+            except Exception as e:
+                logger.warning(f"Failed to get historical POH for {serial}: {e}")
+
+        corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
+    except Exception as e:
+        logger.warning(f"POH correction failed for {device_path}: {e}")
+        corrected_hours = log_hours
+
+    percentage = 0
+    if remaining is not None and remaining > 0:
+        percentage = max(0, min(100, (90 - remaining) / 90 * 100))
+
+    if "in progress" in status.lower() or "running" in status.lower():
+        test_status = "in_progress"
+    elif passed is True:
+        test_status = "completed"
+    elif "failed" in status.lower() or passed is False:
+        test_status = "failed"
+    elif "aborted" in status.lower():
+        test_status = "aborted"
+    elif "completed" in status.lower() or "passed" in status.lower():
+        test_status = "completed"
+    else:
+        test_status = "unknown"
+
+    return {
+        "status": test_status,
+        "percentage": round(percentage, 1),
+        "self_test_log_table": table,
+        "latest_result": {
+            "type": test_type,
+            "status": status,
+            "passed": passed,
+            "remaining": remaining,
+            "lba": latest.get("lba"),
+            "hours": log_hours,
+            "corrected_hours": corrected_hours,
+            "rollover_corrected": rollover_corrected,
+            "ambiguous": ambiguous
+        }
+    }
+
+
+def _parse_nvme_test_status(data, device_path=None, diagnostics=None):
+    """Parse completed NVMe self-test status from smartctl JSON data.
+
+    Extracts NVMe self-test log results and parses the latest entry.
+
+    Returns:
+        Result dict with status/percentage/latest_result, or None if no
+        NVMe self-test results are present (not an NVMe device).
+    """
+    nvme_log = data.get("nvme_self_test_log", {})
+    nvme_results = nvme_log.get("results", [])
+
+    if not nvme_results:
+        return None
+
+    latest = nvme_results[0] if nvme_results else None
+    if latest:
+        test_type = latest.get("self_test_num", "unknown")
+        status = latest.get("result", {}).get("string", "unknown")
+        percentage = 100 if "complete" in status.lower() else 0
+
+        if "in progress" in status.lower() or "running" in status.lower():
+            test_status = "in_progress"
+        elif "complete" in status.lower() or "success" in status.lower():
+            test_status = "completed"
+        elif "failed" in status.lower() or "error" in status.lower():
+            test_status = "failed"
+        elif "aborted" in status.lower():
+            test_status = "aborted"
+        else:
+            test_status = "unknown"
+
+        return {
+            "status": test_status,
+            "percentage": percentage,
+            "self_test_log_table": None,
+            "latest_result": {
+                "type": test_type,
+                "status": status,
+                "remaining": 0,
+                "lba": None,
+                "hours": None
+            }
+        }
+    return None
+
+
+def _parse_scsi_test_status(data, device_path=None, diagnostics=None):
+    """Parse completed SCSI/SAS self-test status from smartctl JSON data.
+
+    Handles two cases:
+    1. SCSI with IE log (scsi_ie present) — returns "no_tests" status
+    2. SCSI without IE log — fallback scanning via scsi_self_test_N entries
+
+    Returns:
+        Result dict with status/percentage/latest_result, or None if no
+        SCSI data is present (not a SCSI device).
+    """
+    scsi_ie = data.get("scsi_ie", {})
+
+    if scsi_ie:
+        return {
+            "status": "no_tests",
+            "percentage": 0,
+            "self_test_log_table": None,
+            "latest_result": {
+                "type": "unknown",
+                "status": scsi_ie.get("string", "unknown"),
+                "remaining": 0,
+                "lba": None,
+                "hours": None
+            }
+        }
+
+    for entry in _parse_scsi_self_test_entries(data):
+        if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
+            return _scsi_in_progress_result(entry)
+        else:
+            result_str = entry["result_str"]
+            if entry["result_value"] == 0:
+                test_status = "completed"
+            elif "failed" in result_str.lower() or "error" in result_str.lower():
+                test_status = "failed"
+            elif "aborted" in result_str.lower():
+                test_status = "aborted"
+            else:
+                test_status = "unknown"
+            return {
+                "status": test_status,
+                "percentage": 100 if test_status == "completed" else 0,
+                "self_test_log_table": None,
+                "latest_result": {
+                    "type": entry["code"],
+                    "status": result_str,
+                    "passed": entry["passed"],
+                    "remaining": 0,
+                    "lba": None,
+                    "hours": entry["hours"]
+                }
+            }
+
+    return None
+
+
 def get_smart_test_status(device, diagnostics=None):
     """Get the status of a running SMART self-test.
 
@@ -166,250 +459,19 @@ def get_smart_test_status(device, diagnostics=None):
 
         data = json.loads(result)
 
-        # ATA/SATA real-time in-progress check: ata_smart_data.self_test.status is the
-        # drive's status register, updated immediately during a test.  The log table
-        # (ata_smart_self_test_log) shows the PREVIOUS completed test while a new one runs.
-        ata_current_test = data.get("ata_smart_data", {}).get("self_test", {}).get("status", {})
-        if "in progress" in ata_current_test.get("string", "").lower():
-            remaining = ata_current_test.get("remaining_percent", 50)
-            percentage = max(0, min(100, (90 - remaining) / 90 * 100)) if remaining is not None else 0
-            return {
-                "status": "in_progress",
-                "percentage": round(percentage, 1),
-                "self_test_log_table": None,
-                "latest_result": {
-                    "type": "unknown",
-                    "status": ata_current_test.get("string", ""),
-                    "passed": None,
-                    "remaining": remaining,
-                    "lba": None,
-                    "hours": None,
-                    "corrected_hours": None,
-                    "rollover_corrected": False,
-                    "ambiguous": False
-                }
-            }
+        # Real-time in-progress checks (early return if any match)
+        for checker in (_check_ata_in_progress, _check_nvme_in_progress, _check_scsi_in_progress):
+            in_progress = checker(data)
+            if in_progress:
+                return in_progress
 
-        # Check for ATA/SATA self-test log
-        # smartctl JSON nests the table under "standard" (for -l selftest) or "extended" (for -x/-l xselftest)
-        self_test_log = data.get("ata_smart_self_test_log", {})
-        table = (self_test_log.get("standard", {}).get("table", [])
-                 or self_test_log.get("extended", {}).get("table", [])
-                 or self_test_log.get("table", []))
+        # Completed test parsing — dispatch by device type
+        for parser in (_parse_ata_test_status, _parse_nvme_test_status, _parse_scsi_test_status):
+            result = parser(data, device_path, diagnostics)
+            if result is not None:
+                return result
 
-        # Check for NVMe self-test log
-        nvme_log = data.get("nvme_self_test_log", {})
-        nvme_results = nvme_log.get("results", [])
-
-        # NVMe real-time in-progress check: current_operation.status.value is 0 when
-        # no test is running; non-zero values indicate a test type is in progress.
-        nvme_current_op = nvme_log.get("current_operation", {})
-        if nvme_current_op.get("status", {}).get("value", 0) != 0:
-            completion_pct = nvme_current_op.get("completion_percent", 0)
-            return {
-                "status": "in_progress",
-                "percentage": float(completion_pct),
-                "self_test_log_table": None,
-                "latest_result": {
-                    "type": "unknown",
-                    "status": nvme_current_op.get("status", {}).get("string", ""),
-                    "remaining": 100 - completion_pct,
-                    "lba": None,
-                    "hours": None
-                }
-            }
-
-        # Check for SCSI/SAS self-test log (via SCSI Informational Exceptions)
-        scsi_ie = data.get("scsi_ie", {})
-        scsi_asc = scsi_ie.get("asc", "")
-        scsi_ascq = scsi_ie.get("ascq", "")
-
-        # SCSI/SAS real-time in-progress check: scan scsi_self_test_N entries for
-        # result value 15 (self-test in progress). Many SAS drives (e.g. Seagate)
-        # don't populate scsi_ie during tests but do report in-progress via the
-        # self-test result slots. Also check scsi_ie for ASC 0x3F/ASCQ 0x0E.
-        if scsi_asc == 0x3F and scsi_ascq == 0x0E:
-            return {
-                "status": "in_progress",
-                "percentage": 50,
-                "self_test_log_table": None,
-                "latest_result": {
-                    "type": "unknown",
-                    "status": scsi_ie.get("string", "Self test in progress"),
-                    "remaining": 0,
-                    "lba": None,
-                    "hours": None
-                }
-            }
-        for entry in _parse_scsi_self_test_entries(data):
-            if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
-                return _scsi_in_progress_result(entry)
-
-        # Determine device type and process accordingly
-        if table:
-            # ATA/SATA device: log table reflects completed tests only.
-            # Real-time in-progress detection is handled above via ata_smart_data.self_test.status.
-            latest = table[0]
-            test_type = latest.get("type", {}).get("string", "unknown")
-            status_obj = latest.get("status", {})
-            status = status_obj.get("string", "unknown")
-            passed = status_obj.get("passed")
-            remaining_raw = status_obj.get("remaining_percent", status_obj.get("remaining", 0))
-            # Convert string "null" to actual None to avoid frontend workarounds
-            remaining = None if remaining_raw == "null" or remaining_raw is None else remaining_raw
-            log_hours = latest.get("hours") or latest.get("lifetime_hours")
-
-            # SMART self-test log hours use 16-bit counters (max 65,535).
-            # Apply multi-rollover correction if needed.
-            corrected_hours = log_hours
-            rollover_corrected = False
-            ambiguous = False
-
-            try:
-                # Check drive cache first to avoid expensive smartctl call during polling
-                current_poh = None
-                serial = None
-                from disk_ops import get_cached_smart_data
-                cached_payload = get_cached_smart_data(device_path)
-                if cached_payload:
-                    smart_info = cached_payload.get('smart')
-                    if smart_info:
-                        current_poh = smart_info.get('power_on_hours')
-                        serial = smart_info.get('serial')
-
-                if current_poh is None:
-                    current_smart = get_smart_data(device_path, diagnostics)
-                    current_poh = current_smart.get("power_on_hours")
-                    serial = current_smart.get("serial")
-
-                historical_poh = None
-                if serial:
-                    try:
-                        historical_poh = get_historical_poh_for_serial(serial)
-                    except Exception as e:
-                        logger.warning(f"Failed to get historical POH for {serial}: {e}")
-
-                corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
-            except Exception as e:
-                logger.warning(f"POH correction failed for {device_path}: {e}")
-                corrected_hours = log_hours
-
-            # Calculate percentage complete
-            # remaining is 0-90 for in-progress tests, 0 for completed
-            percentage = 0
-            if remaining is not None and remaining > 0:
-                percentage = max(0, min(100, (90 - remaining) / 90 * 100))
-
-            # Map status strings; prefer the reliable status.passed boolean when present
-            if "in progress" in status.lower() or "running" in status.lower():
-                test_status = "in_progress"
-            elif passed is True:
-                test_status = "completed"
-            elif "failed" in status.lower() or passed is False:
-                test_status = "failed"
-            elif "aborted" in status.lower():
-                test_status = "aborted"
-            elif "completed" in status.lower() or "passed" in status.lower():
-                test_status = "completed"
-            else:
-                test_status = "unknown"
-
-            return {
-                "status": test_status,
-                "percentage": round(percentage, 1),
-                "self_test_log_table": table,
-                "latest_result": {
-                    "type": test_type,
-                    "status": status,
-                    "passed": passed,
-                    "remaining": remaining,
-                    "lba": latest.get("lba"),
-                    "hours": log_hours,
-                    "corrected_hours": corrected_hours,
-                    "rollover_corrected": rollover_corrected,
-                    "ambiguous": ambiguous
-                }
-            }
-        elif nvme_results:
-            # NVMe device
-            latest = nvme_results[0] if nvme_results else None
-            if latest:
-                test_type = latest.get("self_test_num", "unknown")
-                status = latest.get("result", {}).get("string", "unknown")
-                # NVMe doesn't provide percentage, use 0 or 100 based on status
-                percentage = 100 if "complete" in status.lower() else 0
-                
-                if "in progress" in status.lower() or "running" in status.lower():
-                    test_status = "in_progress"
-                elif "complete" in status.lower() or "success" in status.lower():
-                    test_status = "completed"
-                elif "failed" in status.lower() or "error" in status.lower():
-                    test_status = "failed"
-                elif "aborted" in status.lower():
-                    test_status = "aborted"
-                else:
-                    test_status = "unknown"
-
-                return {
-                    "status": test_status,
-                    "percentage": percentage,
-                    "self_test_log_table": None,
-                    "latest_result": {
-                        "type": test_type,
-                        "status": status,
-                        "remaining": 0,
-                        "lba": None,
-                        "hours": None
-                    }
-                }
-        elif scsi_ie:
-            # SCSI/SAS device with IE log - return status from IE
-            test_status = "no_tests"
-            percentage = 0
-
-            return {
-                "status": test_status,
-                "percentage": percentage,
-                "self_test_log_table": None,
-                "latest_result": {
-                    "type": "unknown",
-                    "status": scsi_ie.get("string", "unknown"),
-                    "remaining": 0,
-                    "lba": None,
-                    "hours": None
-                }
-            }
-        else:
-            # Check for SCSI self-test results even without scsi_ie
-            # SAS drives like Seagate report test results via scsi_self_test_N entries
-            # without populating scsi_ie
-            for entry in _parse_scsi_self_test_entries(data):
-                if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
-                    return _scsi_in_progress_result(entry)
-                else:
-                    result_str = entry["result_str"]
-                    if entry["result_value"] == 0:
-                        test_status = "completed"
-                    elif "failed" in result_str.lower() or "error" in result_str.lower():
-                        test_status = "failed"
-                    elif "aborted" in result_str.lower():
-                        test_status = "aborted"
-                    else:
-                        test_status = "unknown"
-                    return {
-                        "status": test_status,
-                        "percentage": 100 if test_status == "completed" else 0,
-                        "self_test_log_table": None,
-                        "latest_result": {
-                            "type": entry["code"],
-                            "status": result_str,
-                            "passed": entry["passed"],
-                            "remaining": 0,
-                            "lba": None,
-                            "hours": entry["hours"]
-                        }
-                    }
-            return {"status": "no_tests", "self_test_log_table": None, "latest_result": None}
+        return {"status": "no_tests", "self_test_log_table": None, "latest_result": None}
     except json.JSONDecodeError:
         return {"error": "Failed to parse smartctl output", "status": "failed", "self_test_log_table": None}
     except (subprocess.TimeoutExpired, OSError, FileNotFoundError) as e:
