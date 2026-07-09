@@ -262,6 +262,41 @@ def apply_template(existing_bays, template, traversal_preset=None, custom_overri
     return result, traversal
 
 
+def _validate_skip_positions(skip_positions, rows, cols):
+    """Validate skip_positions array entries against grid bounds and duplicates.
+
+    Returns an error string if invalid, None if valid.
+    """
+    if not isinstance(skip_positions, list):
+        return "skip_positions must be an array"
+    # Enforce size limit to prevent DoS (Lesson #5)
+    if len(skip_positions) > 100:
+        return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
+
+    seen_positions = set()
+    for skip in skip_positions:
+        if not isinstance(skip, dict):
+            return "Each skip_positions entry must be an object"
+        if "row" not in skip or "col" not in skip:
+            return "Each skip_positions entry must have 'row' and 'col' fields"
+        try:
+            row = int(skip["row"])
+            col = int(skip["col"])
+            if row < 0 or row >= rows:
+                return f"skip_positions row {row} out of bounds (0-{rows-1})"
+            if col < 0 or col >= cols:
+                return f"skip_positions col {col} out of bounds (0-{cols-1})"
+            # Check for duplicates
+            pos_key = (row, col)
+            if pos_key in seen_positions:
+                return f"Duplicate skip_positions entry: row {row}, col {col}"
+            seen_positions.add(pos_key)
+        except (ValueError, TypeError):
+            return "skip_positions row and col must be integers"
+
+    return None
+
+
 def validate_layout_metadata(layout_metadata, bays, templates):
     if layout_metadata is None:
         return None
@@ -290,35 +325,11 @@ def validate_layout_metadata(layout_metadata, bays, templates):
     if template_to_validate:
         skip_positions = template_to_validate.get("skip_positions")
         if skip_positions is not None:
-            if not isinstance(skip_positions, list):
-                return "skip_positions must be an array"
-            # Enforce size limit to prevent DoS (Lesson #5)
-            if len(skip_positions) > 100:
-                return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
-            
             rows = int(template_to_validate.get("rows") or 1)
             cols = int(template_to_validate.get("cols") or 1)
-            seen_positions = set()
-            
-            for skip in skip_positions:
-                if not isinstance(skip, dict):
-                    return "Each skip_positions entry must be an object"
-                if "row" not in skip or "col" not in skip:
-                    return "Each skip_positions entry must have 'row' and 'col' fields"
-                try:
-                    row = int(skip["row"])
-                    col = int(skip["col"])
-                    if row < 0 or row >= rows:
-                        return f"skip_positions row {row} out of bounds (0-{rows-1})"
-                    if col < 0 or col >= cols:
-                        return f"skip_positions col {col} out of bounds (0-{cols-1})"
-                    # Check for duplicates
-                    pos_key = (row, col)
-                    if pos_key in seen_positions:
-                        return f"Duplicate skip_positions entry: row {row}, col {col}"
-                    seen_positions.add(pos_key)
-                except (ValueError, TypeError):
-                    return "skip_positions row and col must be integers"
+            err = _validate_skip_positions(skip_positions, rows, cols)
+            if err:
+                return err
 
     seen = set()
     for bay_id, conf in (bays or {}).items():
@@ -408,35 +419,12 @@ def validate_template(template):
     # Validate skip_positions if present (requires grid fields)
     skip_positions = template.get("skip_positions")
     if skip_positions is not None:
-        if not isinstance(skip_positions, list):
-            return "skip_positions must be an array"
-        # Enforce size limit to prevent DoS (Lesson #5)
-        if len(skip_positions) > 100:
-            return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
-        
         if not has_grid:
             return "skip_positions requires rows, cols, and bay_count to be defined"
         
-        seen_positions = set()
-        for skip in skip_positions:
-            if not isinstance(skip, dict):
-                return "Each skip_positions entry must be an object"
-            if "row" not in skip or "col" not in skip:
-                return "Each skip_positions entry must have 'row' and 'col' fields"
-            try:
-                row = int(skip["row"])
-                col = int(skip["col"])
-                if row < 0 or row >= rows:
-                    return f"skip_positions row {row} out of bounds (0-{rows-1})"
-                if col < 0 or col >= cols:
-                    return f"skip_positions col {col} out of bounds (0-{cols-1})"
-                # Check for duplicates
-                pos_key = (row, col)
-                if pos_key in seen_positions:
-                    return f"Duplicate skip_positions entry: row {row}, col {col}"
-                seen_positions.add(pos_key)
-            except (ValueError, TypeError):
-                return "skip_positions row and col must be integers"
+        err = _validate_skip_positions(skip_positions, rows, cols)
+        if err:
+            return err
     
     # Validate hybrid_slots if present
     hybrid_slots = template.get("hybrid_slots")

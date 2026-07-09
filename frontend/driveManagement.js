@@ -220,6 +220,15 @@ if (baysGrid) baysGrid.addEventListener("click", (event) => {
     currentDetailDrive = drive;
     renderLiveDetails(drive);
     openModal(bayDetailModal);
+
+    if (drive) {
+      const status = String(drive.status || "").toUpperCase();
+      if (status === "RUNNING" && drive.job_id) {
+        startLogTailPolling(drive.job_id);
+      } else if (status === "FAILED" && drive.job_id) {
+        loadFailedLog(drive.job_id);
+      }
+    }
   }
 });
 
@@ -341,25 +350,6 @@ async function loadFailedLog(jobId) {
     updateLogTailElement("(Failed log not available. Use Log Viewer to browse logs.)");
   }
 }
-
-// Hook into bay detail modal open: start polling for running jobs, load failed log for failed jobs
-if (baysGrid) baysGrid.addEventListener("click", (event) => {
-  const card = event.target.closest("[data-bay]");
-  if (!card) return;
-  if (event.target.closest(".card-checkbox")) return;
-  if (isBatchMode) return;
-
-  const bay = card.getAttribute("data-bay");
-  const drive = currentDrives.find((d) => d.bay === bay);
-  if (!drive) return;
-
-  const status = String(drive.status || "").toUpperCase();
-  if (status === "RUNNING" && drive.job_id) {
-    startLogTailPolling(drive.job_id);
-  } else if (status === "FAILED" && drive.job_id) {
-    loadFailedLog(drive.job_id);
-  }
-});
 
 // Stop polling when bay detail modal closes (close button or backdrop click)
 document.addEventListener("click", (event) => {

@@ -428,12 +428,23 @@ function renderBaysLegacy(drives) {
     return aNum - bNum;
   }));
 
+  // Deduplicate by serial number to avoid MPIO duplicates (defense-in-depth;
+  // backend also marks secondary paths as locked via _audit_dual_port_deduplication)
+  const seenSerials = new Set();
+  const dedupedDrives = orderedDrives.filter(drive => {
+    const serial = drive.serial;
+    if (!serial) return true;
+    if (seenSerials.has(serial)) return false;
+    seenSerials.add(serial);
+    return true;
+  });
+
   // Determine grid columns based on template or default to 4
   let gridCols = 4;
   if (template && template.cols) {
     gridCols = template.cols;
   } else {
-    const bayCount = drives.length;
+    const bayCount = dedupedDrives.length;
     if (bayCount <= 4) {
       gridCols = 4;
     } else if (bayCount <= 8) {
@@ -456,7 +467,7 @@ function renderBaysLegacy(drives) {
 
   // Create a map of drives by their physical position
   const driveByPosition = _buildPositionMap(
-    orderedDrives,
+    dedupedDrives,
     d => d.physical_position,
     d => d
   );

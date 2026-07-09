@@ -141,6 +141,18 @@ def update_smart_test_status_background():
     from smart_parsing import get_smart_test_status
     from routes.admin_routes import should_update_test_status, should_trust_completion_status
     
+    def _transition(device, record_id, new_status, current_updated_at, result=None, output_json=None):
+        """Update a SMART test record with optimistic locking and consistent logging."""
+        kwargs = {"current_updated_at": current_updated_at}
+        if result is not None:
+            kwargs["result"] = result
+        if output_json is not None:
+            kwargs["output_json"] = output_json
+        updated = update_smart_test_run(record_id, new_status, **kwargs)
+        if not updated:
+            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+        return updated
+    
     logger.info("SMART test status background thread started")
     
     while not smart_test_update_stop_event.is_set():
@@ -172,9 +184,7 @@ def update_smart_test_status_background():
                     
                     # Transition: DB "started" → "in_progress" when drive confirms test is running
                     if db_status == "started" and drive_status == "in_progress":
-                        updated = update_smart_test_run(record_id, "in_progress",
-                                                        current_updated_at=current_updated_at)
-                        if updated:
+                        if _transition(device, record_id, "in_progress", current_updated_at):
                             logger.info(f"Background update: SMART test {device} confirmed in progress by drive status register")
                         continue
                     
@@ -197,41 +207,27 @@ def update_smart_test_status_background():
                                 result = "unknown"
                         
                         logger.info(f"Background update: SMART test {device} completed with result={result}")
-                        # Use optimistic locking with current_updated_at
-                        updated = update_smart_test_run(record_id, "completed", result=result, 
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "completed", current_updated_at,
+                                   result=result, output_json=status_result.get("self_test_log_table"))
                     
                     # Update database if drive shows failed and trust conditions met
                     elif drive_status == "failed" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} failed")
-                        # Use optimistic locking with current_updated_at
-                        updated = update_smart_test_run(record_id, "failed", result="failed",
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "failed", current_updated_at,
+                                   result="failed", output_json=status_result.get("self_test_log_table"))
                     
                     # Update database if drive shows aborted and trust conditions met
                     elif drive_status == "aborted" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} aborted")
-                        updated = update_smart_test_run(record_id, "failed", result="aborted",
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "failed", current_updated_at,
+                                   result="aborted", output_json=status_result.get("self_test_log_table"))
                     
                     # Drive shows no_tests/unknown after trust conditions met: test is no longer running
                     # but we can't determine pass/fail from the drive's log. Mark as completed
                     # with result "unknown" so the card stops showing "running".
                     elif drive_status in ("no_tests", "unknown") and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} no longer running (status={drive_status}), marking completed with unknown result")
-                        updated = update_smart_test_run(record_id, "completed", result="unknown",
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "completed", current_updated_at, result="unknown")
                 
                 except Exception as e:
                     logger.warning(f"Failed to update SMART test status for {device}: {e}")
