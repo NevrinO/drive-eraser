@@ -363,7 +363,8 @@ class TestLoadBayMap:
                 with patch('common.logger') as mock_logger:
                     result = load_bay_map()
                     mock_logger.warning.assert_called()
-                    assert "REPLACE_ME" in str(mock_logger.warning.call_args)
+                    warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+                    assert any("REPLACE_ME" in c for c in warning_calls), f"REPLACE_ME not found in warning calls: {warning_calls}"
 
     def test_load_bay_map_invalid_json_returns_empty(self):
         """Test that invalid JSON returns empty dict."""

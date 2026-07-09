@@ -81,6 +81,7 @@ DEFAULT_POLICY = {
     "prewipe_health_gate_max_health_score_drop": 20,
     "discovery_diag": False,
     "log_retention_days": 30,
+    "allowed_remote_ips": [],
 }
 
 # High #9: JSON schema for policy.json configuration validation
@@ -116,6 +117,7 @@ POLICY_SCHEMA = {
         "slack_webhook_url": {"type": "string"},
         "lan_passphrase": {"type": "string"},
         "allowed_cors_origins": {"type": "array", "items": {"type": "string"}},
+        "allowed_remote_ips": {"type": "array", "items": {"type": "string"}},
         "discovery_max_workers": {"type": "integer", "minimum": 1, "maximum": 32},
         "background_smart_max_workers": {"type": "integer", "minimum": 1, "maximum": 32},
         "max_concurrent_wipes": {"type": "integer", "minimum": 1, "maximum": 256},
@@ -277,25 +279,53 @@ ENCLOSURE_SCHEMA = {
     "additionalProperties": False,
 }
 
-# JSON schema for new enclosure-based bay_map.json
-BAY_MAP_SCHEMA = {
+# JSON schema for legacy bay map format: {"layout_metadata": {...}, "bays": {"bay0": {...}}}
+LEGACY_BAY_SCHEMA = {
     "type": "object",
     "properties": {
-        "templates": {
-            "type": "array",
-            "items": TEMPLATE_SCHEMA,
+        "role": {"type": "string", "enum": ["wipe", "os", "reserved"]},
+        "locked": {"type": "boolean"},
+        "type": {"type": "string", "enum": ["sas_sata", "u2"]},
+        "label": {"type": "string"},
+        "by_path": {"type": "string"},
+        "by_path_nvme": {"type": "string"},
+        "display_number": {"type": "string"},
+        "physical_position": {
+            "type": ["object", "null"],
+            "properties": {
+                "row": {"type": "integer", "minimum": 0},
+                "col": {"type": "integer", "minimum": 0},
+            },
+        },
+        "enclosure_id": {"type": ["string", "null"]},
+    },
+    "additionalProperties": True,
+}
+
+LEGACY_BAY_MAP_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "layout_metadata": {
+            "type": "object",
+            "properties": {
+                "template_id": {"type": "string"},
+                "traversal_preset": {"type": "string"},
+                "custom_overrides": {"type": "object"},
+            },
+            "additionalProperties": True,
+        },
+        "bays": {
+            "type": "object",
+            "additionalProperties": LEGACY_BAY_SCHEMA,
         },
         "enclosures": {
             "type": "object",
-            "patternProperties": {
-                r".+": ENCLOSURE_SCHEMA
-            },
-            "additionalProperties": False,
+            "additionalProperties": ENCLOSURE_SCHEMA,
         },
     },
-    "required": ["enclosures"],
-    "additionalProperties": False,
+    "additionalProperties": True,
 }
+
 
 def get_data_dir():
     candidates = [
@@ -440,8 +470,8 @@ def load_policy(config_dir=None):
                     f"(path: {'.'.join(str(p) for p in e.path)})"
                 )
 
-            # Merge with defaults
-            merged = DEFAULT_POLICY.copy()
+            # Merge with defaults (deepcopy to prevent nested dict mutations)
+            merged = copy.deepcopy(DEFAULT_POLICY)
             merged.update(data)
 
             # Migration: deprecated crypto_verification_mode -> secondary_verification_mode
@@ -539,9 +569,11 @@ def save_bay_map(bay_map_data, config_dir=None):
 
 def load_bay_map(config_dir=None):
     """
-    Load bay map configuration with validation for placeholder values.
+    Load bay map configuration with schema validation and placeholder detection.
     Critical #7: Detects "REPLACE_ME" placeholder values and logs warning but allows load to proceed.
     Advisory #7: Fixed TOCTOU race condition by removing existence check and catching FileNotFoundError.
+    A-B10-2: Validates against LEGACY_BAY_MAP_SCHEMA (supports both legacy and enclosure formats).
+    A-B10-9: Fixed placeholder check to traverse correct structure for each format.
     """
     if config_dir is None:
         config_dir = get_config_dir()
@@ -552,15 +584,45 @@ def load_bay_map(config_dir=None):
             with open(bay_map_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             
-            # Critical #7: Detect placeholder values and log warning
+            if not isinstance(data, dict):
+                raise ValueError("bay_map.json must contain a JSON object")
+
+            # A-B10-2: Validate against schema
+            try:
+                validate(instance=data, schema=LEGACY_BAY_MAP_SCHEMA)
+            except ValidationError as e:
+                logger.warning(f"Bay map validation warning: {e.message} (path: {'.'.join(str(p) for p in e.path)})")
+
+            # Critical #7 / A-B10-9: Detect placeholder values in both formats
             has_placeholders = False
-            for bay_id, bay_config in data.items():
-                if isinstance(bay_config, dict) and bay_config.get("by_path") == "REPLACE_ME":
-                    has_placeholders = True
-                    logger.warning(f"Bay {bay_id} has placeholder device path 'REPLACE_ME'. Please configure device mapping via System Administration panel before production use.")
+            is_enclosure_format = "enclosures" in data
+
+            if is_enclosure_format:
+                for enc_id, enc_config in (data.get("enclosures") or {}).items():
+                    if not isinstance(enc_config, dict):
+                        continue
+                    for slot_num, slot_config in (enc_config.get("slots") or {}).items():
+                        if not isinstance(slot_config, dict):
+                            continue
+                        mappings = slot_config.get("mappings") or {}
+                        for iface, mapping in mappings.items():
+                            if isinstance(mapping, dict):
+                                hw_id = mapping.get("hardware_identifier", "")
+                                if isinstance(hw_id, str) and hw_id.startswith("REPLACE_ME"):
+                                    has_placeholders = True
+                                    logger.warning(f"Enclosure {enc_id} slot {slot_num} ({iface}) has placeholder hardware identifier '{hw_id}'. Please configure device mapping before production use.")
+            else:
+                bays = data.get("bays") if isinstance(data.get("bays"), dict) else data
+                for bay_id, bay_config in (bays or {}).items():
+                    if not isinstance(bay_config, dict):
+                        continue
+                    by_path = bay_config.get("by_path", "")
+                    if isinstance(by_path, str) and by_path.startswith("REPLACE_ME"):
+                        has_placeholders = True
+                        logger.warning(f"Bay {bay_id} has placeholder device path '{by_path}'. Please configure device mapping via System Administration panel before production use.")
 
             if has_placeholders:
-                logger.warning("Bay map contains placeholder device paths (REPLACE_ME). System will load but drive operations will fail until bays are properly configured.")
+                logger.warning("Bay map contains placeholder device paths. System will load but drive operations will fail until bays are properly configured.")
             
             return data
         except FileNotFoundError:

@@ -20,169 +20,154 @@ from routes._shared import (
 admin_bp = Blueprint('admin_routes', __name__)
 
 
+def _apply_verify_result(verify_result, result, device, progress_fn=None,
+                         include_details=True, check_failed=True):
+    """Process a verification result dict and update the result dict in place.
+
+    Handles the common pattern: check ok → completed, else check
+    still_in_progress → in_progress (with optional progress polling),
+    failed → failed, else → error string.
+    """
+    result["verification_result"] = verify_result
+
+    if verify_result.get("ok"):
+        result["hardware_active"] = False
+        result["hardware_status"] = "completed"
+        return
+
+    error = verify_result.get("error", "")
+
+    if include_details:
+        details = verify_result.get("details", {})
+        result["raw_data"]["output"] = details.get("output", "")[:500]
+
+    if "still_in_progress" in error:
+        result["hardware_active"] = True
+        result["hardware_status"] = "in_progress"
+        if progress_fn:
+            progress = progress_fn(device)
+            if progress is not None:
+                result["progress_percent"] = round(progress, 2)
+    elif check_failed and "failed" in error:
+        result["hardware_active"] = False
+        result["hardware_status"] = "failed"
+    else:
+        result["hardware_active"] = False
+        result["hardware_status"] = f"error: {error}"
+
+
+def _check_drive_hardware_status(job):
+    """Check actual hardware status of the drive. Returns dict with status info."""
+    request_data = job.get("request", {})
+    device = request_data.get("device")
+    method = request_data.get("method")
+    interface_type = request_data.get("interface_type", "unknown")
+    
+    if not device or not method:
+        return {"can_query": False, "reason": "missing_device_or_method"}
+    
+    result = {
+        "can_query": True,
+        "device": device,
+        "method": method,
+        "interface_type": interface_type,
+        "hardware_active": False,
+        "hardware_status": None,
+        "progress_percent": None,
+        "raw_data": {}
+    }
+    
+    try:
+        if interface_type == "nvme" and method in {"crypto", "block"}:
+            # Check NVMe sanitize status
+            nvme_result = verify_nvme_sanitize(device, method)
+            result["verification_result"] = nvme_result
+            
+            if nvme_result.get("ok"):
+                # Sanitize completed successfully
+                result["hardware_active"] = False
+                result["hardware_status"] = "completed"
+                details = nvme_result.get("details", {})
+                result["raw_data"] = {
+                    "sstat": details.get("sstat"),
+                    "sprog": details.get("sprog")
+                }
+            else:
+                error = nvme_result.get("error", "")
+                details = nvme_result.get("details", {})
+                result["raw_data"] = {
+                    "sstat": details.get("sstat"),
+                    "sprog": details.get("sprog")
+                }
+                
+                if "still_in_progress" in error:
+                    result["hardware_active"] = True
+                    result["hardware_status"] = "in_progress"
+                    sprog = details.get("sprog")
+                    if sprog is not None and sprog < 65535:
+                        result["progress_percent"] = round((sprog / 65535.0) * 100, 2)
+                elif "failed" in error:
+                    result["hardware_active"] = False
+                    result["hardware_status"] = "failed"
+                elif "never_executed" in error:
+                    result["hardware_active"] = False
+                    result["hardware_status"] = "never_started"
+                else:
+                    # Unknown/error state - assume not active to be safe for kill
+                    result["hardware_active"] = False
+                    result["hardware_status"] = f"error: {error}"
+                    
+        elif interface_type == "sata" and method in {"crypto", "block"}:
+            # Check SATA sanitize status
+            sata_result = verify_sata_sanitize(device, method)
+            _apply_verify_result(sata_result, result, device,
+                                 progress_fn=poll_sata_sanitize_progress)
+                    
+        elif interface_type == "sas" and method == "block":
+            # Check SAS sanitize status
+            sas_result = verify_sas_block(device, method)
+            _apply_verify_result(sas_result, result, device,
+                                 progress_fn=poll_sas_sanitize_progress)
+                    
+        elif method == "overwrite":
+            # Overwrite method - no hardware status, just check if process is running
+            # We can estimate progress from sectors written
+            result["can_query"] = False
+            result["reason"] = "overwrite_no_hardware_status"
+            result["hardware_active"] = None  # Unknown, rely on subprocess status
+            sectors = get_device_sectors_written(device)
+            capacity_bytes = request_data.get("capacity_bytes", 100 * 1024 * 1024 * 1024)
+            if sectors is not None:
+                wrote_bytes = sectors * 512
+                result["progress_percent"] = round(min(99.9, (wrote_bytes / capacity_bytes) * 100), 2)
+                result["raw_data"]["sectors_written"] = sectors
+                
+        elif interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
+            # SATA secure erase - use hdparm status
+            sata_result = verify_sata_sanitize(device, method)
+            _apply_verify_result(sata_result, result, device,
+                                 include_details=False, check_failed=False)
+        else:
+            result["can_query"] = False
+            result["reason"] = f"unsupported_combination: {interface_type}/{method}"
+            
+    except Exception as e:
+        result["can_query"] = False
+        result["reason"] = f"verification_exception: {str(e)}"
+        logger.warning(f"Failed to check hardware status for job {job.get('id')}: {e}")
+        
+    return result
+    
+
 @admin_bp.route("/api/admin/jobs/kill-all", methods=["POST"])
 @require_admin_auth
 @limiter.limit("10 per minute")
 def kill_all_jobs():
     """Kill all running and queued jobs. Checks drive hardware status before killing.
-    
+
     - If drive reports still wiping: job is skipped with detailed diagnostics
     - If drive reports idle/complete but subprocess stuck: job is killed
     """
-    def check_drive_hardware_status(job):
-        """Check actual hardware status of the drive. Returns dict with status info."""
-        request_data = job.get("request", {})
-        device = request_data.get("device")
-        method = request_data.get("method")
-        interface_type = request_data.get("interface_type", "unknown")
-        
-        if not device or not method:
-            return {"can_query": False, "reason": "missing_device_or_method"}
-        
-        result = {
-            "can_query": True,
-            "device": device,
-            "method": method,
-            "interface_type": interface_type,
-            "hardware_active": False,
-            "hardware_status": None,
-            "progress_percent": None,
-            "raw_data": {}
-        }
-        
-        try:
-            if interface_type == "nvme" and method in {"crypto", "block"}:
-                # Check NVMe sanitize status
-                nvme_result = verify_nvme_sanitize(device, method)
-                result["verification_result"] = nvme_result
-                
-                if nvme_result.get("ok"):
-                    # Sanitize completed successfully
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "completed"
-                    details = nvme_result.get("details", {})
-                    result["raw_data"] = {
-                        "sstat": details.get("sstat"),
-                        "sprog": details.get("sprog")
-                    }
-                else:
-                    error = nvme_result.get("error", "")
-                    details = nvme_result.get("details", {})
-                    result["raw_data"] = {
-                        "sstat": details.get("sstat"),
-                        "sprog": details.get("sprog")
-                    }
-                    
-                    if "still_in_progress" in error:
-                        result["hardware_active"] = True
-                        result["hardware_status"] = "in_progress"
-                        sprog = details.get("sprog")
-                        if sprog is not None and sprog < 65535:
-                            result["progress_percent"] = round((sprog / 65535.0) * 100, 2)
-                    elif "failed" in error:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = "failed"
-                    elif "never_executed" in error:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = "never_started"
-                    else:
-                        # Unknown/error state - assume not active to be safe for kill
-                        result["hardware_active"] = False
-                        result["hardware_status"] = f"error: {error}"
-                        
-            elif interface_type == "sata" and method in {"crypto", "block"}:
-                # Check SATA sanitize status
-                sata_result = verify_sata_sanitize(device, method)
-                result["verification_result"] = sata_result
-                
-                if sata_result.get("ok"):
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "completed"
-                else:
-                    error = sata_result.get("error", "")
-                    details = sata_result.get("details", {})
-                    result["raw_data"]["output"] = details.get("output", "")[:500]
-                    
-                    if "still_in_progress" in error:
-                        result["hardware_active"] = True
-                        result["hardware_status"] = "in_progress"
-                        # Try to get progress percentage
-                        progress = poll_sata_sanitize_progress(device)
-                        if progress is not None:
-                            result["progress_percent"] = round(progress, 2)
-                    elif "failed" in error:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = "failed"
-                    else:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = f"error: {error}"
-                        
-            elif interface_type == "sas" and method == "block":
-                # Check SAS sanitize status
-                sas_result = verify_sas_block(device, method)
-                result["verification_result"] = sas_result
-                
-                if sas_result.get("ok"):
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "completed"
-                else:
-                    error = sas_result.get("error", "")
-                    details = sas_result.get("details", {})
-                    result["raw_data"]["output"] = details.get("output", "")[:500]
-                    
-                    if "still_in_progress" in error:
-                        result["hardware_active"] = True
-                        result["hardware_status"] = "in_progress"
-                        progress = poll_sas_sanitize_progress(device)
-                        if progress is not None:
-                            result["progress_percent"] = round(progress, 2)
-                    elif "failed" in error:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = "failed"
-                    else:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = f"error: {error}"
-                        
-            elif method == "overwrite":
-                # Overwrite method - no hardware status, just check if process is running
-                # We can estimate progress from sectors written
-                result["can_query"] = False
-                result["reason"] = "overwrite_no_hardware_status"
-                result["hardware_active"] = None  # Unknown, rely on subprocess status
-                sectors = get_device_sectors_written(device)
-                capacity_bytes = request_data.get("capacity_bytes", 100 * 1024 * 1024 * 1024)
-                if sectors is not None:
-                    wrote_bytes = sectors * 512
-                    result["progress_percent"] = round(min(99.9, (wrote_bytes / capacity_bytes) * 100), 2)
-                    result["raw_data"]["sectors_written"] = sectors
-                    
-            elif interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
-                # SATA secure erase - use hdparm status
-                sata_result = verify_sata_sanitize(device, method)
-                result["verification_result"] = sata_result
-                
-                if sata_result.get("ok"):
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "completed"
-                else:
-                    error = sata_result.get("error", "")
-                    if "still_in_progress" in error:
-                        result["hardware_active"] = True
-                        result["hardware_status"] = "in_progress"
-                    else:
-                        result["hardware_active"] = False
-                        result["hardware_status"] = f"error: {error}"
-            else:
-                result["can_query"] = False
-                result["reason"] = f"unsupported_combination: {interface_type}/{method}"
-                
-        except Exception as e:
-            result["can_query"] = False
-            result["reason"] = f"verification_exception: {str(e)}"
-            logger.warning(f"Failed to check hardware status for job {job.get('id')}: {e}")
-            
-        return result
-    
     try:
         killed_jobs = []
         skipped_jobs = []
@@ -205,7 +190,7 @@ def kill_all_jobs():
             bay = request_data.get("bay")
             
             # Check actual hardware status
-            hw_status = check_drive_hardware_status(job)
+            hw_status = _check_drive_hardware_status(job)
             
             # Determine if we should kill based on hardware status
             should_kill = True

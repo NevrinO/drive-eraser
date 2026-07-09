@@ -102,6 +102,7 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         elif isinstance(physical_slot, str):
             if not physical_slot.isdigit():
                 return None
+            physical_slot = int(physical_slot)
         else:
             return None
 
@@ -110,7 +111,7 @@ def _resolve_device_from_hardware_identifier(pci_controller, slot_type, hw_ident
         if not isinstance(expander_sas_address, str) or not re.match(r'^0x[0-9a-fA-F]{16}\Z', expander_sas_address):
             return None
 
-    by_path_dir = '/dev/disk/by-path/'
+    by_path_dir = '/dev/disk/by-path'
 
     try:
         by_path_entries = os.listdir(by_path_dir)

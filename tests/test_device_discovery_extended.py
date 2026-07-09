@@ -99,7 +99,8 @@ class TestScanPciControllers:
 
     def test_scan_with_cache(self):
         """Test that cache is used when enabled."""
-        from device_discovery import scan_pci_controllers, _PCI_CACHE
+        from device_discovery import scan_pci_controllers
+        from pci_controllers import _PCI_CACHE
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
@@ -161,7 +162,8 @@ class TestScanPciControllers:
 
     def test_cache_expiration(self):
         """Test that cache expires after TTL."""
-        from device_discovery import scan_pci_controllers, _PCI_CACHE_TTL, _PCI_CACHE
+        from device_discovery import scan_pci_controllers
+        from pci_controllers import _PCI_CACHE_TTL, _PCI_CACHE
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
@@ -181,32 +183,32 @@ class TestMapPciClassToType:
 
     def test_sata_controller(self):
         """Test SATA controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0106') == 'sata'
 
     def test_sas_controller(self):
         """Test SAS controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0107') == 'sas'
 
     def test_nvme_controller(self):
         """Test NVMe controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0108') == 'nvme'
 
     def test_raid_controller(self):
         """Test RAID controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0104') == 'raid'
 
     def test_scsi_controller(self):
         """Test SCSI controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0100') == 'scsi'
 
     def test_unknown_controller(self):
         """Test unknown controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('9999') == 'unknown'
 
 
@@ -216,10 +218,15 @@ class TestDiscoverControllersAndDevices:
     def test_successful_discovery(self):
         """Test successful discovery."""
         from device_discovery import discover_controllers_and_devices
+        def exists_side_effect(path):
+            # /sys/class/block exists, but partition sysfs entries do not
+            if path.endswith('/partition'):
+                return False
+            return True
         with patch('pci_controllers.scan_pci_controllers', return_value=[
             {'pci_address': '0000:00:1f.2', 'controller_type': 'sata', 'vendor_id': '8086', 'device_id': '8c02'}
         ]):
-            with patch('os.path.exists', return_value=True):
+            with patch('os.path.exists', side_effect=exists_side_effect):
                 with patch('os.listdir', return_value=['sda', 'sdb']):
                     with patch('pci_controllers.validate_device_path', return_value=True):
                         with patch('pci_controllers.get_controller_for_device', return_value={
@@ -244,31 +251,57 @@ class TestDiscoverControllersAndDevices:
     def test_skips_partitions(self):
         """Test that partitions are skipped."""
         from device_discovery import discover_controllers_and_devices
+        # Partition sysfs entries exist for sda1 and sdb2 but not for sda
+        partition_devices = {'sda1', 'sdb2'}
+        def exists_side_effect(path):
+            if path.endswith('/partition'):
+                dev = path.split('/')[-2]
+                return dev in partition_devices
+            return True
         with patch('pci_controllers.scan_pci_controllers', return_value=[]):
-            with patch('os.path.exists', return_value=True):
+            with patch('os.path.exists', side_effect=exists_side_effect):
                 with patch('os.listdir', return_value=['sda', 'sda1', 'sdb2']):
-                    result = discover_controllers_and_devices(use_cache=False)
-                    # Partitions should be filtered out
-                    assert all('sda1' not in d.get('device_name', '') for d in result.get('sata', []))
+                    with patch('pci_controllers.validate_device_path', return_value=True):
+                        result = discover_controllers_and_devices(use_cache=False)
+                        # Partitions should be filtered out
+                        all_devices = []
+                        for devices in result.values():
+                            all_devices.extend(d.get('device_name', '') for d in devices)
+                        assert 'sda1' not in all_devices
+                        assert 'sdb2' not in all_devices
+                        assert 'sda' in all_devices
 
     def test_skips_device_mapper(self):
         """Test that device mapper devices are skipped."""
         from device_discovery import discover_controllers_and_devices
+        def exists_side_effect(path):
+            if path.endswith('/partition'):
+                return False
+            return True
         with patch('pci_controllers.scan_pci_controllers', return_value=[]):
-            with patch('os.path.exists', return_value=True):
+            with patch('os.path.exists', side_effect=exists_side_effect):
                 with patch('os.listdir', return_value=['dm-0', 'dm-1', 'sda']):
-                    result = discover_controllers_and_devices(use_cache=False)
-                    # Device mapper should be filtered out
-                    assert all('dm-' not in d.get('device_name', '') for d in result.get('sata', []))
+                    with patch('pci_controllers.validate_device_path', return_value=True):
+                        result = discover_controllers_and_devices(use_cache=False)
+                        # Device mapper should be filtered out
+                        all_devices = []
+                        for devices in result.values():
+                            all_devices.extend(d.get('device_name', '') for d in devices)
+                        assert all('dm-' not in d for d in all_devices)
+                        assert 'sda' in all_devices
 
     def test_groups_by_controller_type(self):
         """Test that devices are grouped by controller type."""
         from device_discovery import discover_controllers_and_devices
+        def exists_side_effect(path):
+            if path.endswith('/partition'):
+                return False
+            return True
         with patch('pci_controllers.scan_pci_controllers', return_value=[
             {'pci_address': '0000:00:1f.2', 'controller_type': 'sata'},
             {'pci_address': '0000:01:00.0', 'controller_type': 'nvme'}
         ]):
-            with patch('os.path.exists', return_value=True):
+            with patch('os.path.exists', side_effect=exists_side_effect):
                 with patch('os.listdir', return_value=['sda', 'nvme0n1']):
                     with patch('pci_controllers.validate_device_path', return_value=True):
                         with patch('pci_controllers.get_controller_for_device') as mock_get:
@@ -282,12 +315,17 @@ class TestDiscoverControllersAndDevices:
 
     def test_handles_missing_controller(self):
         """Test that devices without controller are added to unknown."""
-        from device_discovery import discover_controllers_and_devices, _DISCOVERY_CACHE
+        from device_discovery import discover_controllers_and_devices
+        from pci_controllers import _DISCOVERY_CACHE
         # Clear cache before test
         _DISCOVERY_CACHE['data'] = None
         _DISCOVERY_CACHE['timestamp'] = 0
+        def exists_side_effect(path):
+            if path.endswith('/partition'):
+                return False
+            return True
         with patch('pci_controllers.scan_pci_controllers', return_value=[]):
-            with patch('os.path.exists', return_value=True):
+            with patch('os.path.exists', side_effect=exists_side_effect):
                 with patch('os.listdir', return_value=['sda']):
                     with patch('pci_controllers.validate_device_path', return_value=True):
                         with patch('pci_controllers.get_controller_for_device', return_value=None):
@@ -436,7 +474,8 @@ class TestGetMaxSlotFromEnclosure:
 
     def test_cache_usage(self):
         """Test that cache is used when enabled."""
-        from device_discovery import get_max_slot_from_enclosure, _ENCLOSURE_CACHE
+        from device_discovery import get_max_slot_from_enclosure
+        from enclosure_discovery import _ENCLOSURE_CACHE
         # Clear cache before test for isolation
         _ENCLOSURE_CACHE['data'] = None
         _ENCLOSURE_CACHE['timestamp'] = 0
@@ -490,7 +529,8 @@ class TestGetScsiHostSlotProjections:
 
     def test_filters_enclosure_devices(self):
         """Test that enclosure devices are filtered."""
-        from device_discovery import get_scsi_host_slot_projections, _SCSI_PROJECTIONS_CACHE
+        from device_discovery import get_scsi_host_slot_projections
+        from slot_mapping import _SCSI_PROJECTIONS_CACHE
         # Clear cache to ensure fresh data
         _SCSI_PROJECTIONS_CACHE['data'] = None
         _SCSI_PROJECTIONS_CACHE['timestamp'] = 0
@@ -527,7 +567,8 @@ class TestGetScsiHostSlotProjections:
 
     def test_detects_occupied_slots(self):
         """Test that occupied slots are detected."""
-        from device_discovery import get_scsi_host_slot_projections, _SCSI_PROJECTIONS_CACHE
+        from device_discovery import get_scsi_host_slot_projections
+        from slot_mapping import _SCSI_PROJECTIONS_CACHE
         # Clear cache to ensure fresh data
         _SCSI_PROJECTIONS_CACHE['data'] = None
         _SCSI_PROJECTIONS_CACHE['timestamp'] = 0

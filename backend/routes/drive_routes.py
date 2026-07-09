@@ -1,6 +1,5 @@
 # Drive-related routes
 import os
-import json
 import re
 import sqlite3
 from contextlib import closing
@@ -9,9 +8,9 @@ from app_config import ERASE_JOBS, ERASE_JOBS_LOCK, logger, limiter
 from common import get_config_dir, load_policy, get_db_path
 from disk_ops import discover_drives, invalidate_drive_cache, _is_eligible_for_zero_check
 from disk_utils import format_capacity_bytes
-from routes.admin_routes import require_admin_auth
+from routes._shared import require_admin_auth
 from zero_check_manager import get_manager as get_zero_check_manager
-from database import load_prior_visit, get_smart_test_history, get_smart_test_status_batch
+from database import load_prior_visit, get_smart_test_status_batch
 from device_discovery import (
     invalidate_sas_expander_cache,
     invalidate_scsi_projections_cache,
@@ -33,7 +32,7 @@ drive_bp = Blueprint('drive_routes', __name__)
 
 @drive_bp.route("/api/drives")
 @require_admin_auth
-@limiter.limit("60 per minute")
+@limiter.limit("120 per minute")
 def get_drives():
     try:
         config_dir = get_config_dir()
@@ -113,6 +112,8 @@ def get_drives():
         # Match drives to jobs and perform DB queries outside lock
         for d in drives:
             bay_name = d.get("bay")
+
+            # Pass 1: Find running/queued job for live status
             for job_snap in jobs_snapshot:
                 if str(job_snap.get("bay")).lower() == str(bay_name).lower():
                     if job_snap["status"] in {"running", "queued"}:
@@ -132,8 +133,10 @@ def get_drives():
                             d["capacity_str"] = format_capacity_bytes(job_snap["capacity_bytes"])
                         break
 
-                    # Phase 5: Include prior-visit data and snapshot IDs when drive is linked to a job
-                    if job_snap.get("serial"):
+            # Pass 2: Load prior-visit data and snapshot IDs from first completed job
+            for job_snap in jobs_snapshot:
+                if str(job_snap.get("bay")).lower() == str(bay_name).lower():
+                    if job_snap["status"] not in {"running", "queued"} and job_snap.get("serial"):
                         serial = job_snap["serial"]
                         prior_visit = load_prior_visit(serial)
                         if prior_visit:
@@ -156,6 +159,7 @@ def get_drives():
                                     d["has_post_wipe_snapshot"] = bool(row["post_wipe_smart_json"])
                         except Exception as e:
                             logger.warning(f"Failed to load snapshot IDs for job {job_snap['job_id']}: {e}")
+                        break
 
         # Merge ephemeral zero-check status for each drive
         try:
@@ -173,6 +177,7 @@ def get_drives():
         return jsonify({"error": str(e)}), 500
 
 @drive_bp.route("/api/status")
+@limiter.limit("60 per minute")
 def get_status():
     try:
         config_dir = get_config_dir()

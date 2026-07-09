@@ -5,6 +5,9 @@
 // - discoveryState.js (state management)
 // - discoveryMapping.js (mapping business logic)
 
+(function() {
+'use strict';
+
 // Defensive namespace checks (CRITIQUE.md #2)
 // Throw errors to halt execution if required modules are not initialized
 if (typeof window.DiscoveryValidation === 'undefined') {
@@ -75,7 +78,7 @@ function resetDiscoveryPreview() {
     mappingPreview.innerHTML = '';
   }
   window.DiscoveryState.resetDiscoveryPreview();
-  undoMappingBtn.disabled = true;
+  if (undoMappingBtn) undoMappingBtn.disabled = true;
   hideMappingValidationError();
 }
 
@@ -388,9 +391,9 @@ function setGroupingMode(mode) {
   }
 }
 
-groupNoneBtn.addEventListener("click", () => setGroupingMode('none'));
-groupTypeBtn.addEventListener("click", () => setGroupingMode('type'));
-groupPciBtn.addEventListener("click", () => setGroupingMode('pci'));
+if (groupNoneBtn) groupNoneBtn.addEventListener("click", () => setGroupingMode('none'));
+if (groupTypeBtn) groupTypeBtn.addEventListener("click", () => setGroupingMode('type'));
+if (groupPciBtn) groupPciBtn.addEventListener("click", () => setGroupingMode('pci'));
 
 // Controller selection event listeners
 document.addEventListener('click', (e) => {
@@ -442,7 +445,7 @@ document.addEventListener('click', (e) => {
 if (previewMappingBtn) {
   previewMappingBtn.addEventListener("click", () => {
     const discoveryState = window.DiscoveryState.getDiscoveryState();
-    window.DiscoveryMapping.generateMappingPreview(
+    window.DiscoveryMapping.generateMappingPreview({
       discoveryState,
       localBayMapCopy,
       mappingPattern,
@@ -453,25 +456,25 @@ if (previewMappingBtn) {
       showMappingValidationError,
       hideMappingValidationError,
       setPreviewMessage,
-      window.escapeHtml,
+      escapeHtml: window.escapeHtml,
       mappingValidationError
-    );
+    });
   });
 }
 
 if (applyMappingBtn) {
   applyMappingBtn.addEventListener("click", async () => {
     try {
-      await window.DiscoveryMapping.applyMappingToBayConfig(
+      await window.DiscoveryMapping.applyMappingToBayConfig({
         localBayMapCopy,
         loadBayMappingConfig,
         closeDiscoveryModal,
         showMappingValidationError,
         hideMappingValidationError,
-        window.safeFetch,
+        safeFetch: window.safeFetch,
         renderBayMappingConfig,
         showUnsavedChangesIndicator
-      );
+      });
     } catch (err) {
       alert(`Error applying mapping: ${err.message}`);
     }
@@ -480,7 +483,7 @@ if (applyMappingBtn) {
 
 // Sets the mapping preview panel to an error or warning message and shows it
 function setPreviewMessage(message, isWarning = false) {
-  mappingPreview.innerHTML = `<div class="${isWarning ? 'preview-message--warning' : 'preview-message--error'}">${message}</div>`;
+  mappingPreview.innerHTML = `<div class="${isWarning ? 'preview-message--warning' : 'preview-message--error'}">${escapeHtml(message)}</div>`;
   mappingPreview.classList.remove('hidden');
 }
 
@@ -629,16 +632,16 @@ function renderManualMappingPreview() {
 }
 
 // Manual mapping event listeners (Task 4.5)
-patternModeBtn.addEventListener('click', () => {
+if (patternModeBtn) patternModeBtn.addEventListener('click', () => {
   window.DiscoveryMapping.setMappingMode('pattern', patternModeBtn, manualModeBtn, patternMappingControls, manualMappingControls, applyMappingBtn);
 });
-manualModeBtn.addEventListener('click', () => {
+if (manualModeBtn) manualModeBtn.addEventListener('click', () => {
   window.DiscoveryMapping.setMappingMode('manual', patternModeBtn, manualModeBtn, patternMappingControls, manualMappingControls, applyMappingBtn);
   renderAvailableDevices();
 });
-deviceSearchInput.addEventListener('input', () => renderAvailableDevices());
-manualDeviceFilter.addEventListener('change', () => renderAvailableDevices());
-addManualMappingBtn.addEventListener('click', () => {
+if (deviceSearchInput) deviceSearchInput.addEventListener('input', () => renderAvailableDevices());
+if (manualDeviceFilter) manualDeviceFilter.addEventListener('change', () => renderAvailableDevices());
+if (addManualMappingBtn) addManualMappingBtn.addEventListener('click', () => {
   const success = window.DiscoveryMapping.addManualMapping(manualBaySelect, showMappingValidationError, hideMappingValidationError);
   if (success) {
     updateSelectedDeviceInfo();
@@ -647,7 +650,7 @@ addManualMappingBtn.addEventListener('click', () => {
     applyMappingBtn.disabled = false;
   }
 });
-clearManualMappingsBtn.addEventListener('click', () => {
+if (clearManualMappingsBtn) clearManualMappingsBtn.addEventListener('click', () => {
   if (window.DiscoveryMapping.hasManualMappings()) {
     if (confirm('Are you sure you want to clear all manual mappings?')) {
       window.DiscoveryMapping.clearManualMappings();
@@ -668,4 +671,5 @@ if (undoMappingBtn) {
     }
   });
 }
+})();
 // --- END OF FILE frontend/admin/discoveryModal.js ---

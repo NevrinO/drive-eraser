@@ -20,12 +20,8 @@ async function ensureWizardDataLoaded() {
   return _wizardDataPromise;
 }
 
-// Open new enclosure wizard
-async function openNewEnclosureWizard() {
-  const modal = document.getElementById("enclosureWizardModal");
-  if (!modal) return;
-
-  // Ensure save button listener is attached (modal may not exist at module load)
+// Ensure save button listener is attached (modal may not exist at module load)
+function attachWizardSaveListener() {
   const saveBtn = document.getElementById("wizardSaveBtn");
   if (saveBtn && !saveBtn.dataset.enclosureListener) {
     saveBtn.addEventListener("click", () => {
@@ -37,6 +33,14 @@ async function openNewEnclosureWizard() {
     });
     saveBtn.dataset.enclosureListener = "true";
   }
+}
+
+// Open new enclosure wizard
+async function openNewEnclosureWizard() {
+  const modal = document.getElementById("enclosureWizardModal");
+  if (!modal) return;
+
+  attachWizardSaveListener();
 
   // Reset wizard to step 1
   currentWizardStep = 1;
@@ -255,7 +259,7 @@ async function renderConfiguration() {
             // Use NVMe device paths as fallback identifiers
             nvmeDrives.forEach(drive => {
               const selected = wizardData.nvme_starting_slot === drive.by_path ? 'selected' : '';
-              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
+              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${escapeHtml(drive.model)}]</option>`;
             });
             html += `<small class="wizard-form-hint">Using detected NVMe drives (no hot-plug slots found)</small>`;
           } else {
@@ -316,7 +320,7 @@ async function renderConfiguration() {
           const data = await response.json();
           // Update the hardware info in the current render context
           // Re-render to show updated drive counts
-          renderConfiguration();
+          await renderConfiguration();
         }
       } catch (e) {
         console.error("Failed to refresh hardware info:", e);
@@ -333,56 +337,6 @@ async function renderConfiguration() {
       wizardData.nvme_starting_slot = e.target.value;
     });
   }
-}
-
-// Supported traversal presets (mirrors backend SUPPORTED_TRAVERSALS)
-const SUPPORTED_TRAVERSALS = [
-  "top_left_down_then_across",
-  "bottom_left_up_then_across",
-  "top_left_across_then_down",
-  "bottom_left_across_then_up"
-];
-
-// Build traversal positions (mirrors backend build_traversal_positions function)
-function buildTraversalPositions(rows, cols, traversal, slotCount) {
-  const positions = [];
-  const r = Math.max(1, rows || 1);
-  const c = Math.max(1, cols || 1);
-  // Respect provided slotCount; only fall back to rows * cols if not provided
-  const count = (slotCount !== null && slotCount !== undefined && slotCount > 0) ? slotCount : (r * c);
-
-  if (traversal === "bottom_left_up_then_across") {
-    for (let col = 0; col < c; col++) {
-      for (let row = r - 1; row >= 0; row--) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else if (traversal === "top_left_across_then_down") {
-    for (let row = 0; row < r; row++) {
-      for (let col = 0; col < c; col++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else if (traversal === "bottom_left_across_then_up") {
-    for (let row = r - 1; row >= 0; row--) {
-      for (let col = 0; col < c; col++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  } else {
-    // top_left_down_then_across (default)
-    for (let col = 0; col < c; col++) {
-      for (let row = 0; row < r; row++) {
-        positions.push({ row, col });
-        if (positions.length >= count) return positions;
-      }
-    }
-  }
-
-  return positions;
 }
 
 // Render slot validation (Step 3)
@@ -412,9 +366,9 @@ function renderSlotAssignment() {
   // Build traversal positions
   let positions;
   if (rows > 0 && cols > 0 && SUPPORTED_TRAVERSALS.includes(traversal)) {
-    positions = buildTraversalPositions(rows, cols, traversal, template.slot_count);
+    positions = buildTraversalPositions(rows, cols, traversal, template.slot_count, template.skip_positions || []);
   } else {
-    positions = Array.from({ length: template.slot_count }, (_, i) => ({ row: i, col: 0 }));
+    positions = Array.from({ length: template.slot_count || template.bay_count || (rows * cols) }, (_, i) => ({ row: i, col: 0 }));
   }
 
   // When editing an existing enclosure, load saved slot data so custom HW IDs are preserved
@@ -468,6 +422,8 @@ function renderSlotAssignment() {
         const nvmeOffset = template.hybrid_slots.indexOf(slotIndex);
         const nvmeSlotNum = nvmeStartingSlot + nvmeOffset;
         nvmeHwId = String(nvmeSlotNum);
+      } else {
+        nvmeHwId = wizardData.nvme_starting_slot;
       }
     }
 

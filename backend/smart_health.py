@@ -54,7 +54,7 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
         written_bytes = smart_data.get("data_written_bytes")
         if written_bytes is None:
             raw_written = smart_data.get("data_written_raw")
-            written_bytes = safe_int(raw_written, 0) * 512 if raw_written is not None else 0
+            written_bytes = safe_int(raw_written, 0) * (512000 if "nvme" in iface else 512) if raw_written is not None else 0
         else:
             written_bytes = safe_int(written_bytes, 0)
         capacity = safe_int(smart_data.get("capacity_bytes"), 0)
@@ -138,10 +138,10 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
     score = max(0, base_score - realloc_penalty - pending_penalty - nme_penalty - nvme_media_penalty - sas_read_error_penalty - sas_sticky_lba_penalty)
     failed_override = str(smart_data.get("status") or "UNKNOWN").upper() == "FAILED"
     exit_status_val = safe_int(smart_data.get("_smartctl_exit_status"), 0)
-    if (exit_status_val & 8 != 0) or (exit_status_val & 16 != 0): failed_override = True
+    if (exit_status_val & 8) != 0 or (exit_status_val & 16) != 0: failed_override = True
     if iface == "nvme":
         crit_warn_val = safe_int(smart_data.get("_nvme_critical_warning"), 0)
-        if (crit_warn_val & 0x04 != 0) or (crit_warn_val & 0x08 != 0): failed_override = True
+        if (crit_warn_val & 0x04) != 0 or (crit_warn_val & 0x08) != 0: failed_override = True
 
     penalty_breakdown["failed_override"] = failed_override
     final_score = min(int(round(score)), 5) if failed_override else int(round(score))

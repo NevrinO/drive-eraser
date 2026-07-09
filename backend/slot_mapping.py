@@ -64,7 +64,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
                 break
 
             # phy_name format: phy-0:0:N  (where N = physical slot index)
-            phy_match = re.search(r'phy-\d+(?::\d+)?:(\d+)$', phy_name)
+            phy_match = re.search(r'phy-\d+(?::\d+)?:(\d+)\Z', phy_name)
             if not phy_match:
                 continue
             slot_number = int(phy_match.group(1))
@@ -117,6 +117,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     # so we always run the by-path scan to ensure expander entries are present.
     # Deduplication via _seen_sas_phy prevents duplicates.
     by_path_base = "/dev/disk/by-path"  # defined here for use by all subsequent scans
+    by_path_entries = []  # default in case os.listdir fails
     try:
         by_path_entries = os.listdir(by_path_base)
         # Pattern: pci-{pci_addr}-sas-exp{expander_id}-phy{phy_num}-lun-0
@@ -192,8 +193,13 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
     # Scan SAS direct-attached topology (no expander)
     # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+    # Pre-build set of sas_expander slots for O(1) duplicate check (A-B7-7)
+    sas_expander_slots = {
+        (entry['pci_controller'], entry['physical_slot_number'])
+        for entry in master_map
+        if entry.get('slot_type') == 'sas_expander'
+    }
     try:
-        by_path_entries = os.listdir(by_path_base)
         # Pattern for direct-attached SAS: pci-{pci_addr}-scsi-{host}:0:{slot}:{lun}
         # Use \Z for strict end-of-string (lesson #12) and flexible LUN (\d+) for multi-LUN devices
         sas_direct_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-scsi-(\d+):0:(\d+):\d+\Z')
@@ -211,13 +217,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
                 # Check if this is already covered by SAS expander detection
                 # (avoid duplicates when expander is present)
-                is_duplicate = False
-                for existing in master_map:
-                    if (existing['pci_controller'] == pci_addr and
-                        existing['slot_type'] == 'sas_expander' and
-                        existing['physical_slot_number'] == slot_num):
-                        is_duplicate = True
-                        break
+                is_duplicate = (pci_addr, slot_num) in sas_expander_slots
 
                 if not is_duplicate:
                     # Validate PCI address for defense-in-depth (lesson #9)
@@ -238,7 +238,6 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
     # Scan motherboard SATA ports (ATA)
     # Pattern: pci-{pci_addr}-ata-{ata_num}
     try:
-        by_path_entries = os.listdir(by_path_base)
         # Pattern for motherboard SATA: pci-{pci_addr}-ata-{ata_num}
         # Use \Z for strict end-of-string (lesson #12)
         sata_pattern = re.compile(r'^pci-([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])-ata-(\d+)\Z')
@@ -281,7 +280,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
             if len(master_map) >= MAX_TOTAL_SLOTS:
                 logging.warning(f"Reached maximum slot limit of {MAX_TOTAL_SLOTS}")
                 break
-            port_match = re.search(r'ata(\d+)$', port_name)
+            port_match = re.search(r'ata(\d+)\Z', port_name)
             if not port_match:
                 continue
             ata_num = int(port_match.group(1))
@@ -423,7 +422,7 @@ def resolve_multipath_parent(dev_name: str) -> str:
     # Note: 'mapper/' prefix is rejected by the regex above (contains '/'),
     # so only 'dm-' prefixed names reach this branch.
     if dev_name.startswith('dm-'):
-        return f"/dev/{dev_name}" if not dev_name.startswith('/') else dev_name
+        return f"/dev/{dev_name}"
 
     holders_dir = f"/sys/block/{dev_name}/holders"
     try:
@@ -573,7 +572,7 @@ def get_scsi_host_slot_projections(use_cache: bool = True) -> List[Dict]:
             # Standard SCSI slot projection
             # Find actual slots for this host by scanning SCSI device directories
             # Pattern: {host_num}:0:{slot}:0
-            slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0$')
+            slot_pattern = re.compile(rf'^{host_num}:0:(\d+):0\Z')
 
             # Collect and sort slot numbers for deterministic ordering
             # Filter out SES/enclosure management devices by checking device type

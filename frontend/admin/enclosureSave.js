@@ -158,15 +158,3 @@ async function handleEditEnclosure() {
   }
 }
 
-// Attach listener at module load for static modals; dynamic modals re-attach in openNewEnclosureWizard/editEnclosure
-const _moduleSaveBtn = document.getElementById("wizardSaveBtn");
-if (_moduleSaveBtn) {
-  _moduleSaveBtn.addEventListener("click", () => {
-    if (isEditMode) {
-      handleEditEnclosure();
-    } else {
-      handleSaveEnclosure();
-    }
-  });
-  _moduleSaveBtn.dataset.enclosureListener = "true";
-}

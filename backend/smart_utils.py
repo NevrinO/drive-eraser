@@ -40,7 +40,7 @@ def is_drive_ssd(interface_type, smart_data):
         except (ValueError, TypeError): pass
     model_lower = str(smart_data.get("model") or "").lower()
     if "ssd" in model_lower: return True
-    if any(m in model_lower for m in ["hdd", "barracuda", "ironwolf", "toshiba"]): return False
+    if any(m in model_lower for m in ["hdd", "barracuda", "ironwolf", "toshiba", "mg07", "mg08", "mg09", "mg10", "enterprise capacity"]): return False
     return smart_data.get("wear_level") is not None
 
 

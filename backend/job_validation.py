@@ -154,5 +154,6 @@ def create_erase_job(validated):
             "model": validated["drive"].get("model"),
             "capacity_bytes": validated["drive"].get("smart", {}).get("capacity_bytes") or get_device_capacity_bytes(validated["device"]) or (100 * 1024 * 1024 * 1024),
             "data_written_at_wipe": None,
+            "write_counter_source": None,
         },
     }

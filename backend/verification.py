@@ -28,7 +28,7 @@ from disk_utils import (
 _VERSIONS_CACHE = {"data": None, "timestamp": 0}
 _VERSIONS_CACHE_TTL = 86400  # 24 hours in seconds - software versions only change on package updates
 _VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
-from smart_parsing import get_smart_data
+from smart_parsing import get_smart_data, capture_write_baseline
 from crypto_verification import (
     verify_sampled_zero_check,
     capture_before_state,
@@ -77,7 +77,7 @@ def verify_overwrite(device):
         sample_data = result.get("output_bytes") or b""
         if not sample_data:
             return {"ok": False, "status": "verification_error", "error": "overwrite_sample_empty", "details": {"method": "overwrite", "block_offset": block_offset}}
-        if any(byte != 0 for byte in sample_data):
+        if any(sample_data):
             return {
                 "ok": False,
                 "status": "verification_failed",
@@ -435,7 +435,7 @@ def verify_sas_block(device, method):
 
     lowered = output.lower()
     in_progress_markers = ["in progress", "background operation in progress", "sanitize in progress", "progress indication"]
-    failed_markers = ["failed", "failure", "check condition", "medium error", "aborted"]
+    failed_markers = ["failed", "failure", "medium error", "aborted"]
     complete_markers = ["completed", "success", "no sanitize operation in progress", "idle", "not in progress"]
 
     if any(marker in lowered for marker in failed_markers):
@@ -464,20 +464,29 @@ def write_marker_and_verify(job, smart_baseline=None):
 
     # High #13: Acquire device lock for marker write using context manager
     device_lock = get_device_lock(device)
-    logger = logging.getLogger("app")
 
     with device_lock:
         try:
-            # Use provided SMART baseline if available, otherwise capture it now
+            # Use provided SMART baseline if available, otherwise capture it now.
+            # capture_write_baseline flushes the drive cache then reads the
+            # counter once — replacing the old 2-minute polling loop.
+            # For Seagate SAS, reads log page 0x37 (host-only, no drift).
+            # For non-Seagate SAS, returns (None, "disabled").
             if smart_baseline is not None:
                 raw_writes = smart_baseline
             else:
-                smart_metrics = get_smart_data(device)
-                raw_writes = smart_metrics.get("data_written_raw")
+                raw_writes, write_source = capture_write_baseline(device, interface_type)
+                job["request"]["write_counter_source"] = write_source
             job["request"]["data_written_at_wipe"] = raw_writes
-            logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
+            logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}, source={job['request'].get('write_counter_source')}")
 
-            payload = build_marker_payload(job)
+            passphrase = None
+            try:
+                passphrase = load_policy().get("wipe_passphrase")
+            except Exception:
+                passphrase = None
+
+            payload = build_marker_payload(job, passphrase)
             if len(payload) > (MARKER_BLOCK_SIZE - 1):
                 return {"ok": False, "status": "marker_error", "error": "marker_payload_too_large", "details": {"payload_bytes": len(payload)}}
 
@@ -495,21 +504,16 @@ def write_marker_and_verify(job, smart_baseline=None):
                     },
                 }
 
-            passphrase = None
-            try:
-                passphrase = load_policy().get("wipe_passphrase")
-            except Exception:
-                passphrase = None
-
             readback = read_marker_status(device, interface_type, passphrase)
             if not readback.get("ok"):
                 return readback
 
             if readback.get("status") == "checksum_valid":
                 stored_writes = readback.get("details", {}).get("data_written_at_wipe")
+                stored_source = readback.get("details", {}).get("write_counter_source")
                 current_writes = get_smart_data(device).get("data_written_raw")
-                logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
-                is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
+                logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, source={stored_source}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
+                is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes, stored_source)
                 readback["is_pristine"] = is_pristine
 
                 if not is_pristine:
@@ -534,7 +538,7 @@ def write_marker_and_verify(job, smart_baseline=None):
             logger.error(f"Marker write exception: {e}")
             return {"ok": False, "status": "marker_error", "error": f"marker_exception:{str(e)}", "details": {}}
 
-def build_marker_payload(job):
+def build_marker_payload(job, passphrase=None):
     request_data = job.get("request") or {}
     payload = {
         "signature": MARKER_SIGNATURE,
@@ -545,16 +549,11 @@ def build_marker_payload(job):
         "serial": request_data.get("serial"),
         "method": request_data.get("method"),
         "data_written_at_wipe": request_data.get("data_written_at_wipe"),
+        "write_counter_source": request_data.get("write_counter_source"),
     }
 
     serialized_fields = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     payload["checksum"] = hashlib.sha256(serialized_fields).hexdigest()
-
-    passphrase = None
-    try:
-        passphrase = load_policy().get("wipe_passphrase")
-    except Exception:
-        passphrase = None
 
     if passphrase:
         serialized_for_hmac = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -565,8 +564,6 @@ def build_marker_payload(job):
 
 def _get_tool_version(tool_name, command_path, version_flag):
     """Helper function to get version of a single tool. Used for parallel execution."""
-    import logging
-    logger = logging.getLogger("app")
     
     if not command_path:
         logger.warning(f"{tool_name} command not found")
@@ -590,8 +587,6 @@ def _get_tool_version(tool_name, command_path, version_flag):
 
 def get_software_versions():
     """Capture versions of key software tools used for verification. Cached with 24-hour TTL."""
-    import logging
-    logger = logging.getLogger("app")
     
     # Check cache first (per lesson-learned #56: only cache successful data)
     current_time = time.time()
@@ -632,9 +627,12 @@ def get_software_versions():
     
     return versions
 
-def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10):
+def verification_for_method(device, interface_type, method, execution, before_state=None, sample_ratio=0.10, progress_callback=None):
     selected_method = str(method or "").strip().lower()
     iface = str(interface_type or "").strip().lower()
+
+    if not device or not validate_device_path(device):
+        return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": selected_method, "interface_type": iface}}
 
     primary_result = None
 
@@ -669,7 +667,7 @@ def verification_for_method(device, interface_type, method, execution, before_st
 
         # Unified secondary verification: hash comparison if before_state available, otherwise sampled zero check
         if before_state and before_state.get("ok"):
-            crypto_probe = verify_crypto_probe(device, secondary_mode, before_state=before_state, sample_ratio=sample_ratio)
+            crypto_probe = verify_crypto_probe(device, secondary_mode, before_state=before_state, sample_ratio=sample_ratio, progress_callback=progress_callback)
             if not crypto_probe.get("ok"):
                 return {
                     "ok": False,
@@ -688,7 +686,7 @@ def verification_for_method(device, interface_type, method, execution, before_st
                 primary_result["details"]["secondary_status"] = "PASSED_HASH_COMPARISON"
             primary_result["details"]["verification_level"] = (crypto_probe.get("details") or {}).get("verification_level", "controller_attested_with_hash_comparison")
         elif secondary_mode not in {"disabled", "controller_only"}:
-            secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio)
+            secondary_result = verify_sampled_zero_check(device, sample_ratio=sample_ratio, progress_callback=progress_callback)
             if not secondary_result.get("ok"):
                 return {
                     "ok": False,
@@ -708,9 +706,13 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["secondary_status"] = "SKIPPED"
             primary_result["details"]["verification_level"] = "primary_verification_only"
 
-        # Capture SMART baseline after secondary verification to leverage natural delay from read pass
-        smart_metrics = get_smart_data(device)
-        smart_baseline = smart_metrics.get("data_written_raw")
+        # Capture SMART baseline after secondary verification.
+        # capture_write_baseline flushes the drive cache then reads the
+        # counter once — replacing the old 2-minute polling loop.
+        # For Seagate SAS, reads log page 0x37 (host-only, no drift).
+        # For non-Seagate SAS, returns (None, "disabled").
+        smart_baseline, write_source = capture_write_baseline(device, interface_type)
         primary_result["details"]["smart_baseline_for_marker"] = smart_baseline
+        primary_result["details"]["write_counter_source"] = write_source
 
     return primary_result

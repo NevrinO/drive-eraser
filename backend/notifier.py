@@ -1,7 +1,10 @@
 # --- START OF FILE backend/notifier.py ---
 import json
+import logging
 import urllib.request
 from common import load_policy
+
+logger = logging.getLogger(__name__)
 
 def send_slack_notification(job, status_override=None):
     try:
@@ -50,6 +53,6 @@ def send_slack_notification(job, status_override=None):
         )
         with urllib.request.urlopen(req, timeout=10) as response:
             response.read()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Slack notification failed: {e}")
 # --- END OF FILE backend/notifier.py ---

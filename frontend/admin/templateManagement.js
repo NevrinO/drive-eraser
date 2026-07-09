@@ -63,35 +63,40 @@ function initializeTemplateManagement() {
     return;
   }
 
-  // Attach event listeners
-  if (createTemplateBtn) {
-    createTemplateBtn.addEventListener("click", () => {
-      openTemplateModal();
-    });
-  }
-  if (templateModalClose) {
-    templateModalClose.addEventListener("click", closeTemplateModal);
-  }
-  if (templateForm) {
-    templateForm.addEventListener("submit", async (e) => {
+  // Attach event listeners (guard at lines 51-64 already verified all elements are non-null)
+  createTemplateBtn.addEventListener("click", () => {
+    openTemplateModal();
+  });
+  templateModalClose.addEventListener("click", closeTemplateModal);
+  templateForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       templateFormSubmit.disabled = true;
       templateFormSubmit.textContent = "Saving...";
 
       try {
         const skipPositionsStr = templateSkipPositions.value.trim();
-        const skipBayNumbers = skipPositionsStr ? skipPositionsStr.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)) : [];
+        const skipRawTokens = skipPositionsStr ? skipPositionsStr.split(",").map(s => s.trim()) : [];
+        const skipInvalidTokens = skipRawTokens.filter(t => t !== "" && isNaN(parseInt(t, 10)));
+        if (skipInvalidTokens.length > 0) {
+          throw new Error(`Skip positions contains invalid non-numeric values: ${skipInvalidTokens.join(", ")}`);
+        }
+        const skipBayNumbers = skipRawTokens.map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         const cols = parseInt(templateCols.value, 10);
         const skipPositions = skipBayNumbers.length > 0 ? bayNumbersToRowCol(skipBayNumbers, cols) : [];
 
         const hybridSlotsStr = templateHybridSlots.value.trim();
-        const hybridBayNumbers = hybridSlotsStr ? hybridSlotsStr.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)) : [];
+        const hybridRawTokens = hybridSlotsStr ? hybridSlotsStr.split(",").map(s => s.trim()) : [];
+        const hybridInvalidTokens = hybridRawTokens.filter(t => t !== "" && isNaN(parseInt(t, 10)));
+        if (hybridInvalidTokens.length > 0) {
+          throw new Error(`Hybrid slots contains invalid non-numeric values: ${hybridInvalidTokens.join(", ")}`);
+        }
+        const hybridBayNumbers = hybridRawTokens.map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         
         // Validate hybrid_slots
         if (hybridBayNumbers.length > 0) {
           const gridSize = parseInt(templateRows.value, 10) * parseInt(templateCols.value, 10);
-          if (hybridBayNumbers.some(bayNum => bayNum < 1 || bayNum > gridSize)) {
-            throw new Error("Hybrid slots must be between 1 and grid size (rows × columns)");
+          if (hybridBayNumbers.some(bayNum => bayNum < 0 || bayNum > gridSize - 1)) {
+            throw new Error("Hybrid slots must be between 0 and grid size - 1 (rows × columns - 1)");
           }
           // Check for duplicates
           const uniqueHybridSlots = new Set(hybridBayNumbers);
@@ -126,6 +131,9 @@ function initializeTemplateManagement() {
         if (!templateData.name) {
           throw new Error("Template name is required");
         }
+        if (isNaN(templateData.bay_count) || isNaN(templateData.rows) || isNaN(templateData.cols)) {
+          throw new Error("Bay count, rows, and columns must be valid numbers");
+        }
         if (templateData.bay_count < 1 || templateData.bay_count > 128) {
           throw new Error("Bay count must be between 1 and 128");
         }
@@ -158,30 +166,27 @@ function initializeTemplateManagement() {
         templateFormSubmit.textContent = editingTemplateId ? "Update Template" : "Create Template";
       }
     });
-  }
-  if (templateList) {
-    templateList.addEventListener("click", async (e) => {
+  templateList.addEventListener("click", async (e) => {
       const btn = e.target.closest(".btn-template-action");
       if (!btn) return;
 
-      const templateId = btn.getAttribute("data-template-id");
+      const clickedTemplateId = btn.getAttribute("data-template-id");
       const action = btn.getAttribute("data-action");
 
       if (action === "preview") {
-        const template = availableLayoutTemplates.find(t => t.id === templateId);
+        const template = availableLayoutTemplates.find(t => t.id === clickedTemplateId);
         if (template) {
           openTemplatePreview(template);
         }
       } else if (action === "edit") {
-        const template = availableLayoutTemplates.find(t => t.id === templateId);
+        const template = availableLayoutTemplates.find(t => t.id === clickedTemplateId);
         if (template) {
           openTemplateModal(template);
         }
       } else if (action === "delete") {
-        await deleteTemplate(templateId);
+        await deleteTemplate(clickedTemplateId);
       }
     });
-  }
   // Load template list when admin tab is activated
   const templateAdminTab = document.querySelector('[data-tab="adminPanel"]');
   if (templateAdminTab) {
@@ -322,7 +327,12 @@ async function loadTemplateList() {
 
   // Ensure availableLayoutTemplates is loaded before rendering
   if (availableLayoutTemplates.length === 0) {
-    await loadLayoutTemplates();
+    try {
+      await loadLayoutTemplates();
+    } catch (err) {
+      templateList.innerHTML = `<div class="template-error-msg">Failed to load template data: ${err.message}</div>`;
+      return;
+    }
   }
 
   try {
@@ -366,7 +376,7 @@ async function loadTemplateList() {
       templateList.appendChild(item);
     });
   } catch (err) {
-    templateList.innerHTML = `<div class="template-error-msg">Failed to load templates: ${err.message}</div>`;
+    templateList.innerHTML = `<div class="template-error-msg">Failed to load templates: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -550,66 +560,13 @@ let previewAnimationInterval = null;
 let previewCurrentIndex = 0;
 let previewTraversalOrder = [];
 
-function buildTraversalOrder(template) {
-  const rows = template.rows || 1;
-  const cols = template.cols || 1;
-  const bayCount = template.bay_count || (rows * cols);
-  const traversal = template.traversal_preset || "top_left_down_then_across";
-  const skipPositions = template.skip_positions || [];
-
-  const skipSet = new Set(skipPositions.map(p => `${p.row},${p.col}`));
-  const positions = [];
-
-  // Build traversal order - bayNum is not used for display, only for tracking
-  if (traversal === "bottom_left_up_then_across") {
-    for (let col = 0; col < cols; col++) {
-      for (let row = rows - 1; row >= 0; row--) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else if (traversal === "top_left_across_then_down") {
-    for (let row = 0; row < rows; row++) {
-      for (let col = 0; col < cols; col++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else if (traversal === "bottom_left_across_then_up") {
-    for (let row = rows - 1; row >= 0; row--) {
-      for (let col = 0; col < cols; col++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  } else {
-    // top_left_down_then_across (default)
-    for (let col = 0; col < cols; col++) {
-      for (let row = 0; row < rows; row++) {
-        const posKey = `${row},${col}`;
-        if (!skipSet.has(posKey) && positions.length < bayCount) {
-          positions.push({ row, col });
-        }
-      }
-    }
-  }
-
-  return positions;
-}
-
 function renderTemplatePreviewGrid(template) {
   const rows = template.rows || 1;
   const cols = template.cols || 1;
 
   // Validate grid dimensions to prevent browser crash (CRITIQUE.md #3)
   if (rows < 1 || rows > 32 || cols < 1 || cols > 32) {
-    templatePreviewGrid.innerHTML = `<div class="template-preview-error">Invalid grid dimensions: ${rows} × ${cols}. Maximum is 32 × 32.</div>`;
+    templatePreviewGrid.innerHTML = `<div class="template-preview-error">Invalid grid dimensions: ${escapeHtml(rows)} × ${escapeHtml(cols)}. Maximum is 32 × 32.</div>`;
     return;
   }
 
@@ -807,15 +764,20 @@ function openTemplatePreview(template) {
   templatePreviewInfo.innerHTML = `
     <div class="template-info-grid">
       <div><strong>Vendor:</strong> ${escapeHtml(template.vendor || "Generic")}</div>
-      <div><strong>Bays:</strong> ${template.bay_count || 0}</div>
-      <div><strong>Grid:</strong> ${template.rows || 1} × ${template.cols || 1}</div>
+      <div><strong>Bays:</strong> ${escapeHtml(template.bay_count || 0)}</div>
+      <div><strong>Grid:</strong> ${escapeHtml(template.rows || 1)} × ${escapeHtml(template.cols || 1)}</div>
       <div><strong>Traversal:</strong> ${escapeHtml(template.traversal_preset || "top_left_down_then_across")}</div>
-      <div class="template-info-grid--full"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? skipBayNumbers.join(", ") : "None"}</div>
-      <div class="template-info-grid--full"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? template.hybrid_slots.join(", ") : "None"}</div>
+      <div class="template-info-grid--full"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? escapeHtml(skipBayNumbers.join(", ")) : "None"}</div>
+      <div class="template-info-grid--full"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? escapeHtml(template.hybrid_slots.join(", ")) : "None"}</div>
     </div>
   `;
 
-  previewTraversalOrder = buildTraversalOrder(template);
+  previewTraversalOrder = buildTraversalPositions(
+    template.rows || 1, template.cols || 1,
+    template.traversal_preset || "top_left_down_then_across",
+    template.bay_count || (template.rows * template.cols),
+    template.skip_positions || []
+  );
   renderTemplatePreviewGrid(template);
   resetPreviewGrid();
 

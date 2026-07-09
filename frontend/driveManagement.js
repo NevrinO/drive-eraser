@@ -198,7 +198,7 @@ async function loadDrives(silent = false, forceRefresh = false) {
   }
 }
 
-baysGrid.addEventListener("click", (event) => {
+if (baysGrid) baysGrid.addEventListener("click", (event) => {
   const checkbox = event.target.closest(".card-checkbox");
   if (checkbox) {
     const bay = checkbox.getAttribute("data-checkbox-bay");
@@ -220,15 +220,25 @@ baysGrid.addEventListener("click", (event) => {
     currentDetailDrive = drive;
     renderLiveDetails(drive);
     openModal(bayDetailModal);
+
+    if (drive) {
+      const status = String(drive.status || "").toUpperCase();
+      if (status === "RUNNING" && drive.job_id) {
+        startLogTailPolling(drive.job_id);
+      } else if (status === "FAILED" && drive.job_id) {
+        loadFailedLog(drive.job_id);
+      }
+    }
   }
 });
 
 async function handleZeroCheckAction(bay, action) {
   const button = document.querySelector(`[data-zero-check-action][data-bay="${CSS.escape(bay)}"]`);
+  let originalText = "";
   if (button) {
     if (button.disabled) return;
     button.disabled = true;
-    const originalText = button.textContent;
+    originalText = button.textContent;
     button.textContent = action === "start" ? "Starting..." : "Cancelling...";
   }
   try {
@@ -269,10 +279,9 @@ refreshButton.addEventListener("click", () => loadDrives(false, true));
 
 let _logTailInterval = null;
 let _logTailJobId = null;
-let _logTailPrevStatus = null;
 
 function encodePathKey(relPath) {
-  return btoa(unescape(encodeURIComponent(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
+  return btoa(String.fromCharCode(...new TextEncoder().encode(relPath))).replace(/\+/g, "-").replace(/\//g, "_");
 }
 
 function stopLogTailPolling() {
@@ -281,7 +290,6 @@ function stopLogTailPolling() {
     _logTailInterval = null;
   }
   _logTailJobId = null;
-  _logTailPrevStatus = null;
 }
 
 async function fetchLogTail(relPath, lines) {
@@ -291,7 +299,8 @@ async function fetchLogTail(relPath, lines) {
     if (!response.ok) return null;
     const data = await response.json();
     return data.content || "";
-  } catch {
+  } catch (e) {
+    console.warn('fetchLogTail failed:', e);
     return null;
   }
 }
@@ -309,25 +318,22 @@ async function pollActiveLogTail(jobId) {
     updateLogTailElement(content);
   }
 
-  // Check if job status changed (completed/failed) — stop polling
+  // Check if job reached terminal status — stop polling
   const drive = currentDrives.find((d) => d.job_id === jobId);
   if (drive) {
     const status = String(drive.status || "").toUpperCase();
-    if (_logTailPrevStatus === "RUNNING" && status !== "RUNNING") {
+    if (status === "COMPLETED" || status === "FAILED" || status === "READY") {
       stopLogTailPolling();
       // Load final log content
       const finalContent = await fetchLogTail(`active/job-${jobId}.log`, 50);
       if (finalContent !== null) updateLogTailElement(finalContent);
     }
-    _logTailPrevStatus = status;
   }
 }
 
 function startLogTailPolling(jobId) {
   stopLogTailPolling();
   _logTailJobId = jobId;
-  const drive = currentDrives.find((d) => d.job_id === jobId);
-  _logTailPrevStatus = drive ? String(drive.status || "").toUpperCase() : "RUNNING";
 
   // Immediately fetch once
   pollActiveLogTail(jobId);
@@ -344,25 +350,6 @@ async function loadFailedLog(jobId) {
     updateLogTailElement("(Failed log not available. Use Log Viewer to browse logs.)");
   }
 }
-
-// Hook into bay detail modal open: start polling for running jobs, load failed log for failed jobs
-baysGrid.addEventListener("click", (event) => {
-  const card = event.target.closest("[data-bay]");
-  if (!card) return;
-  if (event.target.closest(".card-checkbox")) return;
-  if (isBatchMode) return;
-
-  const bay = card.getAttribute("data-bay");
-  const drive = currentDrives.find((d) => d.bay === bay);
-  if (!drive) return;
-
-  const status = String(drive.status || "").toUpperCase();
-  if (status === "RUNNING" && drive.job_id) {
-    startLogTailPolling(drive.job_id);
-  } else if (status === "FAILED" && drive.job_id) {
-    loadFailedLog(drive.job_id);
-  }
-});
 
 // Stop polling when bay detail modal closes (close button or backdrop click)
 document.addEventListener("click", (event) => {

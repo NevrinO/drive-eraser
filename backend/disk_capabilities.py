@@ -45,7 +45,7 @@ def detect_sas_capabilities(device, diagnostics=None):
     if not SG_SANITIZE_CMD: return capabilities
     output = run_command([SG_SANITIZE_CMD, "--status", device], diagnostics, "sg_sanitize")
     if not output: return capabilities
-    if any(marker in output.lower() for marker in ["sanitize", "in progress", "completed", "idle", "status"]):
+    if any(marker in output.lower() for marker in ["sanitize", "in progress", "completed", "idle"]):
         capabilities["supports_block_erase"] = True
     return capabilities
 

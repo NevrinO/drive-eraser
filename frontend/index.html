@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'self';">
   <title>Drive Sanitization Station</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="stylesheet" href="/styles.css">
@@ -328,7 +328,7 @@
       <h2 id="authTitle">Remote Network Access Required</h2>
       <p>Please enter the administrator passphrase configured in policy.json to interact with this station.</p>
       <form id="authForm">
-        <input type="password" id="authPassphrase" class="input--auth" placeholder="Passphrase" autocomplete="current-password">
+        <input type="password" id="authPassphrase" class="input--auth" placeholder="Passphrase" autocomplete="current-password" maxlength="256">
         <button type="submit" class="btn btn--primary mt-3 w-full">Verify Passphrase</button>
       </form>
       <div id="authErrorMsg" class="auth-error hidden">Invalid passphrase. Access denied.</div>
@@ -458,7 +458,7 @@
           </label>
           <label>
             Filter by name
-            <input type="text" id="logNameFilter" placeholder="Search filename...">
+            <input type="text" id="logNameFilter" placeholder="Search filename..." maxlength="200">
           </label>
           <button type="button" id="logRefreshBtn" class="btn btn--secondary">Refresh</button>
         </div>
@@ -479,7 +479,7 @@
           </table>
         </div>
         <div class="log-search-bar">
-          <input type="text" id="logSearchInput" placeholder="Search content (regex supported)...">
+          <input type="text" id="logSearchInput" placeholder="Search content (regex supported)..." maxlength="500">
           <label class="log-cs-label"><input type="checkbox" id="logCaseSensitive"> Case-sensitive</label>
           <button type="button" id="logSearchBtn" class="btn btn--secondary">Search</button>
           <button type="button" id="logClearSearchBtn" class="btn btn--secondary">Clear</button>
@@ -1073,7 +1073,7 @@
           <div class="form-fields-stack">
             <label>
               Slack Webhook URL
-              <input type="url" id="slack_webhook_url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/...">
+              <input type="url" id="slack_webhook_url" name="slack_webhook_url" placeholder="https://hooks.slack.com/services/..." maxlength="500">
               <small class="text-muted-xs">Slack webhook URL for wipe completion/failure notifications</small>
             </label>
             <label>
@@ -1141,7 +1141,7 @@
             </label>
             <label>
               Wipe Passphrase
-              <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase" autocomplete="new-password">
+              <input type="password" id="wipe_passphrase" name="wipe_passphrase" placeholder="Leave blank to keep current passphrase" autocomplete="new-password" maxlength="256">
               <small class="text-muted-xs">Passphrase for marker HMAC signing (min 8 characters when strict mode is enabled). Changing this invalidates existing marker verification results.</small>
             </label>
             <label>
@@ -1264,6 +1264,15 @@
               Zero Check Startup Delay (seconds)
               <input type="number" id="zero_check_startup_delay_seconds" name="zero_check_startup_delay_seconds" min="0" max="300" step="5">
               <small class="text-muted-xs">Delay auto-enrollment after server restart (0-300s). Lets drives settle before checking.</small>
+            </label>
+          </div>
+
+          <div class="modal-section-header">Network Access</div>
+          <div class="form-fields-stack">
+            <label>
+              Allowed Remote IPs
+              <textarea id="allowed_remote_ips" name="allowed_remote_ips" rows="3" placeholder="Leave empty to allow all remote IPs&#10;e.g. 10.20.34.0/24, 192.168.1.50"></textarea>
+              <small class="text-muted-xs">Restrict remote access to specific IPs or CIDR ranges (one per line). Localhost always has full access. Leave empty to allow any remote IP (authentication still required).</small>
             </label>
           </div>
 
@@ -1510,6 +1519,7 @@
   <script src="/auditLedger.js" defer></script>
   <script src="/admin/adminUtilities.js" defer></script>
   <script src="/admin/enclosureList.js" defer></script>
+  <script src="/admin/traversalUtils.js" defer></script>
   <script src="/admin/enclosureWizard.js" defer></script>
   <script src="/admin/enclosureSave.js" defer></script>
   <script src="/admin/bayMapping.js" defer></script>

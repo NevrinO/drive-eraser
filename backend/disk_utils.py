@@ -18,7 +18,6 @@ MARKER_BLOCK_SIZE = 4096
 
 # Timeout for read-only discovery commands (smartctl/hdparm/nvme/sg_sanitize --status/dd reads).
 # Prevents a hung device from stalling discovery worker threads indefinitely.
-# Destructive commands (run_destructive_command) intentionally have NO timeout.
 _READONLY_COMMAND_TIMEOUT = 30  # seconds
 
 # Single source of truth for marker HMAC key derivation. Both the write path
@@ -31,7 +30,7 @@ def safe_int(val, default=0):
     try: return int(val) if val is not None else default
     except (ValueError, TypeError): return default
 
-def safe_float(val, default=0.0):
+def safe_float(val, default=None):
     try: return float(val) if val is not None else default
     except (ValueError, TypeError): return default
 
@@ -134,7 +133,7 @@ def get_command_path(command_name):
         return _COMMAND_RESOLUTION_CACHE[command_name]["path"]
 
 def __getattr__(name):
-    if name in ("SMARTCTL_CMD", "NVME_CMD", "HDPARM_CMD", "SG_SANITIZE_CMD", "DD_CMD"):
+    if name in ("SMARTCTL_CMD", "NVME_CMD", "HDPARM_CMD", "SG_SANITIZE_CMD", "DD_CMD", "SG_LOGS_CMD", "SG_SYNC_CMD"):
         return get_command_path(name.replace("_CMD", "").lower())
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -147,8 +146,6 @@ def resolve_command_path(command_name, candidates, env_var_name=None):
             return candidate
     resolved = shutil.which(command_name)
     return resolved if (resolved and os.path.exists(resolved) and os.access(resolved, os.X_OK)) else None
-
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def load_command_path_overrides():
     config_path = os.path.join(get_config_dir(), "command_paths.json")
@@ -170,6 +167,8 @@ _COMMAND_CONFIG = {
     "hdparm": ([COMMAND_PATH_OVERRIDES.get("hdparm"), "/usr/sbin/hdparm", "/usr/bin/hdparm", "/bin/hdparm"], "DRIVE_ERASER_HDPARM_PATH"),
     "sg_sanitize": ([COMMAND_PATH_OVERRIDES.get("sg_sanitize"), "/usr/bin/sg_sanitize", "/usr/sbin/sg_sanitize", "/bin/sg_sanitize"], "DRIVE_ERASER_SG_SANITIZE_PATH"),
     "dd": ([COMMAND_PATH_OVERRIDES.get("dd"), "/usr/bin/dd", "/bin/dd"], "DRIVE_ERASER_DD_PATH"),
+    "sg_logs": ([COMMAND_PATH_OVERRIDES.get("sg_logs"), "/usr/bin/sg_logs", "/usr/sbin/sg_logs", "/bin/sg_logs"], "DRIVE_ERASER_SG_LOGS_PATH"),
+    "sg_sync": ([COMMAND_PATH_OVERRIDES.get("sg_sync"), "/usr/bin/sg_sync", "/usr/sbin/sg_sync", "/bin/sg_sync"], "DRIVE_ERASER_SG_SYNC_PATH"),
 }
 
 
@@ -181,16 +180,118 @@ def format_capacity_bytes(num_bytes):
     if gb >= 1.0: return f"{round(gb)} GB" if abs(gb - round(gb)) < 0.5 else f"{gb:.1f} GB"
     return f"{round(num_bytes / (10**6))} MB"
 
-def check_write_tolerance(interface_type, current, stored):
-    if current is None or stored is None: return False
+def check_write_tolerance(interface_type, current, stored, write_counter_source=None):
+    if write_counter_source in ("disabled", "gigabytes_processed"):
+        return True
+    if current is None or stored is None:
+        return True
     try:
         diff = int(current) - int(stored)
         if diff < 0: return False
         iface = str(interface_type or "unknown").lower()
-        return (diff <= 4) if "nvme" in iface else (diff <= 4096)
+        NVME_WRITE_TOLERANCE = 4
+        SATA_WRITE_TOLERANCE = 4096
+        SEAGATE_CACHE_TOLERANCE = 4
+        if write_counter_source == "seagate_cache_0x37":
+            return diff <= SEAGATE_CACHE_TOLERANCE
+        if "nvme" in iface:
+            return diff <= NVME_WRITE_TOLERANCE
+        else:
+            return diff <= SATA_WRITE_TOLERANCE
     except Exception as e:
         logging.getLogger(__name__).warning(f"Failed to check write tolerance: {e}")
         return False
+
+def read_seagate_cache_writes(device):
+    """Read 'Blocks received from initiator' from Seagate log page 0x37.
+
+    This is a host-only write counter (blocks the host sent to the drive),
+    which does not drift from firmware-internal background activity like
+    gigabytes_processed does. Returns the block count as an int, or None
+    if the drive doesn't support page 0x37 or the command fails.
+    """
+    if not validate_device_path(device):
+        return None
+    sg_logs_cmd = get_command_path("sg_logs")
+    if not sg_logs_cmd:
+        return None
+    try:
+        result = subprocess.run(
+            ["sudo", sg_logs_cmd, "-p", "0x37", device],
+            capture_output=True, text=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT
+        )
+        output = (result.stdout or "") + (result.stderr or "")
+        for line in output.splitlines():
+            line_lower = line.strip().lower()
+            if "blocks received from initiator" in line_lower:
+                parts = line.strip().split("=")
+                if len(parts) >= 2:
+                    try:
+                        return int(parts[-1].strip())
+                    except ValueError:
+                        return None
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Failed to read Seagate cache page 0x37: {e}")
+    return None
+
+def flush_drive_cache(device, interface_type):
+    """Flush drive write cache to physical media after an overwrite.
+
+    SAS: sg_sync (SCSI SYNCHRONIZE CACHE)
+    SATA: hdparm -F (ATA FLUSH CACHE EXT)
+    NVMe: no-op (sanitize/overwrite commands are synchronous)
+
+    Returns True if flush succeeded or was not needed, False on failure.
+    """
+    iface = str(interface_type or "unknown").lower()
+    if "nvme" in iface:
+        return True
+    if not validate_device_path(device):
+        return False
+    if "sas" in iface:
+        sg_sync_cmd = get_command_path("sg_sync")
+        if not sg_sync_cmd:
+            logging.getLogger(__name__).warning("sg_sync not available for SAS cache flush")
+            return False
+        try:
+            result = subprocess.run(
+                ["sudo", sg_sync_cmd, device],
+                capture_output=True, text=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT
+            )
+            if result.returncode != 0:
+                logging.getLogger(__name__).warning(
+                    f"sg_sync failed on {device}: rc={result.returncode}, stderr={result.stderr.strip()[:200]}"
+                )
+                return False
+            return True
+        except subprocess.TimeoutExpired:
+            logging.getLogger(__name__).warning(f"sg_sync timed out on {device} after {_READONLY_COMMAND_TIMEOUT}s; may need longer timeout for large drives")
+            return False
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"sg_sync exception on {device}: {e}")
+            return False
+    else:
+        hdparm_cmd = get_command_path("hdparm")
+        if not hdparm_cmd:
+            logging.getLogger(__name__).warning("hdparm not available for SATA cache flush")
+            return False
+        try:
+            result = subprocess.run(
+                ["sudo", hdparm_cmd, "-F", device],
+                capture_output=True, text=True, shell=False, timeout=_READONLY_COMMAND_TIMEOUT
+            )
+            if result.returncode != 0:
+                logging.getLogger(__name__).warning(
+                    f"hdparm -F failed on {device}: rc={result.returncode}, stderr={result.stderr.strip()[:200]}"
+                )
+                return False
+            return True
+        except subprocess.TimeoutExpired:
+            logging.getLogger(__name__).warning(f"hdparm -F timed out on {device} after {_READONLY_COMMAND_TIMEOUT}s; may need longer timeout for large drives")
+            return False
+        except Exception as e:
+            logging.getLogger(__name__).warning(f"hdparm -F exception on {device}: {e}")
+            return False
 
 def read_marker_status(device, interface_type="unknown", passphrase=None):
     if not validate_device_path(device):
@@ -247,6 +348,7 @@ def read_marker_status(device, interface_type="unknown", passphrase=None):
             "job_id": parsed.get("job_id"), "finished_at": parsed.get("finished_at"),
             "method": parsed.get("method"), "serial": parsed.get("serial"),
             "ticket_number": parsed.get("ticket_number"), "data_written_at_wipe": parsed.get("data_written_at_wipe"),
+            "write_counter_source": parsed.get("write_counter_source"),
         }
     }
 
@@ -264,16 +366,6 @@ def run_command(command, diagnostics=None, key=None):
     except subprocess.CalledProcessError as e:
         if diagnostics is not None and key: diagnostics[key] = {"ok": False, "reason": (e.stderr or "").strip() or f"exit_code_{e.returncode}", "exit_code": e.returncode}
         return (e.stdout or "").strip() if command and os.path.basename(command[0]) == "smartctl" else None
-
-def run_destructive_command(command):
-    if not command or not command[0]: return {"ok": False, "error": "command_not_resolved", "stdout": "", "stderr": "", "exit_code": None}
-    try:
-        result = subprocess.run(["sudo"] + command, capture_output=True, text=True, check=True, shell=False)
-        return {"ok": True, "error": None, "stdout": (result.stdout or "").strip(), "stderr": (result.stderr or "").strip(), "exit_code": result.returncode}
-    except subprocess.CalledProcessError as e:
-        return {"ok": False, "error": "command_failed", "stdout": (e.stdout or "").strip(), "stderr": (e.stderr or "").strip(), "exit_code": e.returncode}
-    except FileNotFoundError:
-        return {"ok": False, "error": "sudo_or_command_not_found", "stdout": "", "stderr": "", "exit_code": None}
 
 def resolve_bay_device(target_path, path_to_dev):
     if target_path is None: return None, None

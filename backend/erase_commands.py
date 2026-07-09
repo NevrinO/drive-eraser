@@ -5,8 +5,14 @@ import logging
 
 from verification import resolve_verify_command_path
 from disk_utils import validate_device_path
+from common import load_policy
 
-SATA_SECURITY_PASSWORD = "wipestation"  # Used for hdparm security-erase commands
+def _get_sata_security_password():
+    """Get SATA security password from policy, falling back to default."""
+    try:
+        return load_policy().get("sata_security_password", "wipestation")
+    except Exception:
+        return "wipestation"
 
 
 def get_device_logical_block_size(device):
@@ -90,7 +96,7 @@ def poll_nvme_sanitize_progress(device):
     try:
         nvme_path = resolve_verify_command_path("nvme")
         if nvme_path:
-            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", nvme_path, "sanitize-log", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "sprog" in line.lower():
@@ -106,7 +112,7 @@ def poll_sas_sanitize_progress(device):
     try:
         sg_req_path = resolve_verify_command_path("sg_requests")
         if sg_req_path:
-            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", sg_req_path, "--progress", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower():
@@ -122,7 +128,7 @@ def poll_sata_sanitize_progress(device):
     try:
         hdparm_path = resolve_verify_command_path("hdparm")
         if hdparm_path:
-            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False)
+            result = subprocess.run(["sudo", hdparm_path, "--sanitize-status", device], capture_output=True, text=True, shell=False, timeout=10)
             if result.returncode == 0:
                 for line in result.stdout.splitlines():
                     if "progress" in line.lower() or "percent" in line.lower():
@@ -153,7 +159,7 @@ def prepare_erase_command(device, interface_type, method):
         hdparm_cmd = resolve_verify_command_path("hdparm")
         if not hdparm_cmd:
             return {"ok": False, "error": "hdparm_not_available"}
-        user_password = SATA_SECURITY_PASSWORD
+        user_password = _get_sata_security_password()
         erase_flag = "--security-erase-enhanced" if selected_method == "enhanced_secure_erase" else "--security-erase"
         erase_cmd = [hdparm_cmd, "--user-master", "u", erase_flag, user_password, device]
         return {"ok": True, "command": erase_cmd}

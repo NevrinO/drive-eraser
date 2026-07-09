@@ -125,18 +125,7 @@ async function editEnclosure(enclosureId) {
   const modal = document.getElementById("enclosureWizardModal");
   if (!modal) return;
 
-  // Ensure save button listener is attached
-  const saveBtn = document.getElementById("wizardSaveBtn");
-  if (saveBtn && !saveBtn.dataset.enclosureListener) {
-    saveBtn.addEventListener("click", () => {
-      if (isEditMode) {
-        handleEditEnclosure();
-      } else {
-        handleSaveEnclosure();
-      }
-    });
-    saveBtn.dataset.enclosureListener = "true";
-  }
+  attachWizardSaveListener();
 
   // Set wizard to edit mode
   currentWizardStep = 1;

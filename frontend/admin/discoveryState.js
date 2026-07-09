@@ -72,24 +72,7 @@
     if (!bayMap || typeof bayMap !== 'object') {
       return null;
     }
-    
-    const copy = {};
-    Object.keys(bayMap).forEach(bayId => {
-      const conf = bayMap[bayId];
-      if (conf) {
-        copy[bayId] = {
-          role: conf.role,
-          locked: conf.locked,
-          label: conf.label,
-          type: conf.type,
-          by_path: conf.by_path,
-          by_path_nvme: conf.by_path_nvme,
-          display_number: conf.display_number,
-          physical_position: conf.physical_position
-        };
-      }
-    });
-    return copy;
+    return structuredClone(bayMap);
   }
 
   function savePreviousBayMapState(localBayMapCopy) {

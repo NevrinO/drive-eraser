@@ -13,6 +13,9 @@ from smart_utils import detect_interface_type, is_drive_ssd
 from smart_health import calculate_drive_health_score, get_drive_recommendation
 from disk_capabilities import detect_drive_capabilities
 from database import record_intake_snapshot
+# These functions are shared across disk_ops.py, discovery.py, and extended_smart.py.
+# They are prefixed with _ but are intentionally cross-module — they are internal to
+# the drive data collection subsystem and not part of any public API.
 from drive_collection import _process_marker_status, _build_drive_payload, _store_drive_payload, _get_cached_drive_payload
 from discovery_state import _shutdown_event
 
@@ -115,7 +118,7 @@ def _process_single_drive_extended_smart(item, passphrase):
 
         # Update cache with full data
         _store_drive_payload(cache_key, payload)
-        logger.info(f"Background extended SMART collection completed for {dev_node}")
+        logger.debug(f"Background extended SMART collection completed for {dev_node}")
 
         # Broadcast WebSocket event with updated SMART data
         if _websocket_manager:
@@ -131,7 +134,7 @@ def _process_single_drive_extended_smart(item, passphrase):
                     'recommendation': payload.get('recommendation'),
                     'marker': payload.get('marker')
                 })
-                logger.info(f"Broadcasted SMART data update for {dev_node}")
+                logger.debug(f"Broadcasted SMART data update for {dev_node}")
             except Exception as e:
                 logger.warning(f"Failed to broadcast SMART data update for {dev_node}: {e}")
 

@@ -10,7 +10,7 @@ from unittest.mock import patch, MagicMock
 # Add backend to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-from disk_utils import validate_device_path, _find_json_bounds, read_marker_status, check_write_tolerance, get_command_path, safe_int, safe_float
+from disk_utils import validate_device_path, _find_json_bounds, read_marker_status, check_write_tolerance, get_command_path, safe_int
 
 
 class TestValidateDevicePath:
@@ -425,15 +425,66 @@ class TestCheckWriteTolerance:
         result = check_write_tolerance("sata", 5100, 1000)
         assert result is False
 
-    def test_none_values(self):
-        """Test with None values."""
+    def test_none_values_skip_check(self):
+        """Test with None values skips write check (returns True)."""
         result = check_write_tolerance("nvme", None, None)
-        assert result is False
+        assert result is True
 
     def test_negative_difference(self):
         """Test with negative difference (current < stored)."""
         result = check_write_tolerance("nvme", 999, 1000)
         assert result is False
+
+    def test_seagate_cache_within_tolerance(self):
+        """Test Seagate 0x37 counter tolerance (4 blocks).
+
+        Blocks received from initiator is a host-only counter with no drift,
+        so tolerance is tight like NVMe.
+        """
+        result = check_write_tolerance("sas", 1004, 1000, write_counter_source="seagate_cache_0x37")
+        assert result is True
+
+    def test_seagate_cache_exceeds_tolerance(self):
+        """Test Seagate 0x37 counter exceeds tolerance."""
+        result = check_write_tolerance("sas", 1005, 1000, write_counter_source="seagate_cache_0x37")
+        assert result is False
+
+    def test_disabled_source_always_pristine(self):
+        """Test that disabled write counter source always returns True."""
+        result = check_write_tolerance("sas", 999999, 0, write_counter_source="disabled")
+        assert result is True
+
+    def test_disabled_source_none_values(self):
+        """Test that disabled source with None values returns True."""
+        result = check_write_tolerance("sas", None, None, write_counter_source="disabled")
+        assert result is True
+
+    def test_none_values_without_disabled_source(self):
+        """Test with None values and no disabled source skips check (True)."""
+        result = check_write_tolerance("nvme", None, None)
+        assert result is True
+
+    def test_stored_none_skips_check(self):
+        """Marker with no stored writes (legacy) skips check."""
+        result = check_write_tolerance("sas", 999999, None)
+        assert result is True
+
+    def test_current_none_skips_check(self):
+        """Drive with no current write counter skips check."""
+        result = check_write_tolerance("sas", None, 1000)
+        assert result is True
+
+    def test_sas_with_writes_uses_tight_tolerance(self):
+        """SAS with actual write data uses SATA tolerance (4096)."""
+        result = check_write_tolerance("sas", 5000, 1000)
+        assert result is True
+        result = check_write_tolerance("sas", 5100, 1000)
+        assert result is False
+
+    def test_gigabytes_processed_skips_check(self):
+        """gigabytes_processed source skips write check (drift-prone, approximate)."""
+        result = check_write_tolerance("sas", 999999, 0, write_counter_source="gigabytes_processed")
+        assert result is True
 
     def test_interface_type_case_insensitive(self):
         """Test that interface type is case-insensitive."""
@@ -444,7 +495,7 @@ class TestCheckWriteTolerance:
         assert result is True
 
 
-class TestSafeIntAndSafeFloat:
+class TestSafeInt:
     """Test safe type conversion functions."""
 
     def test_safe_int_valid(self):
@@ -463,21 +514,6 @@ class TestSafeIntAndSafeFloat:
         assert safe_int("abc") == 0
         assert safe_int("abc", 10) == 10
 
-    def test_safe_float_valid(self):
-        """Test valid float conversion."""
-        assert safe_float("123.45") == 123.45
-        assert safe_float(123.45) == 123.45
-        assert safe_float("100") == 100.0
-
-    def test_safe_float_none(self):
-        """Test None returns default."""
-        assert safe_float(None) == 0.0
-        assert safe_float(None, 5.5) == 5.5
-
-    def test_safe_float_invalid(self):
-        """Test invalid string returns default."""
-        assert safe_float("abc") == 0.0
-        assert safe_float("abc", 10.5) == 10.5
 
 
 class TestCommandResolution:

@@ -118,7 +118,7 @@ def export_csv_ledger():
                 req.get("bay", ""),
                 req.get("serial", ""),
                 req.get("model", ""),
-                format_capacity_bytes(req.get("capacity_bytes")),
+                format_capacity_bytes(req.get("capacity_bytes") or 0),
                 req.get("method", ""),
                 ver.get("status", "none"),
                 row["error"] or ""
@@ -241,16 +241,19 @@ def download_support_bundle():
                 for device_name, device_path in valid_devices:
                     futures[executor.submit(_collect_smartctl_for_device, device_name, device_path)] = device_name
                 # Overall timeout for the entire batch (120 seconds)
-                for future in as_completed(futures, timeout=120):
-                    device_name = futures[future]
-                    try:
-                        future.result()
-                    except FuturesTimeoutError:
-                        logger.warning(f"smartctl collection timed out for {device_name}")
-                    except Exception as e:
-                        logger.warning(f"smartctl collection failed for {device_name}: {e}")
+                try:
+                    for future in as_completed(futures, timeout=120):
+                        device_name = futures[future]
+                        try:
+                            future.result()
+                        except Exception as e:
+                            logger.warning(f"smartctl collection failed for {device_name}: {e}")
+                except FuturesTimeoutError:
+                    logger.warning("smartctl collection batch timed out after 120 seconds, continuing with partial results")
             finally:
-                executor.shutdown(wait=False)
+                for f in futures:
+                    f.cancel()
+                executor.shutdown(wait=False, cancel_futures=True)
                 
         try:
             total, used, free = shutil.disk_usage(get_data_dir())
@@ -263,8 +266,8 @@ def download_support_bundle():
                 f.write(f"OS Disk Space total: {format_capacity_bytes(total)}\n")
                 f.write(f"OS Disk Space used: {format_capacity_bytes(used)}\n")
                 f.write(f"OS Disk Space free: {format_capacity_bytes(free)}\n")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to collect system metrics: {e}")
             
         try:
             policy_dir = get_config_dir()
@@ -279,8 +282,8 @@ def download_support_bundle():
                     json.dump(policy_data, f, indent=2)
             except FileNotFoundError:
                 pass
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to collect redacted policy: {e}")
             
         try:
             logs_dir = get_logs_dir()
@@ -309,8 +312,8 @@ def download_support_bundle():
                 shutil.copytree(failed_logs_dir, os.path.join(workspace_dir, "failed_logs"), dirs_exist_ok=True)
             except FileNotFoundError:
                 pass
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to collect logs: {e}")
 
         # Capture a point-in-time diagnostic snapshot into the bundle workspace.
         # This works even when discovery_diag is not enabled in policy, because
@@ -320,8 +323,8 @@ def download_support_bundle():
             snapshot_text = capture_snapshot_text("support_bundle")
             with open(os.path.join(workspace_dir, "diagnostic_snapshot.txt"), "w", encoding="utf-8") as f:
                 f.write(snapshot_text)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to capture diagnostic snapshot: {e}")
 
         tar_path = f"/tmp/{bundle_name}.tar.gz"
         try:
@@ -384,6 +387,14 @@ def manage_logo():
             file = request.files["logo"]
             if file.filename == "":
                 return jsonify({"error": "No file selected"}), 400
+            
+            # Validate upload size before PIL processing (A-B4-8)
+            MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10MB
+            file.seek(0, 2)
+            actual_size = file.tell()
+            file.seek(0)
+            if actual_size > MAX_UPLOAD_SIZE:
+                return jsonify({"error": f"File too large: {actual_size} bytes (max {MAX_UPLOAD_SIZE} bytes)"}), 413
             
             # Validate format by reading with PIL
             try:
@@ -516,7 +527,7 @@ def list_logs():
                 if not os.path.isfile(full_path):
                     continue
                 # Filter to .log and .log.N (rotated) files only
-                if not (entry.endswith(".log") or re.match(r"^.*\.log\.\d+$", entry)):
+                if not (entry.endswith(".log") or re.match(r"^.*\.log\.\d+\Z", entry)):
                     continue
                 try:
                     stat = os.stat(full_path)

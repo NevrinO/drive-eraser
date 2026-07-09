@@ -18,6 +18,21 @@ const docViewerTitle = document.getElementById("docViewerTitle");
 let currentDrives = [];
 let currentHistoryJobs = [];
 let selectedBays = new Set();
+
+function sanitizeHtml(html) {
+  const temp = document.createElement('div');
+  temp.innerHTML = html;
+  temp.querySelectorAll('script, style, iframe, object, embed, link, meta, base').forEach(el => el.remove());
+  temp.querySelectorAll('*').forEach(el => {
+    [...el.attributes].forEach(attr => {
+      if (attr.name.startsWith('on') ||
+          (attr.name === 'href' && (attr.value || '').trim().toLowerCase().startsWith('javascript:'))) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  return temp.innerHTML;
+}
 let isBatchMode = false;
 let ledgerExpandedJobs = new Set();
 let localBayMapCopy = {};
@@ -125,7 +140,7 @@ document.addEventListener("click", async (event) => {
     }
     const md = await resp.text();
     if (typeof marked !== "undefined" && marked.parse) {
-      docViewerContent.innerHTML = `<div class="markdown-body">${marked.parse(md)}</div>`;
+      docViewerContent.innerHTML = `<div class="markdown-body">${sanitizeHtml(marked.parse(md))}</div>`;
     } else {
       docViewerContent.innerHTML = `<pre class="terminal-pre">${escapeHtml(md)}</pre>`;
     }
@@ -141,7 +156,10 @@ function initWebSocket() {
     return;
   }
 
-  socket = io();
+  // Polling-only: Flask-SocketIO with async_mode='threading' doesn't support
+  // WebSocket transport. Without this, the client attempts WebSocket first,
+  // gets a 400, then falls back to polling — adding latency on each reconnect.
+  socket = io({ transports: ['polling'] });
 
   socket.on('connect', () => {
     console.log('WebSocket connected');
@@ -201,27 +219,33 @@ function handleSmartDataUpdate(data) {
 
 // Application initialization
 (async () => {
-  setupKeyboardNavigation();
-  initWebSocket();
-  loadSecurityStatus(); // fire-and-forget — updates badge only, no downstream dependency
+  try {
+    setupKeyboardNavigation();
+    initWebSocket();
+    loadSecurityStatus(); // fire-and-forget — updates badge only, no downstream dependency
 
-  // Start drives fetch in background — overlaps with bay map config + enclosure loading
-  const drivesPromise = loadDrives(false);
+    // Start drives fetch in background — overlaps with bay map config + enclosure loading
+    const drivesPromise = loadDrives(false);
 
-  // loadBayMappingConfig internally calls loadLayoutTemplates, so no need to call it separately
-  // loadEnclosuresForWorkbench is needed for skeleton grouping — run in parallel
-  await Promise.all([
-    loadBayMappingConfig(),
-    loadEnclosuresForWorkbench()
-  ]);
+    // loadBayMappingConfig internally calls loadLayoutTemplates, so no need to call it separately
+    // loadEnclosuresForWorkbench is needed for skeleton grouping — run in parallel
+    await Promise.all([
+      loadBayMappingConfig(),
+      loadEnclosuresForWorkbench()
+    ]);
 
-  // Render skeleton cards from bay map config if drives haven't arrived yet
-  if (currentDrives.length === 0) {
-    renderSkeletonBays();
+    // Render skeleton cards from bay map config if drives haven't arrived yet
+    if (currentDrives.length === 0) {
+      renderSkeletonBays();
+    }
+
+    await drivesPromise;
+    pollActiveWipes();
+  } catch (err) {
+    console.error("Initialization failed:", err);
+    const apiStatusEl = document.getElementById("apiStatus");
+    if (apiStatusEl) apiStatusEl.textContent = `API Status: Initialization failed (${err.message})`;
   }
-
-  await drivesPromise;
-  pollActiveWipes();
 })();
 
 // Cleanup on page unload to prevent memory leaks

@@ -31,7 +31,7 @@ class ZeroCheckManager:
         self._semaphore = threading.Semaphore(self._max_concurrency)
         self._semaphore_capacity = self._max_concurrency
         self._lock = threading.Lock()
-        self._queue = deque()  # (bay, device)
+        self._queue = deque()  # (bay, device) — pending zero-check requests
         self._running = {}  # bay -> Thread
         self._cancel_events = {}  # bay -> threading.Event
         self._status = {}  # bay -> status dict
@@ -252,11 +252,15 @@ class ZeroCheckManager:
                     continue
                 cancel_event = threading.Event()
                 self._cancel_events[bay] = cancel_event
+                # Capture the semaphore reference before starting the thread so
+                # the worker releases the correct semaphore even if set_concurrency
+                # replaces self._semaphore while the worker is running.
+                acquired_semaphore = self._semaphore
                 # Register thread in _running before starting it to prevent
                 # a fast-completing worker from leaving a stale entry (Root Problem 13).
                 thread = threading.Thread(
                     target=self._worker,
-                    args=(bay, device, serial, cancel_event, token),
+                    args=(bay, device, serial, cancel_event, token, acquired_semaphore),
                     daemon=True,
                     name=f"zero-check-{bay}",
                 )
@@ -269,7 +273,7 @@ class ZeroCheckManager:
             })
             thread.start()
 
-    def _worker(self, bay, device, serial, cancel_event, generation_token):
+    def _worker(self, bay, device, serial, cancel_event, generation_token, acquired_semaphore):
         try:
             if not self._is_current_generation(bay, generation_token):
                 return
@@ -322,7 +326,7 @@ class ZeroCheckManager:
                 if not self._running and self._semaphore_capacity != self._max_concurrency:
                     self._semaphore = threading.Semaphore(self._max_concurrency)
                     self._semaphore_capacity = self._max_concurrency
-            self._semaphore.release()
+            acquired_semaphore.release()
             self._process_queue()
 
 

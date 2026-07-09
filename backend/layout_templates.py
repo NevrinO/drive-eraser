@@ -3,7 +3,10 @@ import os
 import re
 import tempfile
 import hashlib
+import logging
 from threading import Lock
+
+logger = logging.getLogger("app")
 
 SUPPORTED_TRAVERSALS = {
     "top_left_down_then_across",
@@ -96,8 +99,6 @@ def load_layout_templates(config_dir):
     hash_path = os.path.join(config_dir, "layout_templates.json.sha256")
 
     if not os.path.exists(path):
-        import logging
-        logger = logging.getLogger("app")
         logger.warning(f"Template file not found: {path}. Using DEFAULT_TEMPLATES as fallback.")
         return DEFAULT_TEMPLATES, True
 
@@ -113,13 +114,9 @@ def load_layout_templates(config_dir):
                     stored_hash = hf.read().strip()
                 calculated_hash = hashlib.sha256(content.encode('utf-8')).hexdigest()
                 if stored_hash != calculated_hash:
-                    import logging
-                    logger = logging.getLogger("app")
                     logger.warning(f"Template file hash mismatch detected. File may have been tampered with: {path}. Using DEFAULT_TEMPLATES as fallback.")
                     return DEFAULT_TEMPLATES, True
             except Exception as e:
-                import logging
-                logger = logging.getLogger("app")
                 logger.warning(f"Failed to validate template file hash: {str(e)}")
                 # Continue loading despite hash validation failure
 
@@ -146,13 +143,9 @@ def load_layout_templates(config_dir):
             if result:
                 return result, False
             else:
-                import logging
-                logger = logging.getLogger("app")
                 logger.warning(f"Template file contains no valid templates: {path}. Using DEFAULT_TEMPLATES as fallback.")
                 return DEFAULT_TEMPLATES, True
     except Exception as e:
-        import logging
-        logger = logging.getLogger("app")
         logger.warning(f"Failed to load template file: {path}. Error: {str(e)}. Using DEFAULT_TEMPLATES as fallback.")
         return DEFAULT_TEMPLATES, True
 
@@ -227,7 +220,8 @@ def build_traversal_positions(rows, cols, traversal, bay_count, skip_positions=N
 def apply_template(existing_bays, template, traversal_preset=None, custom_overrides=None):
     rows = int(template.get("rows") or 1)
     cols = int(template.get("cols") or 1)
-    bay_count = int(template.get("bay_count") or (rows * cols))
+    bay_count_val = template.get("bay_count")
+    bay_count = int(bay_count_val) if bay_count_val is not None else (rows * cols)
     traversal = traversal_preset or template.get("traversal_preset") or "top_left_down_then_across"
     if traversal not in SUPPORTED_TRAVERSALS:
         traversal = "top_left_down_then_across"
@@ -268,6 +262,41 @@ def apply_template(existing_bays, template, traversal_preset=None, custom_overri
     return result, traversal
 
 
+def _validate_skip_positions(skip_positions, rows, cols):
+    """Validate skip_positions array entries against grid bounds and duplicates.
+
+    Returns an error string if invalid, None if valid.
+    """
+    if not isinstance(skip_positions, list):
+        return "skip_positions must be an array"
+    # Enforce size limit to prevent DoS (Lesson #5)
+    if len(skip_positions) > 100:
+        return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
+
+    seen_positions = set()
+    for skip in skip_positions:
+        if not isinstance(skip, dict):
+            return "Each skip_positions entry must be an object"
+        if "row" not in skip or "col" not in skip:
+            return "Each skip_positions entry must have 'row' and 'col' fields"
+        try:
+            row = int(skip["row"])
+            col = int(skip["col"])
+            if row < 0 or row >= rows:
+                return f"skip_positions row {row} out of bounds (0-{rows-1})"
+            if col < 0 or col >= cols:
+                return f"skip_positions col {col} out of bounds (0-{cols-1})"
+            # Check for duplicates
+            pos_key = (row, col)
+            if pos_key in seen_positions:
+                return f"Duplicate skip_positions entry: row {row}, col {col}"
+            seen_positions.add(pos_key)
+        except (ValueError, TypeError):
+            return "skip_positions row and col must be integers"
+
+    return None
+
+
 def validate_layout_metadata(layout_metadata, bays, templates):
     if layout_metadata is None:
         return None
@@ -296,35 +325,11 @@ def validate_layout_metadata(layout_metadata, bays, templates):
     if template_to_validate:
         skip_positions = template_to_validate.get("skip_positions")
         if skip_positions is not None:
-            if not isinstance(skip_positions, list):
-                return "skip_positions must be an array"
-            # Enforce size limit to prevent DoS (Lesson #5)
-            if len(skip_positions) > 100:
-                return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
-            
             rows = int(template_to_validate.get("rows") or 1)
             cols = int(template_to_validate.get("cols") or 1)
-            seen_positions = set()
-            
-            for skip in skip_positions:
-                if not isinstance(skip, dict):
-                    return "Each skip_positions entry must be an object"
-                if "row" not in skip or "col" not in skip:
-                    return "Each skip_positions entry must have 'row' and 'col' fields"
-                try:
-                    row = int(skip["row"])
-                    col = int(skip["col"])
-                    if row < 0 or row >= rows:
-                        return f"skip_positions row {row} out of bounds (0-{rows-1})"
-                    if col < 0 or col >= cols:
-                        return f"skip_positions col {col} out of bounds (0-{cols-1})"
-                    # Check for duplicates
-                    pos_key = (row, col)
-                    if pos_key in seen_positions:
-                        return f"Duplicate skip_positions entry: row {row}, col {col}"
-                    seen_positions.add(pos_key)
-                except (ValueError, TypeError):
-                    return "skip_positions row and col must be integers"
+            err = _validate_skip_positions(skip_positions, rows, cols)
+            if err:
+                return err
 
     seen = set()
     for bay_id, conf in (bays or {}).items():
@@ -414,35 +419,12 @@ def validate_template(template):
     # Validate skip_positions if present (requires grid fields)
     skip_positions = template.get("skip_positions")
     if skip_positions is not None:
-        if not isinstance(skip_positions, list):
-            return "skip_positions must be an array"
-        # Enforce size limit to prevent DoS (Lesson #5)
-        if len(skip_positions) > 100:
-            return f"skip_positions array too large (max 100 entries, got {len(skip_positions)})"
-        
         if not has_grid:
             return "skip_positions requires rows, cols, and bay_count to be defined"
         
-        seen_positions = set()
-        for skip in skip_positions:
-            if not isinstance(skip, dict):
-                return "Each skip_positions entry must be an object"
-            if "row" not in skip or "col" not in skip:
-                return "Each skip_positions entry must have 'row' and 'col' fields"
-            try:
-                row = int(skip["row"])
-                col = int(skip["col"])
-                if row < 0 or row >= rows:
-                    return f"skip_positions row {row} out of bounds (0-{rows-1})"
-                if col < 0 or col >= cols:
-                    return f"skip_positions col {col} out of bounds (0-{cols-1})"
-                # Check for duplicates
-                pos_key = (row, col)
-                if pos_key in seen_positions:
-                    return f"Duplicate skip_positions entry: row {row}, col {col}"
-                seen_positions.add(pos_key)
-            except (ValueError, TypeError):
-                return "skip_positions row and col must be integers"
+        err = _validate_skip_positions(skip_positions, rows, cols)
+        if err:
+            return err
     
     # Validate hybrid_slots if present
     hybrid_slots = template.get("hybrid_slots")
@@ -454,13 +436,14 @@ def validate_template(template):
             return f"hybrid_slots array too large (max 128 entries, got {len(hybrid_slots)})"
         
         # If grid fields are present, validate range and duplicates
+        # hybrid_slots use 0-based indexing (matching enumerate(positions) in backend and frontend)
         if has_grid:
             seen_slots = set()
             for slot in hybrid_slots:
                 try:
                     slot_num = int(slot)
-                    if slot_num < 1 or slot_num > (rows * cols):
-                        return f"hybrid_slots entry {slot_num} out of bounds (1-{rows * cols})"
+                    if slot_num < 0 or slot_num > (rows * cols - 1):
+                        return f"hybrid_slots entry {slot_num} out of bounds (0-{rows * cols - 1})"
                     # Check for duplicates
                     if slot_num in seen_slots:
                         return f"Duplicate hybrid_slots entry: {slot_num}"
@@ -519,9 +502,20 @@ def save_layout_templates(templates, config_dir):
         # Atomic rename on POSIX systems
         os.replace(temp_path, templates_path)
         
-        # Also save the hash for integrity validation
-        with open(hash_path, 'w', encoding='utf-8') as f:
-            f.write(content_hash)
+        # Also save the hash atomically for integrity validation
+        hash_fd, hash_temp_path = tempfile.mkstemp(dir=config_dir, prefix=".layout_templates_hash_tmp_", suffix=".sha256")
+        try:
+            with os.fdopen(hash_fd, 'w', encoding='utf-8') as f:
+                f.write(content_hash)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(hash_temp_path, hash_path)
+        except Exception:
+            try:
+                os.unlink(hash_temp_path)
+            except Exception:
+                pass
+            raise
         
     except Exception:
         # Clean up temp file if write failed

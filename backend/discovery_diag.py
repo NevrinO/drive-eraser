@@ -32,21 +32,22 @@ _PHY_COUNTER_FILES = [
 def _is_diag_enabled():
     """Check if diagnostics are enabled. Cached for 30 seconds to avoid re-reading policy."""
     global _DIAG_ENABLED, _DIAG_CHECKED_AT
-    now = time.monotonic()
-    if _DIAG_ENABLED is not None and (now - _DIAG_CHECKED_AT) < 30.0:
+    with _DIAG_LOCK:
+        now = time.monotonic()
+        if _DIAG_ENABLED is not None and (now - _DIAG_CHECKED_AT) < 30.0:
+            return _DIAG_ENABLED
+
+        env_flag = os.environ.get("DISCOVERY_DIAG", "").lower() in ("1", "true", "yes")
+        policy_flag = False
+        try:
+            policy = load_policy()
+            policy_flag = bool(policy.get("discovery_diag", False))
+        except Exception:
+            pass
+
+        _DIAG_ENABLED = env_flag or policy_flag
+        _DIAG_CHECKED_AT = now
         return _DIAG_ENABLED
-
-    env_flag = os.environ.get("DISCOVERY_DIAG", "").lower() in ("1", "true", "yes")
-    policy_flag = False
-    try:
-        policy = load_policy()
-        policy_flag = bool(policy.get("discovery_diag", False))
-    except Exception:
-        pass
-
-    _DIAG_ENABLED = env_flag or policy_flag
-    _DIAG_CHECKED_AT = now
-    return _DIAG_ENABLED
 
 
 def _get_log_path():
@@ -210,15 +211,17 @@ def _capture_orphaned_block_devices(by_path_entries=None):
 
     orphans = [d for d in sorted(disk_devs) if d not in mapped_devs]
     lines = [f"  orphaned block devices (in /sys/class/block but no by-path symlink) ({len(orphans)}):"]
+
+    # Build reverse map of block_dev -> scsi_entry once, avoiding O(n*m) directory listings
+    scsi_device_base = "/sys/class/scsi_device"
+    scsi_to_blocks = {}
+    for scsi_entry in _list_dir_safe(scsi_device_base):
+        block_dir = os.path.join(scsi_device_base, scsi_entry, "device", "block")
+        for block_dev in _list_dir_safe(block_dir):
+            scsi_to_blocks[block_dev] = scsi_entry
+
     for dev in orphans:
-        # Check if it's in scsi_device
-        in_scsi = False
-        scsi_device_base = "/sys/class/scsi_device"
-        for scsi_entry in _list_dir_safe(scsi_device_base):
-            block_dir = os.path.join(scsi_device_base, scsi_entry, "device", "block")
-            if dev in _list_dir_safe(block_dir):
-                in_scsi = True
-                break
+        in_scsi = dev in scsi_to_blocks
         lines.append(f"    {dev} (in scsi_device: {in_scsi})")
     return "\n".join(lines)
 

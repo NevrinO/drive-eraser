@@ -4,13 +4,15 @@ import pytest
 
 
 def pytest_configure(config):
-    """Configure pytest to suppress false positive ResourceWarnings.
-    
-    SQLite connections opened with context managers in test methods are
-    properly closed, but Python's garbage collector may still emit ResourceWarning
-    during pytest's internal cleanup. These are false positives and can be safely
-    suppressed.
+    """Configure pytest: initialize app_config and suppress false positive warnings.
+
+    init_app() must be called before any test imports `limiter`, `app`, or
+    `socketio` from app_config. It's idempotent — safe if already called
+    (e.g., via app.py import chain).
     """
+    from app_config import init_app
+    init_app()
+
     # Suppress all ResourceWarnings - these are false positives from pytest's garbage collection
     warnings.filterwarnings("ignore", category=ResourceWarning)
     # Also suppress PytestUnraisableExceptionWarning for unclosed SQLite connections

@@ -3,6 +3,7 @@
 // These are pure rendering functions that use global escapeHtml and smartDeepDiveContent
 
 function renderSmartDetails(data, device, serial, interfaceType) {
+  if (typeof smartDeepDiveContent === 'undefined' || !smartDeepDiveContent) return;
   const isSas = interfaceType && interfaceType.toLowerCase() === 'sas';
   const isNvme = interfaceType && interfaceType.toLowerCase() === 'nvme';
 
@@ -590,7 +591,7 @@ function renderNvmeErrorLog(errorLog) {
       const errorCount = entry.error_count !== undefined ? entry.error_count.toLocaleString() : '-';
       const sqid = entry.sqid !== undefined ? entry.sqid : '-';
       const cid = entry.cid !== undefined ? entry.cid : '-';
-      const status = entry.status !== undefined ? '0x' + entry.status.toString(16) : '-';
+      const status = entry.status !== undefined ? (typeof entry.status === 'number' ? '0x' + entry.status.toString(16) : String(entry.status)) : '-';
       const lba = entry.lba !== undefined ? entry.lba : '-';
       const nsid = entry.nsid !== undefined ? entry.nsid : '-';
       const command = entry.command_name || entry.command || '-';
@@ -655,6 +656,7 @@ function formatMinutes(minutes) {
 }
 
 function renderDeviceStatistics(deviceStats) {
+  if (!deviceStats || !Array.isArray(deviceStats)) return '';
   let html = '';
 
   deviceStats.forEach(page => {

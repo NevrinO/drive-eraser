@@ -15,6 +15,7 @@ from smart_data_parsing import (
     get_smart_data,
     get_smart_identity,
     get_triage_thresholds,
+    capture_write_baseline,
     _load_drive_models,
     _DEFAULT_TRIAGE_THRESHOLDS,
 )

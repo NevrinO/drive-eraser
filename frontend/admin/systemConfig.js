@@ -15,7 +15,8 @@ const strictAuditConfirmYes = document.getElementById("strictAuditConfirmYes");
 const strictAuditConfirmNo = document.getElementById("strictAuditConfirmNo");
 const strictAuditConfirmClose = document.getElementById("strictAuditConfirmClose");
 
-let pendingFormData = null;
+let pendingPassphraseFormData = null;
+let pendingStrictAuditFormData = null;
 let currentStrictAuditMode = false;
 
 async function loadSystemConfig() {
@@ -37,22 +38,22 @@ async function loadSystemConfig() {
     
     const discoveryWorkersInput = document.getElementById("discovery_max_workers");
     if (discoveryWorkersInput) {
-      discoveryWorkersInput.value = policy.discovery_max_workers || 16;
+      discoveryWorkersInput.value = policy.discovery_max_workers ?? 16;
     }
     
     const maxConcurrentInput = document.getElementById("max_concurrent_wipes");
     if (maxConcurrentInput) {
-      maxConcurrentInput.value = policy.max_concurrent_wipes || 34;
+      maxConcurrentInput.value = policy.max_concurrent_wipes ?? 34;
     }
     
     const blockdevRetriesInput = document.getElementById("blockdev_post_wipe_retries");
     if (blockdevRetriesInput) {
-      blockdevRetriesInput.value = policy.blockdev_post_wipe_retries || 3;
+      blockdevRetriesInput.value = policy.blockdev_post_wipe_retries ?? 3;
     }
     
     const blockdevDelayInput = document.getElementById("blockdev_post_wipe_retry_delay");
     if (blockdevDelayInput) {
-      blockdevDelayInput.value = policy.blockdev_post_wipe_retry_delay || 5;
+      blockdevDelayInput.value = policy.blockdev_post_wipe_retry_delay ?? 5;
     }
     
     const strictAuditModeInput = document.getElementById("strict_audit_mode");
@@ -105,6 +106,13 @@ async function loadSystemConfig() {
     const discoveryDiagInput = document.getElementById("discovery_diag");
     if (discoveryDiagInput) {
       discoveryDiagInput.value = policy.discovery_diag ? "true" : "false";
+    }
+
+    // Allowed remote IPs
+    const allowedRemoteIpsInput = document.getElementById("allowed_remote_ips");
+    if (allowedRemoteIpsInput) {
+      const ips = policy.allowed_remote_ips || [];
+      allowedRemoteIpsInput.value = Array.isArray(ips) ? ips.join("\n") : "";
     }
 
     // Log retention days
@@ -187,23 +195,25 @@ async function loadSystemConfig() {
 }
 
 async function saveSystemConfig(formData) {
-  try {
-    const response = await safeFetch("/api/admin/policy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData)
-    });
-    
-    if (!response.ok) {
+  const response = await safeFetch("/api/admin/policy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(formData)
+  });
+
+  if (!response.ok) {
+    let errorMessage = `HTTP ${response.status}`;
+    try {
       const errorData = await response.json();
-      throw new Error(errorData.error || `HTTP ${response.status}`);
+      errorMessage = errorData.error || errorMessage;
+    } catch (e) {
+      // Response body is not JSON — use generic HTTP error
     }
-    
-    const result = await response.json();
-    return result;
-  } catch (error) {
-    throw error;
+    throw new Error(errorMessage);
   }
+
+  const result = await response.json();
+  return result;
 }
 
 function showError(element, message) {
@@ -389,6 +399,17 @@ function validateForm() {
     formData.discovery_diag = discoveryDiagInput.value === "true";
   }
 
+  // Allowed remote IPs (array of strings, one per line)
+  const allowedRemoteIpsInput = document.getElementById("allowed_remote_ips");
+  if (allowedRemoteIpsInput) {
+    const rawText = allowedRemoteIpsInput.value.trim();
+    if (rawText) {
+      formData.allowed_remote_ips = rawText.split("\n").map(s => s.trim()).filter(s => s.length > 0);
+    } else {
+      formData.allowed_remote_ips = [];
+    }
+  }
+
   // Log retention days (integer 1-365)
   const logRetentionInput = document.getElementById("log_retention_days");
   if (logRetentionInput) {
@@ -549,7 +570,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Check if passphrase is being changed
     if (formData.wipe_passphrase) {
       // Show confirmation dialog
-      pendingFormData = formData;
+      pendingPassphraseFormData = formData;
       openModal(passphraseConfirmModal);
       return;
     }
@@ -557,7 +578,7 @@ document.addEventListener("DOMContentLoaded", () => {
     // Check if strict audit mode is being enabled
     if (formData.strict_audit_mode && !currentStrictAuditMode) {
       // Show confirmation dialog
-      pendingFormData = formData;
+      pendingStrictAuditFormData = formData;
       openModal(strictAuditConfirmModal);
       return;
     }
@@ -570,9 +591,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (passphraseConfirmYes) {
     passphraseConfirmYes.addEventListener("click", async () => {
       closeModal(passphraseConfirmModal);
-      if (pendingFormData) {
-        await submitForm(pendingFormData);
-        pendingFormData = null;
+      if (pendingPassphraseFormData) {
+        await submitForm(pendingPassphraseFormData);
+        pendingPassphraseFormData = null;
       }
     });
   }
@@ -580,7 +601,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (passphraseConfirmNo || passphraseConfirmClose) {
     const cancelHandler = () => {
       closeModal(passphraseConfirmModal);
-      pendingFormData = null;
+      pendingPassphraseFormData = null;
     };
     if (passphraseConfirmNo) passphraseConfirmNo.addEventListener("click", cancelHandler);
     if (passphraseConfirmClose) passphraseConfirmClose.addEventListener("click", cancelHandler);
@@ -590,9 +611,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (strictAuditConfirmYes) {
     strictAuditConfirmYes.addEventListener("click", async () => {
       closeModal(strictAuditConfirmModal);
-      if (pendingFormData) {
-        await submitForm(pendingFormData);
-        pendingFormData = null;
+      if (pendingStrictAuditFormData) {
+        await submitForm(pendingStrictAuditFormData);
+        pendingStrictAuditFormData = null;
       }
     });
   }
@@ -600,7 +621,7 @@ document.addEventListener("DOMContentLoaded", () => {
   if (strictAuditConfirmNo || strictAuditConfirmClose) {
     const cancelHandler = () => {
       closeModal(strictAuditConfirmModal);
-      pendingFormData = null;
+      pendingStrictAuditFormData = null;
     };
     if (strictAuditConfirmNo) strictAuditConfirmNo.addEventListener("click", cancelHandler);
     if (strictAuditConfirmClose) strictAuditConfirmClose.addEventListener("click", cancelHandler);

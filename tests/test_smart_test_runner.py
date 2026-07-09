@@ -306,6 +306,140 @@ class TestGetSmartTestStatus:
         assert result["status"] == "failed"
         assert "error" in result
 
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_nvme_in_progress(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test NVMe in-progress detection via current_operation."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({
+            "nvme_self_test_log": {
+                "current_operation": {
+                    "status": {"value": 1, "string": "Short self-test in progress"},
+                    "completion_percent": 42
+                },
+                "results": []
+            }
+        })
+
+        result = get_smart_test_status("/dev/nvme0")
+
+        assert result["status"] == "in_progress"
+        assert result["percentage"] == 42.0
+        assert result["latest_result"]["remaining"] == 58
+
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_nvme_completed(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test NVMe completed test parsing."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({
+            "nvme_self_test_log": {
+                "results": [
+                    {
+                        "self_test_num": 1,
+                        "result": {"string": "Self-test completed without error"}
+                    }
+                ]
+            }
+        })
+
+        result = get_smart_test_status("/dev/nvme0")
+
+        assert result["status"] == "completed"
+        assert result["percentage"] == 100
+        assert result["latest_result"]["type"] == 1
+
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_scsi_in_progress(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test SCSI in-progress detection via scsi_ie ASC/ASCQ."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({
+            "scsi_ie": {
+                "asc": 0x3F,
+                "ascq": 0x0E,
+                "string": "Self test in progress"
+            }
+        })
+
+        result = get_smart_test_status("/dev/sda")
+
+        assert result["status"] == "in_progress"
+        assert result["percentage"] == 50
+
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_scsi_completed_ie(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test SCSI with IE log but no test results returns no_tests."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({
+            "scsi_ie": {
+                "asc": 0,
+                "ascq": 0,
+                "string": "No errors"
+            }
+        })
+
+        result = get_smart_test_status("/dev/sda")
+
+        assert result["status"] == "no_tests"
+
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_scsi_completed_fallback(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test SCSI fallback scanning via scsi_self_test_N entries."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({
+            "scsi_self_test_1": {
+                "result": {"string": "Completed", "value": 0},
+                "code": {"string": "0x1"},
+                "power_on_time": {"hours": 100}
+            }
+        })
+
+        result = get_smart_test_status("/dev/sda")
+
+        assert result["status"] == "completed"
+        assert result["percentage"] == 100
+        assert result["latest_result"]["hours"] == 100
+
+    @patch('smart_test_runner.get_command_path')
+    @patch('smart_test_runner.run_command')
+    @patch('smart_test_runner.validate_device_path')
+    def test_get_smart_test_status_no_tests(self, mock_validate, mock_run_command, mock_get_command_path):
+        """Test fallback when no recognized device data is present."""
+        from smart_parsing import get_smart_test_status
+
+        mock_validate.return_value = True
+        mock_get_command_path.return_value = "/usr/bin/smartctl"
+        mock_run_command.return_value = json.dumps({})
+
+        result = get_smart_test_status("/dev/sda")
+
+        assert result["status"] == "no_tests"
+        assert result["self_test_log_table"] is None
+        assert result["latest_result"] is None
+
 
 class TestSmartTestDatabaseFunctions:
     """Test SMART test database functions."""

@@ -6,6 +6,7 @@ import os
 import json
 import time
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 
 from common import get_config_dir, load_policy
@@ -92,12 +93,12 @@ def _auto_enqueue_zero_checks(results):
         logging.getLogger(__name__).info("Skipping zero-check auto-enrollment (startup delay window active)")
         return
 
-    present_bays = set()
+    seen_bays = set()
     for bay_info in results:
         bay = bay_info.get("bay")
         if not bay:
             continue
-        present_bays.add(bay)
+        seen_bays.add(bay)
         if not bay_info.get("present"):
             manager.clear_state(bay)
             continue
@@ -116,7 +117,7 @@ def _auto_enqueue_zero_checks(results):
 
     # Clear stale state for any bays that disappeared from the results entirely
     for bay in list(manager.get_all_status().keys()):
-        if bay not in present_bays:
+        if bay not in seen_bays:
             manager.clear_state(bay)
 
 # Performance: parallel collection settings
@@ -211,10 +212,12 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
     executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="drive-discovery")
     futures = {}
     future_start_times = {}  # dev_node -> monotonic timestamp when worker started executing
+    future_start_times_lock = threading.Lock()
 
     def _timed_collect(item):
         bay_info, is_os_drive, cache_key, dev_node, resolved_path, configured_path, configured_type = item
-        future_start_times[dev_node] = time.monotonic()
+        with future_start_times_lock:
+            future_start_times[dev_node] = time.monotonic()
         return _collect_drive_data(dev_node, resolved_path, configured_path, configured_type, passphrase, use_identity_only)
 
     try:
@@ -249,7 +252,8 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                 for future in not_done:
                     item = futures[future]
                     dev_node = item[3]
-                    fut_start = future_start_times.get(dev_node)
+                    with future_start_times_lock:
+                        fut_start = future_start_times.get(dev_node)
                     if fut_start is not None and (now - fut_start) >= _PER_FUTURE_TIMEOUT:
                         timed_out.add(future)
                     elif fut_start is None and (now - batch_start) >= _BATCH_TIMEOUT:
@@ -261,7 +265,8 @@ def _collect_pending_parallel(pending, passphrase, use_identity_only=False):
                     future.cancel()  # Only effective for queued futures; running futures continue but are abandoned
                     item = futures[future]
                     dev_node = item[3]
-                    fut_start = future_start_times.get(dev_node)
+                    with future_start_times_lock:
+                        fut_start = future_start_times.get(dev_node)
                     elapsed = f"{now - fut_start:.0f}s" if fut_start else "never started"
                     logging.getLogger(__name__).warning(
                         f"Drive data collection timed out for {dev_node} (elapsed {elapsed}, per-future limit {_PER_FUTURE_TIMEOUT}s)"
@@ -282,7 +287,8 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     try:
         with open(bay_map_path, 'r', encoding='utf-8') as f:
             bay_map_doc = json.load(f)
-    except Exception:
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to load bay map from {bay_map_path}: {e}")
         return []
 
     # Medium #34: Check for interruption after loading bay map
@@ -467,9 +473,6 @@ def _discover_drives_enclosure(bay_map_doc, running_devices, skip_auto_enqueue=F
 
                 is_os_drive = False
                 if os_dev_node and os.path.realpath(dev_node) == os.path.realpath(os_dev_node):
-                    is_os_drive = True
-
-                if os_by_path and os.path.basename(dev_node) == os.path.basename(os_by_path):
                     is_os_drive = True
 
                 # Respect config role if already set to "os", otherwise use detection

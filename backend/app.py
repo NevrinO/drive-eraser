@@ -2,12 +2,19 @@
 # Main entry point for Drive Eraser Flask application
 # This file imports and registers all modular components
 
+import os
 import hmac
 import signal
 import threading
-import time
+import ipaddress
 from flask import jsonify
-from app_config import app, logger, get_config_dir, load_policy, socketio
+from app_config import init_app, logger, get_config_dir, load_policy
+from flask_limiter.errors import RateLimitExceeded
+
+# Initialize Flask app, SocketIO, Limiter, CORS, and logging before importing app/socketio.
+# init_app() is idempotent — safe if already called (e.g., by conftest in tests).
+init_app()
+from app_config import app, socketio
 from routes import register_blueprints
 
 # Register route blueprints (deferred to break circular imports)
@@ -17,28 +24,66 @@ register_blueprints(app)
 
 # Critical #4: Security gate middleware for remote access authentication
 # Must be registered after blueprints to avoid Flask's "first request" state
+
+def _is_ip_allowed(client_ip, allowed_ips):
+    """Check if a client IP matches any entry in the allowed IPs list.
+
+    Supports both individual IP addresses (e.g. '10.20.34.50') and
+    CIDR ranges (e.g. '10.20.34.0/24').
+    """
+    try:
+        client = ipaddress.ip_address(client_ip)
+        # Handle IPv4-mapped IPv6 addresses (e.g. ::ffff:10.20.34.50)
+        if getattr(client, 'ipv4_mapped', None) is not None:
+            client = client.ipv4_mapped
+    except (ValueError, TypeError):
+        return False
+    for entry in allowed_ips:
+        try:
+            if "/" in entry:
+                network = ipaddress.ip_network(entry, strict=False)
+                if client in network:
+                    return True
+            else:
+                if client == ipaddress.ip_address(entry):
+                    return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
 @app.before_request
 def security_gate():
     from flask import request
     from app_config import is_localhost, load_policy, calculate_session_token
-    
-    if not request.path.startswith("/api/"):
-        return None
-    if request.path in ("/api/auth/verify", "/api/status"):
-        return None
-    if is_localhost(request.remote_addr):
-        return None
 
-    policy = load_policy()
-    lan_passphrase = policy.get("lan_passphrase", "eraser123")
+    is_local = is_localhost(request.remote_addr)
 
-    expected_token = calculate_session_token(lan_passphrase)
-    cookie_token = request.cookies.get("admin_session")
+    # IP allowlist check — applies to ALL requests (not just /api/).
+    # Localhost always bypasses. If allowed_remote_ips is non-empty,
+    # remote IPs must match an entry (individual IP or CIDR range).
+    if not is_local:
+        policy = load_policy()
+        allowed_ips = policy.get("allowed_remote_ips", [])
+        if allowed_ips:
+            client_ip = request.remote_addr
+            if not _is_ip_allowed(client_ip, allowed_ips):
+                return jsonify({"error": "Access denied: IP not allowed"}), 403
 
-    if hmac.compare_digest(cookie_token or "", expected_token):
-        return None
+        if not request.path.startswith("/api/"):
+            return None
+        if request.path in ("/api/auth/verify", "/api/status"):
+            return None
 
-    return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+        lan_passphrase = policy.get("lan_passphrase", "eraser123")
+        expected_token = calculate_session_token(lan_passphrase)
+        cookie_token = request.cookies.get("admin_session")
+
+        if hmac.compare_digest(cookie_token or "", expected_token):
+            return None
+
+        return jsonify({"authenticated": False, "message": "Authentication required for remote network access."}), 401
+
+    return None
 
 from database import init_wipe_db
 from common import validate_policy
@@ -79,6 +124,13 @@ def add_security_headers(response):
     response.headers['Content-Security-Policy'] = csp_header
     return response
 
+# Specific error handler for rate limit exceeded — must be registered before
+# the generic Exception handler so 429s return properly instead of becoming 500s.
+@app.errorhandler(RateLimitExceeded)
+def handle_rate_limit_exceeded(e):
+    logger.info(f"Rate limit exceeded: {e.description}")
+    return jsonify({"error": "Rate limit exceeded", "detail": str(e.description)}), 429
+
 # Global error handler to ensure all errors return JSON instead of HTML
 @app.errorhandler(Exception)
 def handle_exception(e):
@@ -99,10 +151,21 @@ def update_smart_test_status_background():
     and stops polling. The database is updated based on drive status.
     Uses optimistic locking to prevent race conditions with frontend polling.
     """
-    import os
     from database import get_smart_test_history, update_smart_test_run
     from smart_parsing import get_smart_test_status
     from routes.admin_routes import should_update_test_status, should_trust_completion_status
+    
+    def _transition(device, record_id, new_status, current_updated_at, result=None, output_json=None):
+        """Update a SMART test record with optimistic locking and consistent logging."""
+        kwargs = {"current_updated_at": current_updated_at}
+        if result is not None:
+            kwargs["result"] = result
+        if output_json is not None:
+            kwargs["output_json"] = output_json
+        updated = update_smart_test_run(record_id, new_status, **kwargs)
+        if not updated:
+            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+        return updated
     
     logger.info("SMART test status background thread started")
     
@@ -135,9 +198,7 @@ def update_smart_test_status_background():
                     
                     # Transition: DB "started" → "in_progress" when drive confirms test is running
                     if db_status == "started" and drive_status == "in_progress":
-                        updated = update_smart_test_run(record_id, "in_progress",
-                                                        current_updated_at=current_updated_at)
-                        if updated:
+                        if _transition(device, record_id, "in_progress", current_updated_at):
                             logger.info(f"Background update: SMART test {device} confirmed in progress by drive status register")
                         continue
                     
@@ -160,41 +221,27 @@ def update_smart_test_status_background():
                                 result = "unknown"
                         
                         logger.info(f"Background update: SMART test {device} completed with result={result}")
-                        # Use optimistic locking with current_updated_at
-                        updated = update_smart_test_run(record_id, "completed", result=result, 
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "completed", current_updated_at,
+                                   result=result, output_json=status_result.get("self_test_log_table"))
                     
                     # Update database if drive shows failed and trust conditions met
                     elif drive_status == "failed" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} failed")
-                        # Use optimistic locking with current_updated_at
-                        updated = update_smart_test_run(record_id, "failed", result="failed",
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "failed", current_updated_at,
+                                   result="failed", output_json=status_result.get("self_test_log_table"))
                     
                     # Update database if drive shows aborted and trust conditions met
                     elif drive_status == "aborted" and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} aborted")
-                        updated = update_smart_test_run(record_id, "failed", result="aborted",
-                                                        output_json=status_result.get("self_test_log_table"),
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "failed", current_updated_at,
+                                   result="aborted", output_json=status_result.get("self_test_log_table"))
                     
                     # Drive shows no_tests/unknown after trust conditions met: test is no longer running
                     # but we can't determine pass/fail from the drive's log. Mark as completed
                     # with result "unknown" so the card stops showing "running".
                     elif drive_status in ("no_tests", "unknown") and should_trust_completion_status(started_at, db_status, test_type):
                         logger.info(f"Background update: SMART test {device} no longer running (status={drive_status}), marking completed with unknown result")
-                        updated = update_smart_test_run(record_id, "completed", result="unknown",
-                                                        current_updated_at=current_updated_at)
-                        if not updated:
-                            logger.debug(f"Background update: SMART test {device} record was modified by another process, skipping")
+                        _transition(device, record_id, "completed", current_updated_at, result="unknown")
                 
                 except Exception as e:
                     logger.warning(f"Failed to update SMART test status for {device}: {e}")
@@ -360,10 +407,14 @@ def sweep_orphaned_jobs_background():
                     with ERASE_JOBS_LOCK:
                         job = ERASE_JOBS.get(job_id)
                         if job and job.get("status") == "running":
+                            failed_job = dict(job)
+                            failed_job["status"] = "failed"
+                            failed_job["finished_at"] = now_iso
+                            failed_job["error"] = f"Job timed out: {method} erase exceeded {timeout}s (elapsed {elapsed}s)"
+                            persist_job(failed_job)
                             job["status"] = "failed"
                             job["finished_at"] = now_iso
-                            job["error"] = f"Job timed out: {method} erase exceeded {timeout}s (elapsed {elapsed}s)"
-                            persist_job(job)
+                            job["error"] = failed_job["error"]
                             ERASE_JOBS.pop(job_id, None)
                             logger.error(f"Job sweep: marked stuck job {job_id} as failed ({method} exceeded {timeout}s)")
             except Exception as e:
@@ -436,7 +487,21 @@ def create_app():
     
     # Start udev event listener for real-time device discovery
     udev_listener.start_udev_listener()
-    
+
+    # Run a one-shot discovery on startup to pre-warm the drive cache.
+    # This ensures the first /api/drives call (when operator opens the page)
+    # is fast and that _auto_enqueue_zero_checks runs once during startup.
+    # The 30s zero-check delay still prevents premature enrollment.
+    def _startup_discovery():
+        try:
+            bay_map_path = os.path.join(config_dir, "bay_map.json")
+            disk_ops.discover_drives(bay_map_path)
+            logger.info("Startup discovery completed")
+        except Exception as e:
+            logger.warning(f"Startup discovery failed (non-fatal): {e}")
+
+    threading.Thread(target=_startup_discovery, daemon=True, name="startup-discovery").start()
+
     # Start SMART test status background thread
     start_smart_test_update_thread()
     

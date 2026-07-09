@@ -14,7 +14,7 @@ import hmac
 import hashlib
 import socket
 
-from common import get_logs_dir, load_policy, get_config_dir
+from common import get_logs_dir, get_config_dir, load_policy, PROJECT_ROOT
 
 class PollingFilter(logging.Filter):
     """
@@ -32,7 +32,8 @@ class PollingFilter(logging.Filter):
                 "GET /api/drives",
                 "GET /api/admin/metrics",
                 "GET /api/erase/history",
-                "GET /api/admin/enclosures"
+                "GET /api/admin/enclosures",
+                "/socket.io/"
             ])
             
             if is_poll_endpoint:
@@ -59,6 +60,8 @@ def setup_application_logging():
         
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.INFO)
+        # Suppress routine per-request Werkzeug logging; only warnings/errors surface
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
         root_logger.addHandler(handler)
         
         console_handler = logging.StreamHandler(sys.stdout)
@@ -68,35 +71,66 @@ def setup_application_logging():
     except Exception as e:
         print(f"Failed to setup file logging: {str(e)}", file=sys.stderr)
 
-setup_application_logging()
 logger = logging.getLogger("app")
 
-app = Flask(__name__)
-
-# Initialize SocketIO for real-time WebSocket communication
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
-
-# High #11: Initialize Flask-Limiter for rate limiting
-# NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.
-# For multi-worker deployments (e.g., gunicorn with multiple workers), configure Redis or Memcached:
-#   storage_uri="redis://localhost:6379" or storage_uri="memcached://localhost:11211"
-# This is a known limitation documented for the current single-worker architecture.
+# --- Lazy initialization: app and socketio are None until init_app() is called ---
+# This prevents import-time side effects (duplicate logging handlers, policy.json dependency,
+# Flask app creation) when modules are imported in tests or for type checking.
+# limiter is created eagerly (without an app) so @limiter.limit decorators work at
+# import time regardless of init_app() call order. The app binding happens in init_app().
+app = None
+socketio = None
 limiter = Limiter(
-    app=app,
     key_func=get_remote_address,
     default_limits=["200 per day", "50 per hour"],
     storage_uri="memory://",
     strategy="fixed-window"
 )
 
-# Critical #2: Load CORS origins from policy configuration
-policy = load_policy()
-allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
-CORS(app, origins=allowed_origins)
+_initialized = False
 
-# Critical #4: Configure SameSite cookie attribute for CSRF protection
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SESSION_COOKIE_HTTPONLY'] = True
+def init_app():
+    """Initialize Flask app, SocketIO, Limiter, CORS, and logging.
+    
+    Idempotent — safe to call multiple times (e.g., from app.py and conftest.py).
+    Must be called before any module imports `app`, `socketio`, or `limiter`
+    from app_config at usage time.
+    """
+    global _initialized, app, socketio
+    if _initialized:
+        return
+    _initialized = True
+    
+    setup_application_logging()
+    
+    app = Flask(__name__)
+    
+    # Initialize SocketIO for real-time WebSocket communication
+    # SocketIO CORS is set to '*' because the station is accessed from LAN IPs
+    # that aren't in the policy's allowed_cors_origins list (which only covers
+    # localhost). HTTP CORS (below) still enforces the policy-based origins.
+    # Access control is provided by the IP allowlist and authentication in
+    # security_gate, not by SocketIO CORS.
+    policy = load_policy()
+    allowed_origins = policy.get("allowed_cors_origins", ["http://localhost:5000", "http://127.0.0.1:5000"])
+    socketio = SocketIO(app, cors_allowed_origins='*', async_mode='threading')
+    
+    # High #11: Bind Flask-Limiter to the app.
+    # limiter was created eagerly at module level (without an app) so @limiter.limit
+    # decorators work at import time. Here we bind it to the Flask app.
+    # NOTE: Using in-memory storage (storage_uri="memory://") which is suitable for single-worker deployments.
+    # For multi-worker deployments (e.g., gunicorn with multiple workers), configure Redis or Memcached:
+    #   storage_uri="redis://localhost:6379" or storage_uri="memcached://localhost:11211"
+    # This is a known limitation documented for the current single-worker architecture.
+    limiter.init_app(app)
+    
+    # Critical #2: CORS origins loaded from policy configuration (above, shared with SocketIO)
+    CORS(app, origins=allowed_origins)
+    
+    # Critical #4: Configure SameSite cookie attribute for CSRF protection
+    app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
+    app.config['SESSION_COOKIE_HTTPONLY'] = True
+    app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024
 
 ERASE_JOBS = {}
 ERASE_JOBS_LOCK = Lock()
@@ -112,7 +146,7 @@ def get_wipe_semaphore():
     with WIPE_SEMAPHORE_LOCK:
         try:
             policy = load_policy()
-            max_concurrent = policy.get("max_concurrent_wipes", 64)
+            max_concurrent = policy.get("max_concurrent_wipes", 34)
             # Clamp to reasonable bounds
             max_concurrent = max(1, min(max_concurrent, 256))
         except Exception:
@@ -132,7 +166,6 @@ BULK_CERT_JOBS_LOCK = Lock()
 SMART_TEST_LOCKS = {}
 SMART_TEST_LOCKS_LOCK = Lock()
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 def get_local_ip():
@@ -153,9 +186,14 @@ def calculate_session_token(passphrase):
     return hmac.new(passphrase.encode('utf-8'), b"dws_admin_session", hashlib.sha256).hexdigest()
 
 def is_localhost(ip):
-    return ip in ("127.0.0.1", "::1", "localhost")
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return True
+    # Handle IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1)
+    return ip.startswith("::ffff:127.0.0.1")
 
 # Blueprint registration and security middleware are deferred to app.py to break circular imports.
-# Route modules import from app_config.py (logger, limiter, etc.),
-# while app_config.py is imported by certificates.py during test collection.
+# Route modules import from app_config.py (logger, limiter, etc.).
+# App/socketio are initialized lazily via init_app() — called from app.py
+# or tests/conftest.py before any module uses them. limiter is created eagerly
+# (without an app) and bound to the app in init_app().
 # --- END OF FILE backend/app_config.py ---

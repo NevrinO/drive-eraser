@@ -377,7 +377,8 @@
     return applySequentialMappingWithGrouping(filteredDevices, startBay, groupingStrategy, localBayMapCopy);
   }
 
-  function generateMappingPreview(discoveryState, localBayMapCopy, mappingPattern, mappingStartBay, mappingDeviceFilter, mappingPreview, applyMappingBtn, showMappingValidationError, hideMappingValidationError, setPreviewMessage, escapeHtml, mappingValidationError) {
+  function generateMappingPreview(opts) {
+    const { discoveryState, localBayMapCopy, mappingPattern, mappingStartBay, mappingDeviceFilter, mappingPreview, applyMappingBtn, showMappingValidationError, hideMappingValidationError, setPreviewMessage, escapeHtml, mappingValidationError } = opts;
     // Clear previous validation errors
     hideMappingValidationError();
     
@@ -456,7 +457,7 @@
       const device = mapping[bayId];
       return `
         <div class="discovery-preview-row">
-          <strong class="discovery-mapping-bay">${escapeHtml ? escapeHtml(bayId) : bayId}</strong> → ${escapeHtml ? escapeHtml(device.device_name) : device.device_name} (${escapeHtml ? escapeHtml(device.device_path) : device.device_path})
+          <strong class="discovery-mapping-bay">${escapeHtml(bayId)}</strong> → ${escapeHtml(device.device_name)} (${escapeHtml(device.device_path)})
         </div>
       `;
     }).join('');
@@ -474,7 +475,8 @@
     return mapping;
   }
 
-  async function applyMappingToBayConfig(localBayMapCopy, loadBayMappingConfig, closeDiscoveryModal, showMappingValidationError, hideMappingValidationError, safeFetch, renderBayMappingConfig, showUnsavedChangesIndicator) {
+  async function applyMappingToBayConfig(opts) {
+    const { localBayMapCopy, loadBayMappingConfig, closeDiscoveryModal, showMappingValidationError, hideMappingValidationError, safeFetch, renderBayMappingConfig, showUnsavedChangesIndicator } = opts;
     // Handle manual mapping mode - set currentMappingPreview from manualMappings
     if (mappingMode === 'manual') {
       if (Object.keys(manualMappings).length === 0) {

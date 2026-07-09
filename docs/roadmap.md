@@ -449,6 +449,31 @@ Feature D (intake snapshot) should be built first as it is a prerequisite for th
 
 ---
 
+## Background Drive Data Cache Warmer
+
+**Status**: Future Enhancement
+**Priority**: Low
+**Use Case**: Improve operator experience when opening browser after period of inactivity
+
+### Problem
+Drive discovery (SMART, capabilities, marker reads) only runs when a browser client calls `/api/drives`. The per-drive data cache (`_DRIVE_DATA_CACHE`) has a 15-minute TTL. When no browser has been open for longer than the TTL, the cache is empty and the first page load requires a full discovery pass — approximately 10 seconds with a full set of drives. This is not severe but creates friction on a kiosk-style station where operators expect near-instant bay status.
+
+### Proposed Implementation
+Add a background cache-warmer thread alongside the existing background threads in `create_app()`:
+- Runs `discover_drives()` on a configurable interval (e.g., every 10 minutes, before the 15-min TTL expires)
+- Only runs when drives are present (skip if all bays empty — no work to do)
+- Respects the existing discovery interruption mechanism so it won't interfere with active wipes
+- Gated by policy toggles: `cache_warmer_enabled` (default: `false`), `cache_warmer_interval_seconds` (default: `600`)
+- Same start/stop lifecycle pattern as the SMART test status thread and orphaned job sweep thread
+
+### Technical Considerations
+- Must not race with client-triggered discovery — the existing `_DRIVE_DATA_CACHE_LOCK` and discovery interruption mechanism should handle this, but needs verification
+- smartctl reads are non-invasive (no drive wear), but add periodic I/O load on the server
+- The udev listener already invalidates cache on hot-plug; the warmer would repopulate it so operators see new drives without waiting for a client request
+- Low priority: current cold-start time (~10s with full bays) is acceptable but not ideal
+
+---
+
 ## Additional Future Enhancements
 
 This section will be updated as new enhancement requests are identified and prioritized.

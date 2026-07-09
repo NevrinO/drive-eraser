@@ -36,7 +36,7 @@ def is_enclosure_device(scsi_device_path: str, device_type_cache: Optional[Dict[
             device_type = f.read().strip()
         # SCSI type 0x0d (13 decimal) = enclosure services (SES)
         # Type 0x03 = processor (often used for enclosure management)
-        enclosure_types = ['enclosure', 'processor', 'ses', '13', '3']
+        enclosure_types = ['enclosure', 'processor', 'ses', '13', '3', '0xd', '0x0d', '0x3', '0x03']
         is_enclosure = device_type.lower() in enclosure_types
 
         # Store in cache if provided
@@ -295,3 +295,15 @@ def get_max_slot_from_enclosure(use_cache: bool = True) -> int:
             _ENCLOSURE_CACHE['timestamp'] = time.time()
 
     return max_slot
+
+
+def invalidate_enclosure_cache():
+    """Invalidate the enclosure slot metadata cache to force a fresh scan on next call.
+
+    This should be called when hardware topology changes (e.g., enclosure add/edit/delete
+    or bay_map.json modifications) to ensure the next discovery uses fresh hardware data.
+    """
+    with _ENCLOSURE_CACHE_LOCK:
+        _ENCLOSURE_CACHE['data'] = None
+        _ENCLOSURE_CACHE['timestamp'] = 0
+    logging.info("Enclosure cache invalidated")

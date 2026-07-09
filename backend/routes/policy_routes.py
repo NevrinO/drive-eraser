@@ -1,6 +1,7 @@
 # Policy routes: operational policy and triage config management
 # Extracted from admin_routes.py for modularity (fix-plan-G1)
 from flask import Blueprint, jsonify, request
+import ipaddress
 from app_config import logger, limiter
 from common import get_config_dir, load_policy, save_policy, validate_strict_audit_requirements
 from disk_ops import invalidate_drive_cache, stop_extended_smart_pool
@@ -116,13 +117,38 @@ def admin_policy():
                         return jsonify({"error": f"{field} exceeds maximum length of {max_len} characters"}), 400
                     if field == "secondary_verification_mode" and val not in _valid_secondary_verification_modes:
                         return jsonify({"error": f"secondary_verification_mode must be one of: {', '.join(sorted(_valid_secondary_verification_modes))}"}), 400
+                    if field == "slack_webhook_url" and val:
+                        if not val.startswith("https://hooks.slack.com/"):
+                            return jsonify({"error": "slack_webhook_url must be a valid Slack webhook URL starting with https://hooks.slack.com/"}), 400
                     current_policy[field] = val
                     
             lan_passphrase_changed = False
             if new_lan_pass:
                 current_policy["lan_passphrase"] = new_lan_pass
                 lan_passphrase_changed = True
-            
+
+            # Allowed remote IPs (list of IP addresses or CIDR ranges)
+            if "allowed_remote_ips" in payload:
+                ip_list = payload["allowed_remote_ips"]
+                if not isinstance(ip_list, list):
+                    return jsonify({"error": "allowed_remote_ips must be a list of strings"}), 400
+                if len(ip_list) > 50:
+                    return jsonify({"error": "allowed_remote_ips cannot exceed 50 entries"}), 400
+                validated_ips = []
+                for entry in ip_list:
+                    entry_str = str(entry).strip() if entry is not None else ""
+                    if not entry_str:
+                        continue
+                    try:
+                        if "/" in entry_str:
+                            ipaddress.ip_network(entry_str, strict=False)
+                        else:
+                            ipaddress.ip_address(entry_str)
+                        validated_ips.append(entry_str)
+                    except (ValueError, TypeError):
+                        return jsonify({"error": f"Invalid IP or CIDR in allowed_remote_ips: {entry_str}"}), 400
+                current_policy["allowed_remote_ips"] = validated_ips
+
             wipe_passphrase_changed = False
             if new_wipe_pass:
                 current_policy["wipe_passphrase"] = new_wipe_pass
@@ -165,6 +191,8 @@ def admin_triage_config():
     else:
         try:
             payload = request.get_json(silent=True) or {}
+            if not isinstance(payload, dict):
+                return jsonify({"error": "Payload must be a JSON object"}), 400
             current_policy = load_policy(config_dir)
             
             # Validate all threshold values are numeric and within reasonable ranges
