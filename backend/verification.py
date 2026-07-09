@@ -28,7 +28,7 @@ from disk_utils import (
 _VERSIONS_CACHE = {"data": None, "timestamp": 0}
 _VERSIONS_CACHE_TTL = 86400  # 24 hours in seconds - software versions only change on package updates
 _VERSIONS_CACHE_LOCK = threading.Lock()  # Thread-safe cache access (per lesson-learned #2)
-from smart_parsing import stabilize_smart_writes, get_smart_data
+from smart_parsing import get_smart_data, capture_write_baseline
 from crypto_verification import (
     verify_sampled_zero_check,
     capture_before_state,
@@ -468,16 +468,17 @@ def write_marker_and_verify(job, smart_baseline=None):
     with device_lock:
         try:
             # Use provided SMART baseline if available, otherwise capture it now.
-            # Overwrite needs stabilization (host-written counter lag); firmware
-            # methods only need a single read (counter already settled).
+            # capture_write_baseline flushes the drive cache then reads the
+            # counter once — replacing the old 2-minute polling loop.
+            # For Seagate SAS, reads log page 0x37 (host-only, no drift).
+            # For non-Seagate SAS, returns (None, "disabled").
             if smart_baseline is not None:
                 raw_writes = smart_baseline
-            elif str((job.get("request") or {}).get("method", "")).lower() == "overwrite":
-                raw_writes = stabilize_smart_writes(device)
             else:
-                raw_writes = get_smart_data(device).get("data_written_raw")
+                raw_writes, write_source = capture_write_baseline(device, interface_type)
+                job["request"]["write_counter_source"] = write_source
             job["request"]["data_written_at_wipe"] = raw_writes
-            logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}")
+            logger.info(f"Marker write SMART baseline: data_written_raw={raw_writes}, source={job['request'].get('write_counter_source')}")
 
             passphrase = None
             try:
@@ -509,9 +510,10 @@ def write_marker_and_verify(job, smart_baseline=None):
 
             if readback.get("status") == "checksum_valid":
                 stored_writes = readback.get("details", {}).get("data_written_at_wipe")
+                stored_source = readback.get("details", {}).get("write_counter_source")
                 current_writes = get_smart_data(device).get("data_written_raw")
-                logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
-                is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
+                logger.info(f"Post-marker SMART read: data_written_raw={current_writes}, stored={stored_writes}, source={stored_source}, diff={int(current_writes) - int(stored_writes) if current_writes and stored_writes else 'N/A'}")
+                is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes, stored_source)
                 readback["is_pristine"] = is_pristine
 
                 if not is_pristine:
@@ -547,6 +549,7 @@ def build_marker_payload(job, passphrase=None):
         "serial": request_data.get("serial"),
         "method": request_data.get("method"),
         "data_written_at_wipe": request_data.get("data_written_at_wipe"),
+        "write_counter_source": request_data.get("write_counter_source"),
     }
 
     serialized_fields = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -704,15 +707,12 @@ def verification_for_method(device, interface_type, method, execution, before_st
             primary_result["details"]["verification_level"] = "primary_verification_only"
 
         # Capture SMART baseline after secondary verification.
-        # For overwrite: the host wrote zeroes, so the firmware write counter
-        # may lag — poll until it stabilizes to avoid false "written_since_wipe".
-        # For firmware-based methods (crypto/block/secure_erase): the controller
-        # completed the sanitize internally, so the counter is already settled
-        # by the time verification finishes — a single read is sufficient.
-        if selected_method == "overwrite":
-            smart_baseline = stabilize_smart_writes(device)
-        else:
-            smart_baseline = get_smart_data(device).get("data_written_raw")
+        # capture_write_baseline flushes the drive cache then reads the
+        # counter once — replacing the old 2-minute polling loop.
+        # For Seagate SAS, reads log page 0x37 (host-only, no drift).
+        # For non-Seagate SAS, returns (None, "disabled").
+        smart_baseline, write_source = capture_write_baseline(device, interface_type)
         primary_result["details"]["smart_baseline_for_marker"] = smart_baseline
+        primary_result["details"]["write_counter_source"] = write_source
 
     return primary_result

@@ -425,34 +425,61 @@ class TestCheckWriteTolerance:
         result = check_write_tolerance("sata", 5100, 1000)
         assert result is False
 
-    def test_none_values(self):
-        """Test with None values."""
+    def test_none_values_skip_check(self):
+        """Test with None values skips write check (returns True)."""
         result = check_write_tolerance("nvme", None, None)
-        assert result is False
+        assert result is True
 
     def test_negative_difference(self):
         """Test with negative difference (current < stored)."""
         result = check_write_tolerance("nvme", 999, 1000)
         assert result is False
 
-    def test_sas_within_tolerance(self):
-        """Test SAS write tolerance (100,000 sectors ~ 49 MB).
+    def test_seagate_cache_within_tolerance(self):
+        """Test Seagate 0x37 counter tolerance (4 blocks).
 
-        SAS drives report via gigabytes_processed with 1 MB granularity,
-        so tolerance must account for counter granularity and firmware drift.
+        Blocks received from initiator is a host-only counter with no drift,
+        so tolerance is tight like NVMe.
         """
-        result = check_write_tolerance("sas", 101000, 1000)
+        result = check_write_tolerance("sas", 1004, 1000, write_counter_source="seagate_cache_0x37")
         assert result is True
 
-    def test_sas_exceeds_tolerance(self):
-        """Test SAS write exceeds tolerance."""
-        result = check_write_tolerance("sas", 101001, 1000)
+    def test_seagate_cache_exceeds_tolerance(self):
+        """Test Seagate 0x37 counter exceeds tolerance."""
+        result = check_write_tolerance("sas", 1005, 1000, write_counter_source="seagate_cache_0x37")
         assert result is False
 
-    def test_sas_real_world_drift(self):
-        """Test SAS real-world drift scenario: 9766-sector diff should be within tolerance."""
-        result = check_write_tolerance("sas", 63673021484, 63673011718)
+    def test_disabled_source_always_pristine(self):
+        """Test that disabled write counter source always returns True."""
+        result = check_write_tolerance("sas", 999999, 0, write_counter_source="disabled")
         assert result is True
+
+    def test_disabled_source_none_values(self):
+        """Test that disabled source with None values returns True."""
+        result = check_write_tolerance("sas", None, None, write_counter_source="disabled")
+        assert result is True
+
+    def test_none_values_without_disabled_source(self):
+        """Test with None values and no disabled source skips check (True)."""
+        result = check_write_tolerance("nvme", None, None)
+        assert result is True
+
+    def test_stored_none_skips_check(self):
+        """Marker with no stored writes (legacy) skips check."""
+        result = check_write_tolerance("sas", 999999, None)
+        assert result is True
+
+    def test_current_none_skips_check(self):
+        """Drive with no current write counter skips check."""
+        result = check_write_tolerance("sas", None, 1000)
+        assert result is True
+
+    def test_sas_with_writes_uses_tight_tolerance(self):
+        """SAS with actual write data uses SATA tolerance (4096)."""
+        result = check_write_tolerance("sas", 5000, 1000)
+        assert result is True
+        result = check_write_tolerance("sas", 5100, 1000)
+        assert result is False
 
     def test_interface_type_case_insensitive(self):
         """Test that interface type is case-insensitive."""
@@ -460,9 +487,6 @@ class TestCheckWriteTolerance:
         assert result is True
 
         result = check_write_tolerance("SATA", 5000, 1000)
-        assert result is True
-
-        result = check_write_tolerance("SAS", 101000, 1000)
         assert result is True
 
 

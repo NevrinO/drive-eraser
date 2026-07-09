@@ -759,6 +759,9 @@ def run_erase_job(job_id):
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Writing supplemental station marker.")
                 job["current_phase"] = "Writing post-erase marker..."
                 smart_baseline = verification.get("details", {}).get("smart_baseline_for_marker")
+                write_counter_source = verification.get("details", {}).get("write_counter_source")
+                if write_counter_source:
+                    job["request"]["write_counter_source"] = write_counter_source
                 marker_result = write_marker_and_verify(job, smart_baseline=smart_baseline)
                 job["marker"] = marker_result
                 if not marker_result.get("ok"):

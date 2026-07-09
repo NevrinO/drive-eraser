@@ -6,7 +6,7 @@ import os
 import logging
 import threading
 
-from disk_utils import get_command_path, safe_int, format_capacity_bytes, run_command
+from disk_utils import get_command_path, safe_int, format_capacity_bytes, run_command, read_seagate_cache_writes, flush_drive_cache
 from common import load_policy, get_config_dir
 from smart_utils import detect_interface_type, validate_device_path
 
@@ -112,7 +112,8 @@ def get_smart_identity(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "interface_type": interface_type, "smart_polling": True
+        "model_profile": None, "interface_type": interface_type, "smart_polling": True,
+        "write_counter_source": None
     }
 
 def get_smart_data(device, diagnostics=None):
@@ -125,7 +126,8 @@ def get_smart_data(device, diagnostics=None):
         "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
         "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
         "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "interface_type": None, "smart_polling": False
+        "model_profile": None, "interface_type": None, "smart_polling": False,
+        "write_counter_source": None
     }
     if not validate_device_path(device):
         return empty_template
@@ -168,6 +170,7 @@ def get_smart_data(device, diagnostics=None):
                 if "percentage used" in name_str or offset_val == 8: devstat_wear = safe_int(item_val, None)
 
     written_bytes, written_raw = None, None
+    write_counter_source = None
     sata_write_details = get_sata_attr_details(241)
     if sata_write_details and sata_write_details.get("raw") is not None:
         raw_val = sata_write_details["raw"]
@@ -177,16 +180,28 @@ def get_smart_data(device, diagnostics=None):
         elif "gib" in attr_name: written_bytes = raw_val * 1024 * 1024 * 1024
         elif "gb" in attr_name: written_bytes = raw_val * 1000 * 1000 * 1000
         else: written_bytes = raw_val * 512
+        write_counter_source = "sata_attr_241"
     elif nvme_log.get("data_units_written") is not None:
         raw_val = nvme_log["data_units_written"]
         written_raw, written_bytes = raw_val, raw_val * 1000 * 512
-    elif "write" in scsi_log:
-        gb_processed = scsi_log["write"].get("gigabytes_processed")
-        if gb_processed is not None:
-            written_bytes = int(float(gb_processed) * 10**9)
-            written_raw = int(written_bytes / 512)
+        write_counter_source = "nvme_data_units"
+    elif scsi_log or (data.get("device", {}).get("protocol") == "SCSI"):
+        scsi_vendor = str(data.get("vendor", "") or "").upper()
+        if scsi_vendor == "SEAGATE":
+            seagate_writes = read_seagate_cache_writes(device)
+            if seagate_writes is not None:
+                written_raw = seagate_writes
+                written_bytes = seagate_writes * 512
+                write_counter_source = "seagate_cache_0x37"
+            else:
+                write_counter_source = "disabled"
+        else:
+            write_counter_source = "disabled"
     elif devstat_written is not None:
         written_raw, written_bytes = devstat_written, devstat_written * 512
+        write_counter_source = "sata_devstat"
+    else:
+        write_counter_source = "disabled"
 
     read_bytes, read_raw = None, None
     sata_read_details = get_sata_attr_details(242)
@@ -339,55 +354,35 @@ def get_smart_data(device, diagnostics=None):
         "sas_uncorrectable_read_errors": sas_uncorrectable_read_errors, "sas_uncorrectable_write_errors": sas_uncorrectable_write_errors, "sas_uncorrectable_verify_errors": sas_uncorrectable_verify_errors,
         "sas_scan_event_count": sas_scan_event_count, "sas_scan_unique_lbas": sas_scan_unique_lbas, "sas_sticky_lba_detected": sas_sticky_lba_detected,
         "model_profile": model_profile, "interface_type": interface_type,
+        "write_counter_source": write_counter_source,
         "_nvme_media_errors": safe_int(nvme_log.get("media_errors"), 0),
         "_smartctl_exit_status": safe_int(data.get("smartctl", {}).get("exit_status"), 0),
         "_nvme_critical_warning": safe_int(nvme_log.get("critical_warning"), 0)
     }
 
 
-def stabilize_smart_writes(device, max_attempts=24, delay_seconds=5, required_consecutive=5):
-    """Poll data_written_raw until it converges or max_attempts is reached.
+def capture_write_baseline(device, interface_type):
+    """Flush drive cache and capture write counter baseline in a single pass.
 
-    Drive firmware updates SMART write counters asynchronously. After a large
-    write operation (e.g. full-disk overwrite), the counter may lag behind the
-    actual number of sectors written. This function reads the counter
-    repeatedly until required_consecutive reads return the same value,
-    indicating the firmware has caught up.
+    Replaces the old stabilize_smart_writes polling loop. Instead of polling
+    for 2 minutes hoping the counter converges, this:
+    1. Flushes the drive's write cache to physical media (sg_sync for SAS,
+       hdparm -F for SATA, no-op for NVMe)
+    2. Reads the write counter once via get_smart_data
 
-    Args:
-        device: Device path (e.g. /dev/sda)
-        max_attempts: Maximum number of polling attempts (default 24)
-        delay_seconds: Seconds to wait between reads (default 5)
-        required_consecutive: Number of consecutive equal reads required (default 5)
+    For Seagate SAS, get_smart_data already reads log page 0x37
+    (Blocks received from initiator) which is a host-only counter that
+    doesn't drift from firmware background activity.
+
+    For non-Seagate SAS, the write counter source is "disabled" and
+    data_written_raw will be None — the marker check will skip write
+    comparison and rely on checksum/HMAC only.
 
     Returns:
-        The converged data_written_raw value, or the last value if it never
-        converged. Returns None if the drive does not report data_written_raw.
+        (data_written_raw, write_counter_source) tuple
     """
-    import time as _time
-
-    first = get_smart_data(device).get("data_written_raw")
-    if first is None:
-        return None
-
-    prev = first
-    consecutive = 0
-    for attempt in range(1, max_attempts + 1):
-        _time.sleep(delay_seconds)
-        curr = get_smart_data(device).get("data_written_raw")
-        if curr is None:
-            return None
-        if curr == prev:
-            consecutive += 1
-            if consecutive >= required_consecutive:
-                logger.info(f"SMART data_written_raw stabilized at {curr} after {attempt} poll(s) ({consecutive} consecutive matches)")
-                return curr
-        else:
-            consecutive = 0
-        prev = curr
-
-    logger.warning(
-        f"SMART data_written_raw did not stabilize after {max_attempts} attempts "
-        f"({max_attempts * delay_seconds}s); using last value {curr}"
-    )
-    return curr
+    flush_ok = flush_drive_cache(device, interface_type)
+    if not flush_ok:
+        logger.warning(f"Cache flush failed for {device} ({interface_type}); proceeding with counter read anyway")
+    smart = get_smart_data(device)
+    return smart.get("data_written_raw"), smart.get("write_counter_source")

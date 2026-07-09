@@ -32,10 +32,8 @@ def _process_marker_status(marker_status, interface_type, smart):
     if marker_status.get("status") == "checksum_valid":
         current_writes = smart.get("data_written_raw")
         stored_writes = marker_status.get("details", {}).get("data_written_at_wipe")
-        if current_writes is None:
-            is_pristine = True
-        else:
-            is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes)
+        stored_source = marker_status.get("details", {}).get("write_counter_source")
+        is_pristine = check_write_tolerance(interface_type, current_writes, stored_writes, stored_source)
         marker_status["is_pristine"] = is_pristine
         marker_status["status"] = "written_since_wipe" if not is_pristine else ("pristine_secure" if marker_status.get("hmac_verified") else "pristine_insecure")
 
