@@ -150,15 +150,16 @@ def finalize_failed_job(job_id, error_message):
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
 
-def run_erase_job(job_id):
-    # High #14: Capture current generation so we can detect signals received during this job.
+def _init_job(job_id):
+    """Initialize erase job: set running status, extract device info, cancel zero-check.
+    Returns ctx dict or None if job not found."""
     with _job_interrupt_lock:
         _job_generation = _job_interrupt_generation
 
     with ERASE_JOBS_LOCK:
         job = ERASE_JOBS.get(job_id)
         if not job:
-            return
+            return None
         job["status"] = "running"
         job["started_at"] = datetime.now(timezone.utc).isoformat()
         job["progress_percent"] = 0.0
@@ -191,8 +192,22 @@ def run_erase_job(job_id):
     except Exception as e:
         logger.warning(f"Failed to cancel zero-check for bay {job['request'].get('bay')} before wipe: {e}")
 
-    # Pre-wipe health gate check — use cached result from API route if available
-    # to avoid redundant smartctl call (Fix 3: skip redundant health gate)
+    return {
+        'job': job,
+        'device': device,
+        'interface_type': interface_type,
+        'method': method,
+        'capacity_bytes': capacity_bytes,
+        'generation': _job_generation,
+    }
+
+def _check_health_gate(job_id, ctx):
+    """Pre-wipe health gate check with override logic.
+    Returns True if passed or override allowed, False if blocked."""
+    job = ctx['job']
+    device = ctx['device']
+    interface_type = ctx['interface_type']
+
     config_dir = get_config_dir()
     policy = load_policy(config_dir)
     cached_health_gate = job.get("health_gate_result")
@@ -200,19 +215,19 @@ def run_erase_job(job_id):
         health_gate_result = cached_health_gate
     else:
         health_gate_result = pre_wipe_health_gate(device, interface_type, policy)
-    
+
     # Check if override was requested
     health_gate_override = job["request"].get("health_gate_override", False)
     health_gate_override_justification = job["request"].get("health_gate_override_justification", "")
-    
+
     if health_gate_result.get("blocked"):
         block_reason = health_gate_result.get("block_reason")
         strict_mode = policy.get("prewipe_health_gate_strict_mode", False)
         strict_audit_mode = policy.get("strict_audit_mode", False)
-        
+
         # Determine if override is allowed
         override_allowed = not strict_mode and not strict_audit_mode
-        
+
         # If override was requested and allowed, log and proceed
         if health_gate_override and override_allowed:
             logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) health gate override requested: {block_reason}. Justification: {health_gate_override_justification}")
@@ -224,10 +239,11 @@ def run_erase_job(job_id):
                     job["health_gate_override"] = True
                     job["health_gate_override_justification"] = health_gate_override_justification
                     persist_job(job)
+                    ctx['job'] = job
             # Proceed with wipe despite health gate block
         else:
             logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) blocked by pre-wipe health gate: {block_reason}")
-            
+
             # Update job with health gate failure details
             with ERASE_JOBS_LOCK:
                 job = ERASE_JOBS.get(job_id)
@@ -235,12 +251,20 @@ def run_erase_job(job_id):
                     job["health_gate_result"] = health_gate_result
                     job["override_allowed"] = override_allowed
                     persist_job(job)
-            
+
             if override_allowed:
                 finalize_failed_job(job_id, f"pre_wipe_health_check_failed_override_available: {block_reason}")
             else:
                 finalize_failed_job(job_id, f"pre_wipe_health_check_failed: {block_reason}")
-            return
+            return False
+
+    return True
+
+def _capture_pre_wipe_state(job_id, ctx):
+    """Capture pre-wipe SMART snapshot and before-state for hash verification.
+    Best-effort — catches exceptions and logs warnings. Stores before_state in ctx."""
+    job = ctx['job']
+    device = ctx['device']
 
     # Capture pre-wipe SMART snapshot in worker thread (Fix 2: parallelize SMART capture)
     # Previously this was done serially in the API route, delaying all job starts
@@ -267,6 +291,15 @@ def run_erase_job(job_id):
                 # Medium #36: Job was deleted between lock sections, log and continue
                 logger.warning(f"Job {job_id} was deleted before verification state could be saved")
 
+def _prepare_erase_command(job_id, ctx):
+    """Prepare erase command (SATA password or generic), open log file, init progress tracking.
+    Stores command, log_file, start_time, and progress vars in ctx.
+    Returns True on success, False on failure (calls finalize_failed_job internally)."""
+    job = ctx['job']
+    device = ctx['device']
+    interface_type = ctx['interface_type']
+    method = ctx['method']
+
     # Initialize erase time estimate for SATA secure erase
     erase_time_estimate_seconds = None
 
@@ -274,7 +307,7 @@ def run_erase_job(job_id):
         hdparm_cmd = resolve_verify_command_path("hdparm")
         if not hdparm_cmd:
             finalize_failed_job(job_id, "hdparm_not_available")
-            return
+            return False
 
         user_password = _get_sata_security_password()
         set_pass_cmd = ["sudo", hdparm_cmd, "--user-master", "u", "--security-set-pass", user_password, device]
@@ -285,10 +318,10 @@ def run_erase_job(job_id):
                 if "frozen" in set_pass_proc.stdout.lower() or "frozen" in set_pass_proc.stderr.lower():
                     err_msg = "SATA drive is FROZEN by BIOS. Suspend-to-RAM or hot-plug SATA power to unfreeze."
                 finalize_failed_job(job_id, f"security_set_password_failed: {err_msg}")
-                return
+                return False
         except Exception as e:
             finalize_failed_job(job_id, f"security_set_password_exception: {str(e)}")
-            return
+            return False
 
         # Capture erase time estimate from hdparm -I before starting erase
         try:
@@ -306,7 +339,7 @@ def run_erase_job(job_id):
         logger.info(f"prepare_erase_command result: ok={cmd_result.get('ok')}, error={cmd_result.get('error')}, interface_type={interface_type}, method={method}")
         if not cmd_result.get("ok"):
             finalize_failed_job(job_id, cmd_result.get("error") or "prepare_command_failed")
-            return
+            return False
         command = cmd_result["command"]
 
     start_time = datetime.now(timezone.utc)
@@ -333,7 +366,39 @@ def run_erase_job(job_id):
         if 'log_file' in locals() and not log_file.closed:
             log_file.close()
         finalize_failed_job(job_id, f"log_file_creation_failed: {str(e)}")
-        return
+        return False
+
+    ctx['command'] = command
+    ctx['active_log_path'] = active_log_path
+    ctx['erase_time_estimate_seconds'] = erase_time_estimate_seconds
+    ctx['start_time'] = start_time
+    ctx['log_file'] = log_file
+    ctx['initial_sectors'] = initial_sectors
+    ctx['last_sectors'] = last_sectors
+    ctx['last_progress_time'] = last_progress_time
+    ctx['speed_samples'] = speed_samples
+    ctx['logical_block_size'] = logical_block_size
+    return True
+
+def _execute_erase_subprocess(job_id, ctx):
+    """Spawn erase subprocess, monitor progress, handle interruption/timeout.
+    Returns execution dict on completion, or None on failure (finalizes internally)."""
+    job = ctx['job']
+    device = ctx['device']
+    interface_type = ctx['interface_type']
+    method = ctx['method']
+    capacity_bytes = ctx['capacity_bytes']
+    command = ctx['command']
+    active_log_path = ctx['active_log_path']
+    log_file = ctx['log_file']
+    start_time = ctx['start_time']
+    initial_sectors = ctx['initial_sectors']
+    last_sectors = ctx['last_sectors']
+    last_progress_time = ctx['last_progress_time']
+    speed_samples = ctx['speed_samples']
+    logical_block_size = ctx['logical_block_size']
+    _job_generation = ctx['generation']
+    erase_time_estimate_seconds = ctx['erase_time_estimate_seconds']
 
     process = None
     try:
@@ -354,7 +419,7 @@ def run_erase_job(job_id):
         except Exception:
             pass
         finalize_failed_job(job_id, f"process_spawn_failed:{str(e)}")
-        return
+        return None
 
     try:
         max_erase_seconds = _get_erase_timeout(method)
@@ -381,7 +446,7 @@ def run_erase_job(job_id):
                         persist_job(job)
                 if 'log_file' in locals() and not log_file.closed:
                     log_file.close()
-                return
+                return None
 
             elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
 
@@ -401,7 +466,7 @@ def run_erase_job(job_id):
                 if 'log_file' in locals() and not log_file.closed:
                     log_file.close()
                 finalize_failed_job(job_id, f"erase_timeout: exceeded {max_erase_seconds}s (method={method})")
-                return
+                return None
 
             progress = 0.0
             phase = "Sanitizing Drive..."
@@ -414,7 +479,7 @@ def run_erase_job(job_id):
                     delta_sectors = max(0, current_sectors - initial_sectors)
                     wrote_bytes = delta_sectors * logical_block_size
                     progress = min(99.9, (wrote_bytes / capacity_bytes) * 100)
-                    
+
                     # Calculate ETA based on write speed (rolling average for stability)
                     eta_text = ""
                     if last_sectors is not None and last_progress_time is not None and elapsed > 5:
@@ -440,7 +505,7 @@ def run_erase_job(job_id):
                                 else:
                                     eta_hours = eta_minutes / 60
                                     eta_text = f" - ~{eta_hours:.1f} hr remaining"
-                    
+
                     phase = f"Writing zeroes ({progress:.1f}%){eta_text}"
                     last_sectors = current_sectors
                     last_progress_time = datetime.now(timezone.utc)
@@ -526,138 +591,163 @@ def run_erase_job(job_id):
         "exit_code": exit_code
     }
 
-    if method in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
-        logger.info(f"Starting firmware polling: method={method}, interface_type={interface_type}, device={device}")
-        firmware_complete = False
-        poll_start_time = datetime.now(timezone.utc)
-        # Use erase command start time for progress calculation, not polling start time
-        erase_start_time = start_time
-        max_poll_seconds = 1200 if method == "crypto" else 7200
-        
-        time.sleep(5)
-        
-        consecutive_errors = 0
-        max_consecutive_errors = 15
+    ctx['execution'] = execution
+    return execution
 
-        while not firmware_complete:
-            # High #14: Check for job interruption during firmware polling
-            if _check_job_interrupted(_job_generation):
-                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) interrupted during firmware polling")
-                with ERASE_JOBS_LOCK:
-                    job = ERASE_JOBS.get(job_id)
-                    if job:
-                        job["status"] = "interrupted"
-                        job["finished_at"] = datetime.now(timezone.utc).isoformat()
-                        job["error"] = "Job interrupted by signal during firmware polling"
-                        job["current_phase"] = "Interrupted"
-                        persist_job(job)
-                return
+def _poll_firmware_completion(job_id, ctx):
+    """Poll firmware sanitization status for crypto/block/secure_erase methods.
+    Skips for overwrite method. Returns True if complete, False if failed (finalizes internally)."""
+    job = ctx['job']
+    device = ctx['device']
+    interface_type = ctx['interface_type']
+    method = ctx['method']
+    start_time = ctx['start_time']
+    _job_generation = ctx['generation']
+    erase_time_estimate_seconds = ctx['erase_time_estimate_seconds']
 
-            elapsed_poll = (datetime.now(timezone.utc) - poll_start_time).total_seconds()
-            if elapsed_poll > max_poll_seconds:
-                logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) firmware polling timed out after {max_poll_seconds}s")
-                finalize_failed_job(job_id, f"firmware_polling_timeout: exceeded {max_poll_seconds}s")
-                return
-                
-            status_report = None
-            progress_pct = 0.0
-            phase_text = "Sanitizing in background..."
-            
-            if interface_type == "sata":
-                if method in {"secure_erase", "enhanced_secure_erase"}:
-                    # ATA secure erase doesn't have sanitize-status, check if security is disabled
-                    status_report = verify_sata_secure_erase(device, method)
-                else:
-                    status_report = verify_sata_sanitize(device, method)
-            elif interface_type == "nvme":
-                logger.info(f"Polling NVMe firmware: device={device}, method={method}")
-                status_report = verify_nvme_sanitize(device, method)
-                logger.info(f"NVMe firmware poll result: ok={status_report.get('ok')}, error={status_report.get('error')}")
-            elif interface_type == "sas":
-                status_report = verify_sas_block(device, method)
-                
-            if status_report:
-                if status_report.get("ok"):
-                    firmware_complete = True
-                    progress_pct = 100.0
-                    phase_text = "Sanitization completed"
-                    consecutive_errors = 0
-                elif status_report.get("error") in {"sata_sanitize_still_in_progress", "sata_security_still_enabled", "nvme_sanitize_still_in_progress", "sas_sanitize_still_in_progress"}:
-                    firmware_complete = False
-                    consecutive_errors = 0
-                    parsed_pct = None
-                    details = status_report.get("details") or {}
-                    output_str = str(details.get("output") or "").lower()
-                    
-                    if "progress:" in output_str:
-                        match = re.search(r"progress:\s*(0x[0-9a-fA-F]+|\d+)\s*\(([0-9.]+)%\)", output_str)
-                        if match:
-                            parsed_pct = float(match.group(2))
+    if method not in {"crypto", "block", "secure_erase", "enhanced_secure_erase"}:
+        return True
 
-                    # Use shared helper for NVMe sprog and SAS poll progress
-                    sprog_val = details.get("sprog") if interface_type == "nvme" else None
-                    fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device, sprog_val=sprog_val, parsed_pct=parsed_pct)
-                    if fw_progress is not None:
-                        progress_pct = fw_progress
-                        phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
+    logger.info(f"Starting firmware polling: method={method}, interface_type={interface_type}, device={device}")
+    firmware_complete = False
+    poll_start_time = datetime.now(timezone.utc)
+    # Use erase command start time for progress calculation, not polling start time
+    erase_start_time = start_time
+    max_poll_seconds = 1200 if method == "crypto" else 7200
 
-                    if fw_progress is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
-                        # ATA secure erase doesn't provide progress, use time-based estimate
-                        # Use total elapsed time from erase command start, not just polling start
-                        total_elapsed = (datetime.now(timezone.utc) - erase_start_time).total_seconds()
-                        if erase_time_estimate_seconds and erase_time_estimate_seconds > 0:
-                            progress_pct = min(99.9, (total_elapsed / erase_time_estimate_seconds) * 100)
-                            if total_elapsed > erase_time_estimate_seconds:
-                                phase_text = f"Verifying completion (taking longer than estimated {erase_time_estimate_seconds/60:.0f} min)"
-                            else:
-                                phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
-                        else:
-                            # No estimate available, use generic fallback (15 minutes)
-                            fallback_timeout = 900.0
-                            progress_pct = min(99.9, (total_elapsed / fallback_timeout) * 100.0)
-                            phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
-                else:
-                    consecutive_errors += 1
-                    if consecutive_errors >= max_consecutive_errors:
-                        break
-                    phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
-                    fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
-                    progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
-            elif status_report is None:
-                # No status report for this interface type (e.g., scsi)
-                logger.warning(f"No status report for interface_type={interface_type} during firmware polling for {device}")
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    break
-                phase_text = f"Polling drive (no status report... {consecutive_errors}/{max_consecutive_errors})"
-            else:
-                # Unknown error - log details and increment error counter
-                logger.warning(f"Unexpected verification error during firmware polling for {device}: {status_report.get('error')}, details: {status_report.get('details')}")
-                consecutive_errors += 1
-                if consecutive_errors >= max_consecutive_errors:
-                    break
-                phase_text = f"Polling drive (verification error... {consecutive_errors}/{max_consecutive_errors})"
-                fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
-                progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
-                
+    time.sleep(5)
+
+    consecutive_errors = 0
+    max_consecutive_errors = 15
+
+    while not firmware_complete:
+        # High #14: Check for job interruption during firmware polling
+        if _check_job_interrupted(_job_generation):
+            logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) interrupted during firmware polling")
             with ERASE_JOBS_LOCK:
                 job = ERASE_JOBS.get(job_id)
                 if job:
-                    job["progress_percent"] = round(progress_pct, 1)
-                    job["current_phase"] = phase_text
-                    total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
-                    job["elapsed_seconds"] = round(total_elapsed_fw, 0)
+                    job["status"] = "interrupted"
+                    job["finished_at"] = datetime.now(timezone.utc).isoformat()
+                    job["error"] = "Job interrupted by signal during firmware polling"
+                    job["current_phase"] = "Interrupted"
+                    persist_job(job)
+            return False
 
-            time.sleep(4)
+        elapsed_poll = (datetime.now(timezone.utc) - poll_start_time).total_seconds()
+        if elapsed_poll > max_poll_seconds:
+            logger.warning(f"Job {job_id} (Bay {job['request']['bay']}) firmware polling timed out after {max_poll_seconds}s")
+            finalize_failed_job(job_id, f"firmware_polling_timeout: exceeded {max_poll_seconds}s")
+            return False
 
-    if method in {"overwrite", "crypto", "block", "secure_erase", "enhanced_secure_erase"}:
+        status_report = None
+        progress_pct = 0.0
+        phase_text = "Sanitizing in background..."
+
+        if interface_type == "sata":
+            if method in {"secure_erase", "enhanced_secure_erase"}:
+                # ATA secure erase doesn't have sanitize-status, check if security is disabled
+                status_report = verify_sata_secure_erase(device, method)
+            else:
+                status_report = verify_sata_sanitize(device, method)
+        elif interface_type == "nvme":
+            logger.info(f"Polling NVMe firmware: device={device}, method={method}")
+            status_report = verify_nvme_sanitize(device, method)
+            logger.info(f"NVMe firmware poll result: ok={status_report.get('ok')}, error={status_report.get('error')}")
+        elif interface_type == "sas":
+            status_report = verify_sas_block(device, method)
+
+        if status_report:
+            if status_report.get("ok"):
+                firmware_complete = True
+                progress_pct = 100.0
+                phase_text = "Sanitization completed"
+                consecutive_errors = 0
+            elif status_report.get("error") in {"sata_sanitize_still_in_progress", "sata_security_still_enabled", "nvme_sanitize_still_in_progress", "sas_sanitize_still_in_progress"}:
+                firmware_complete = False
+                consecutive_errors = 0
+                parsed_pct = None
+                details = status_report.get("details") or {}
+                output_str = str(details.get("output") or "").lower()
+
+                if "progress:" in output_str:
+                    match = re.search(r"progress:\s*(0x[0-9a-fA-F]+|\d+)\s*\(([0-9.]+)%\)", output_str)
+                    if match:
+                        parsed_pct = float(match.group(2))
+
+                # Use shared helper for NVMe sprog and SAS poll progress
+                sprog_val = details.get("sprog") if interface_type == "nvme" else None
+                fw_progress, fw_phase = calculate_firmware_progress(interface_type, method, device, sprog_val=sprog_val, parsed_pct=parsed_pct)
+                if fw_progress is not None:
+                    progress_pct = fw_progress
+                    phase_text = f"Firmware sanitizing in progress ({progress_pct:.1f}%)"
+
+                if fw_progress is None and interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
+                    # ATA secure erase doesn't provide progress, use time-based estimate
+                    # Use total elapsed time from erase command start, not just polling start
+                    total_elapsed = (datetime.now(timezone.utc) - erase_start_time).total_seconds()
+                    if erase_time_estimate_seconds and erase_time_estimate_seconds > 0:
+                        progress_pct = min(99.9, (total_elapsed / erase_time_estimate_seconds) * 100)
+                        if total_elapsed > erase_time_estimate_seconds:
+                            phase_text = f"Verifying completion (taking longer than estimated {erase_time_estimate_seconds/60:.0f} min)"
+                        else:
+                            phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
+                    else:
+                        # No estimate available, use generic fallback (15 minutes)
+                        fallback_timeout = 900.0
+                        progress_pct = min(99.9, (total_elapsed / fallback_timeout) * 100.0)
+                        phase_text = f"Secure erase in progress ({progress_pct:.1f}%)"
+            else:
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    break
+                phase_text = f"Polling drive (reconnecting... {consecutive_errors}/{max_consecutive_errors})"
+                fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
+                progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
+        elif status_report is None:
+            # No status report for this interface type (e.g., scsi)
+            logger.warning(f"No status report for interface_type={interface_type} during firmware polling for {device}")
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                break
+            phase_text = f"Polling drive (no status report... {consecutive_errors}/{max_consecutive_errors})"
+        else:
+            # Unknown error - log details and increment error counter
+            logger.warning(f"Unexpected verification error during firmware polling for {device}: {status_report.get('error')}, details: {status_report.get('details')}")
+            consecutive_errors += 1
+            if consecutive_errors >= max_consecutive_errors:
+                break
+            phase_text = f"Polling drive (verification error... {consecutive_errors}/{max_consecutive_errors})"
+            fallback_timeout = 30.0 if method == "crypto" else (900.0 if method in {"secure_erase", "enhanced_secure_erase"} else 300.0)
+            progress_pct = min(99.9, (elapsed_poll / fallback_timeout) * 100.0)
+
+        with ERASE_JOBS_LOCK:
+            job = ERASE_JOBS.get(job_id)
+            if job:
+                job["progress_percent"] = round(progress_pct, 1)
+                job["current_phase"] = phase_text
+                total_elapsed_fw = (datetime.now(timezone.utc) - start_time).total_seconds()
+                job["elapsed_seconds"] = round(total_elapsed_fw, 0)
+
+        time.sleep(4)
+
+    if not firmware_complete:
+        finalize_failed_job(job_id, f"firmware_polling_failed: max consecutive errors ({max_consecutive_errors}) reached")
+        return False
+
+    return True
+
+def _verify_sanitization(job_id, ctx, execution):
+    """Verify sanitization by re-reading job state inside lock and calling verification_for_method.
+    Returns verification dict, or None if job was deleted."""
+    if ctx['method'] in {"overwrite", "crypto", "block", "secure_erase", "enhanced_secure_erase"}:
         time.sleep(5)
 
     # Get before_state for crypto verification (inside lock to avoid race condition)
     with ERASE_JOBS_LOCK:
         job = ERASE_JOBS.get(job_id)
         if not job:
-            return
+            return None
         before_state = job.get("verification_state", {}).get("before")
         # Copy job fields needed for verification to avoid race condition after lock release
         device = job["request"]["device"]
@@ -694,6 +784,14 @@ def run_erase_job(job_id):
         sample_ratio=sample_ratio,
         progress_callback=_verification_progress_callback
     )
+
+    return verification
+
+def _finalize_job(job_id, ctx, execution, verification):
+    """Finalize job: success path (SMART diff, marker, certificate) or failure path (error log, diagnostics).
+    Persists job inside lock, then invalidates cache / sends slack / purges logs outside lock."""
+    device = ctx['device']
+    active_log_path = ctx['active_log_path']
 
     with ERASE_JOBS_LOCK:
         job = ERASE_JOBS.get(job_id)
@@ -777,20 +875,20 @@ def run_erase_job(job_id):
             else:
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) verified successfully. Post-erase marker disabled by policy, skipping marker write.")
                 job["marker"] = {"ok": True, "status": "disabled_by_policy", "error": None, "details": {}}
-            
+
             try:
                 os.remove(active_log_path)
             except FileNotFoundError:
                 pass
             except Exception as e:
                 logger.warning(f"Failed to remove active log: {e}")
-                    
+
             try:
                 job["current_phase"] = "Generating certificate..."
                 job["certificate"] = build_certificate(job)
                 job["status"] = "completed"
                 job["error"] = None
-                
+
                 # High-signal application events of ultimate success
                 logger.info(f"Job {job_id} (Bay {job['request']['bay']}) COMPLETED. Certificate generated, audit record finalized.")
             except Exception as e:
@@ -854,5 +952,31 @@ def run_erase_job(job_id):
         purge_old_logs(_retention)
     except Exception as e:
         logger.warning(f"Failed to purge old logs: {e}")
+
+def run_erase_job(job_id):
+    ctx = _init_job(job_id)
+    if ctx is None:
+        return
+
+    if not _check_health_gate(job_id, ctx):
+        return
+
+    _capture_pre_wipe_state(job_id, ctx)
+
+    if not _prepare_erase_command(job_id, ctx):
+        return
+
+    execution = _execute_erase_subprocess(job_id, ctx)
+    if execution is None:
+        return
+
+    if not _poll_firmware_completion(job_id, ctx):
+        return
+
+    verification = _verify_sanitization(job_id, ctx, execution)
+    if verification is None:
+        return
+
+    _finalize_job(job_id, ctx, execution, verification)
 
 # --- END OF FILE backend/job_management.py ---

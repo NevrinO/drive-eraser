@@ -7,7 +7,12 @@ import signal
 import threading
 import ipaddress
 from flask import jsonify
-from app_config import app, logger, get_config_dir, load_policy, socketio
+from app_config import init_app, logger, get_config_dir, load_policy
+
+# Initialize Flask app, SocketIO, Limiter, CORS, and logging before importing app/socketio.
+# init_app() is idempotent — safe if already called (e.g., by conftest in tests).
+init_app()
+from app_config import app, socketio
 from routes import register_blueprints
 
 # Register route blueprints (deferred to break circular imports)
