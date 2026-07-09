@@ -16,6 +16,174 @@ from routes._shared import require_admin_auth, is_valid_device_name, should_trus
 smart_bp = Blueprint('smart_routes', __name__)
 
 
+MAX_SMART_ATTRIBUTES = 100
+MAX_SELF_TEST_LOGS = 50
+MAX_DEVICE_STATISTICS_PAGES = 10
+MAX_SMART_JSON_SIZE_BYTES = 100000  # 100KB limit for nested JSON objects
+
+
+def _parse_ata_self_test_logs(raw_json, current_poh, historical_poh, max_logs=MAX_SELF_TEST_LOGS):
+    """Extract ATA/SATA self-test log entries with hour correction."""
+    logs = []
+    truncated = False
+    if "ata_smart_self_test_log" not in raw_json:
+        return logs, truncated
+    ata_self_test_log = raw_json["ata_smart_self_test_log"]
+    self_test_table = (ata_self_test_log.get("standard", {}).get("table", [])
+                       or ata_self_test_log.get("extended", {}).get("table", [])
+                       or ata_self_test_log.get("table", []))
+    for idx, test in enumerate(self_test_table[:max_logs]):
+        log_hours = test.get("hours") or test.get("lifetime_hours")
+        corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
+        remaining_raw = test.get("status", {}).get("remaining_percent", test.get("status", {}).get("remaining"))
+        remaining = None if remaining_raw == "null" or remaining_raw is None else remaining_raw
+        logs.append({
+            "type": test.get("type", {}).get("string"),
+            "status": test.get("status", {}).get("string"),
+            "passed": test.get("status", {}).get("passed"),
+            "remaining": remaining,
+            "lba": test.get("lba"),
+            "hours": log_hours,
+            "corrected_hours": corrected_hours,
+            "rollover_corrected": rollover_corrected,
+            "ambiguous": ambiguous,
+            "log_index": idx
+        })
+    if len(self_test_table) > max_logs:
+        truncated = True
+    return logs, truncated
+
+
+def _parse_nvme_self_test_logs(raw_json, max_logs=MAX_SELF_TEST_LOGS):
+    """Extract NVMe self-test log entries."""
+    logs = []
+    truncated = False
+    if "nvme_self_test_log" not in raw_json:
+        return logs, truncated
+    nvme_results = raw_json["nvme_self_test_log"].get("results", [])
+    for idx, test in enumerate(nvme_results[:max_logs]):
+        logs.append({
+            "type": test.get("self_test_num", "unknown"),
+            "status": test.get("result", {}).get("string", "unknown"),
+            "remaining": 0,
+            "lba": None,
+            "hours": None,
+            "corrected_hours": None,
+            "rollover_corrected": False,
+            "ambiguous": False,
+            "log_index": idx
+        })
+    if len(nvme_results) > max_logs:
+        truncated = True
+    return logs, truncated
+
+
+def _parse_sas_self_test_logs(raw_json, max_logs=MAX_SELF_TEST_LOGS):
+    """Extract SCSI/SAS self-test log entries (scsi_ie and scsi_self_test_N)."""
+    logs = []
+    truncated = False
+    if "scsi_ie" in raw_json:
+        scsi_ie = raw_json["scsi_ie"]
+        scsi_string = scsi_ie.get("string", "unknown")
+        logs.append({
+            "type": "scsi_ie",
+            "status": scsi_string,
+            "remaining": 0,
+            "lba": None,
+            "hours": None,
+            "corrected_hours": None,
+            "rollover_corrected": False,
+            "ambiguous": False,
+            "log_index": 0
+        })
+    sas_count = 0
+    for i in range(20):
+        test_key = f"scsi_self_test_{i}"
+        if test_key not in raw_json:
+            continue
+        if sas_count >= max_logs:
+            truncated = True
+            break
+        sas_count += 1
+        test_data = raw_json[test_key]
+        test_code = test_data.get("code", {}).get("string", "unknown")
+        test_result = test_data.get("result", {}).get("string", "unknown")
+        test_hours = test_data.get("power_on_time", {}).get("hours")
+        result_value = test_data.get("result", {}).get("value")
+        passed = result_value == 0
+        logs.append({
+            "type": test_code,
+            "status": test_result,
+            "passed": passed,
+            "remaining": 0,
+            "lba": None,
+            "hours": test_hours,
+            "corrected_hours": test_hours,
+            "rollover_corrected": False,
+            "ambiguous": False,
+            "log_index": i
+        })
+    return logs, truncated
+
+
+def _extract_device_statistics(raw_json, max_pages=MAX_DEVICE_STATISTICS_PAGES):
+    """Extract ATA device statistics pages with size limits."""
+    stats = []
+    truncated = False
+    if "ata_device_statistics" not in raw_json:
+        return stats, truncated
+    pages = raw_json["ata_device_statistics"].get("pages", [])
+    if not pages or not isinstance(pages, list):
+        return stats, truncated
+    for page in pages[:max_pages]:
+        page_data = {"number": page.get("number"), "table": []}
+        page_table = page.get("table", [])
+        if page_table and isinstance(page_table, list):
+            for item in page_table:
+                page_data["table"].append({
+                    "name": item.get("name"),
+                    "value": item.get("value"),
+                    "offset": item.get("offset")
+                })
+        stats.append(page_data)
+    if len(pages) > max_pages:
+        truncated = True
+    return stats, truncated
+
+
+def _extract_sas_specific(raw_json, max_json_bytes=MAX_SMART_JSON_SIZE_BYTES):
+    """Extract SAS-specific logs with size limiting."""
+    if "scsi_grown_defect_list" not in raw_json and "scsi_error_counter_log" not in raw_json:
+        return None, False
+    sas_data = {
+        "grown_defect_list": raw_json.get("scsi_grown_defect_list"),
+        "background_scan_log": raw_json.get("scsi_background_scan_log") or raw_json.get("scsi_background_scan"),
+        "error_counter_log": raw_json.get("scsi_error_counter_log"),
+        "non_medium_errors": raw_json.get("scsi_non_medium_error_count"),
+        "start_stop_cycle_counter": raw_json.get("scsi_start_stop_cycle_counter"),
+        "sas_port_0": raw_json.get("scsi_sas_port_0"),
+        "sas_port_1": raw_json.get("scsi_sas_port_1")
+    }
+    sas_json = json.dumps(sas_data)
+    if len(sas_json.encode('utf-8')) <= max_json_bytes:
+        return sas_data, False
+    return {"truncated": True, "reason": "exceeded_size_limit"}, True
+
+
+def _extract_nvme_specific(raw_json, max_json_bytes=MAX_SMART_JSON_SIZE_BYTES):
+    """Extract NVMe-specific logs with size limiting."""
+    if "nvme_smart_health_information_log" not in raw_json:
+        return None, False
+    nvme_data = {
+        "health_log": raw_json.get("nvme_smart_health_information_log"),
+        "error_log": raw_json.get("nvme_error_log")
+    }
+    nvme_json = json.dumps(nvme_data)
+    if len(nvme_json.encode('utf-8')) <= max_json_bytes:
+        return nvme_data, False
+    return {"truncated": True, "reason": "exceeded_size_limit"}, True
+
+
 @smart_bp.route("/api/admin/drives/<device>/smart-export")
 @limiter.limit("30 per minute")
 def export_smart_data(device):
@@ -109,37 +277,30 @@ def get_smart_details(device):
     Returns structured attributes, error logs, self-test logs, and protocol-specific logs.
     """
     try:
-        # Validate device name (lesson #9)
         if not is_valid_device_name(device):
             return jsonify({"error": "Invalid device name"}), 400
         
-        # Build device path
         device_path = f"/dev/{device}"
         
-        # Import smart_parsing to get SMART data
         from smart_parsing import get_smart_data
         from database import get_smart_test_history
         
-        # Get SMART data as dictionary
         smart_data = get_smart_data(device_path)
         
         if not smart_data or not smart_data.get("raw"):
             return jsonify({"error": "Failed to retrieve SMART data"}), 500
         
-        # Parse the raw JSON output
         try:
             raw_json = json.loads(smart_data["raw"])
         except json.JSONDecodeError:
             return jsonify({"error": "Failed to parse SMART data"}), 500
         
-        # Get database audit history for this device
         try:
             audit_history = get_smart_test_history(device=device_path, limit=10)
         except Exception as e:
             logger.warning(f"Failed to get SMART test history for {device}: {e}")
             audit_history = []
         
-        # Extract structured data with size limits (lesson #9: DoS prevention)
         result = {
             "attributes": [],
             "error_logs": None,
@@ -150,15 +311,9 @@ def get_smart_details(device):
             "truncated": False
         }
         
-        # Size limits for DoS prevention
-        MAX_ATTRIBUTES = 100
-        MAX_SELF_TEST_LOGS = 50
-        MAX_DEVICE_STATISTICS_PAGES = 10
-        MAX_JSON_SIZE_BYTES = 100000  # 100KB limit for nested JSON objects
-        
-        # ATA attributes table (limited to MAX_ATTRIBUTES)
+        # ATA attributes table
         ata_attrs = raw_json.get("ata_smart_attributes", {}).get("table", [])
-        for attr in ata_attrs[:MAX_ATTRIBUTES]:
+        for attr in ata_attrs[:MAX_SMART_ATTRIBUTES]:
             result["attributes"].append({
                 "id": attr.get("id"),
                 "name": attr.get("name"),
@@ -168,27 +323,22 @@ def get_smart_details(device):
                 "raw": attr.get("raw", {}).get("value"),
                 "flags": attr.get("flags")
             })
-        if len(ata_attrs) > MAX_ATTRIBUTES:
+        if len(ata_attrs) > MAX_SMART_ATTRIBUTES:
             result["truncated"] = True
         
         # Error logs (size-limited)
         if "ata_smart_error_log" in raw_json:
             error_log_json = json.dumps(raw_json["ata_smart_error_log"])
-            if len(error_log_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
+            if len(error_log_json.encode('utf-8')) <= MAX_SMART_JSON_SIZE_BYTES:
                 result["error_logs"] = raw_json["ata_smart_error_log"]
             else:
                 result["error_logs"] = {"truncated": True, "reason": "exceeded_size_limit"}
                 result["truncated"] = True
         
-        # Self-test logs (limited to MAX_SELF_TEST_LOGS)
-        # SMART self-test log hours use 16-bit counters (max 65,535).
-        # For drives with >65,535 power-on hours, log hours will have rolled over.
-        # We use database history and current POH to determine correct hours.
-        # If ambiguous (no history, low hours on high-hour drive), flag for calibration test.
+        # Self-test logs — dispatch by protocol
         current_poh = smart_data.get("power_on_hours")
         serial = smart_data.get("serial")
         
-        # Get historical POH from database for this serial
         historical_poh = None
         if serial:
             try:
@@ -197,174 +347,51 @@ def get_smart_details(device):
             except Exception as e:
                 logger.warning(f"Failed to get historical POH for {serial}: {e}")
         
-        # Handle ATA/SATA self-test logs
         if "ata_smart_self_test_log" in raw_json:
-            ata_self_test_log = raw_json["ata_smart_self_test_log"]
-            # smartctl JSON nests the table under "standard" (for -l selftest) or "extended" (for -x/-l xselftest)
-            self_test_table = (ata_self_test_log.get("standard", {}).get("table", [])
-                               or ata_self_test_log.get("extended", {}).get("table", [])
-                               or ata_self_test_log.get("table", []))
-            logger.debug(f"Device {device}: Found {len(self_test_table)} ATA self-test log entries")
-            for idx, test in enumerate(self_test_table[:MAX_SELF_TEST_LOGS]):
-                log_hours = test.get("hours") or test.get("lifetime_hours")
-                corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
-                
-                # Handle remaining field: convert string "null" to actual None
-                remaining_raw = test.get("status", {}).get("remaining_percent", test.get("status", {}).get("remaining"))
-                remaining = None if remaining_raw == "null" or remaining_raw is None else remaining_raw
-
-                result["self_test_logs"].append({
-                    "type": test.get("type", {}).get("string"),
-                    "status": test.get("status", {}).get("string"),
-                    "passed": test.get("status", {}).get("passed"),
-                    "remaining": remaining,
-                    "lba": test.get("lba"),
-                    "hours": log_hours,
-                    "corrected_hours": corrected_hours,
-                    "rollover_corrected": rollover_corrected,
-                    "ambiguous": ambiguous,
-                    "log_index": idx
-                })
-            if len(self_test_table) > MAX_SELF_TEST_LOGS:
+            logs, truncated = _parse_ata_self_test_logs(raw_json, current_poh, historical_poh)
+            result["self_test_logs"].extend(logs)
+            if truncated:
                 result["truncated"] = True
-        
-        # Handle NVMe self-test logs
+            logger.debug(f"Device {device}: Found {len(logs)} ATA self-test log entries")
         elif "nvme_self_test_log" in raw_json:
-            nvme_results = raw_json["nvme_self_test_log"].get("results", [])
-            logger.debug(f"Device {device}: Found {len(nvme_results)} NVMe self-test log entries")
-            for idx, test in enumerate(nvme_results[:MAX_SELF_TEST_LOGS]):
-                result["self_test_logs"].append({
-                    "type": test.get("self_test_num", "unknown"),
-                    "status": test.get("result", {}).get("string", "unknown"),
-                    "remaining": 0,
-                    "lba": None,
-                    "hours": None,
-                    "corrected_hours": None,
-                    "rollover_corrected": False,
-                    "ambiguous": False,
-                    "log_index": idx
-                })
-            if len(nvme_results) > MAX_SELF_TEST_LOGS:
+            logs, truncated = _parse_nvme_self_test_logs(raw_json)
+            result["self_test_logs"].extend(logs)
+            if truncated:
                 result["truncated"] = True
+            logger.debug(f"Device {device}: Found {len(logs)} NVMe self-test log entries")
+        else:
+            logs, truncated = _parse_sas_self_test_logs(raw_json)
+            result["self_test_logs"].extend(logs)
+            if truncated:
+                result["truncated"] = True
+            if logs:
+                logger.debug(f"Device {device}: Found {len(logs)} SAS self-test log entries")
+            elif "scsi_ie" not in raw_json:
+                logger.debug(f"Device {device}: No self-test log found in SMART data")
         
-        # Handle SCSI/SAS self-test logs (via SCSI Informational Exceptions or scsi_self_test_N)
-        elif "scsi_ie" in raw_json:
-            scsi_ie = raw_json["scsi_ie"]
-            scsi_string = scsi_ie.get("string", "unknown")
-            logger.debug(f"Device {device}: Found SCSI IE log: {scsi_string}")
-            
-            # SAS doesn't have a traditional self-test log like ATA, but we can show the IE status
-            result["self_test_logs"].append({
-                "type": "scsi_ie",
-                "status": scsi_string,
-                "remaining": 0,
-                "lba": None,
-                "hours": None,
-                "corrected_hours": None,
-                "rollover_corrected": False,
-                "ambiguous": False,
-                "log_index": 0
-            })
-        
-        # Handle SAS self-test logs (scsi_self_test_0, scsi_self_test_1, etc.)
-        # Some SAS drives report self-tests in this format instead of scsi_ie
-        sas_self_test_count = 0
-        for i in range(20):  # Check for scsi_self_test_0 through scsi_self_test_19
-            test_key = f"scsi_self_test_{i}"
-            if test_key in raw_json:
-                # Stop processing if we've reached the limit
-                if sas_self_test_count >= MAX_SELF_TEST_LOGS:
-                    result["truncated"] = True
-                    break
-                
-                sas_self_test_count += 1
-                test_data = raw_json[test_key]
-                test_code = test_data.get("code", {}).get("string", "unknown")
-                test_result = test_data.get("result", {}).get("string", "unknown")
-                test_hours = test_data.get("power_on_time", {}).get("hours")
-                
-                # Determine if test passed (result value 0 = completed successfully)
-                result_value = test_data.get("result", {}).get("value")
-                passed = result_value == 0
-                
-                result["self_test_logs"].append({
-                    "type": test_code,
-                    "status": test_result,
-                    "passed": passed,
-                    "remaining": 0,
-                    "lba": None,
-                    "hours": test_hours,
-                    "corrected_hours": test_hours,  # SAS hours don't rollover like ATA
-                    "rollover_corrected": False,
-                    "ambiguous": False,
-                    "log_index": i
-                })
-        
-        if sas_self_test_count > 0:
-            logger.debug(f"Device {device}: Found {sas_self_test_count} SAS self-test log entries")
-        elif "scsi_ie" not in raw_json:
-            logger.debug(f"Device {device}: No self-test log found in SMART data (checked ata_smart_self_test_log, nvme_self_test_log, scsi_ie, scsi_self_test_N)")
-        
-        # Include current POH for context
         result["current_power_on_hours"] = current_poh
-        
-        # Include serial and interface_type so frontend can refresh without losing context
         result["serial"] = serial
         result["interface_type"] = smart_data.get("interface_type")
-        
-        # Include database audit history
         result["audit_history"] = audit_history
         
-        # Device statistics (GP Log 0x04, limited to MAX_DEVICE_STATISTICS_PAGES)
-        if "ata_device_statistics" in raw_json:
-            pages = raw_json["ata_device_statistics"].get("pages", [])
-            if pages and isinstance(pages, list):
-                for page in pages[:MAX_DEVICE_STATISTICS_PAGES]:
-                    page_data = {
-                        "number": page.get("number"),
-                        "table": []
-                    }
-                    page_table = page.get("table", [])
-                    if page_table and isinstance(page_table, list):
-                        for item in page_table:
-                            page_data["table"].append({
-                                "name": item.get("name"),
-                                "value": item.get("value"),
-                                "offset": item.get("offset")
-                            })
-                    result["device_statistics"].append(page_data)
-                if len(pages) > MAX_DEVICE_STATISTICS_PAGES:
-                    result["truncated"] = True
+        # Device statistics
+        stats, truncated = _extract_device_statistics(raw_json)
+        result["device_statistics"] = stats
+        if truncated:
+            result["truncated"] = True
         
-        # SAS-specific logs (size-limited)
-        if "scsi_grown_defect_list" in raw_json or "scsi_error_counter_log" in raw_json:
-            sas_data = {
-                "grown_defect_list": raw_json.get("scsi_grown_defect_list"),
-                "background_scan_log": raw_json.get("scsi_background_scan_log") or raw_json.get("scsi_background_scan"),
-                "error_counter_log": raw_json.get("scsi_error_counter_log"),
-                "non_medium_errors": raw_json.get("scsi_non_medium_error_count"),
-                "start_stop_cycle_counter": raw_json.get("scsi_start_stop_cycle_counter"),
-                "sas_port_0": raw_json.get("scsi_sas_port_0"),
-                "sas_port_1": raw_json.get("scsi_sas_port_1")
-            }
-            sas_json = json.dumps(sas_data)
-            if len(sas_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
-                result["sas_specific"] = sas_data
-            else:
-                result["sas_specific"] = {"truncated": True, "reason": "exceeded_size_limit"}
+        # SAS-specific logs
+        sas_specific, truncated = _extract_sas_specific(raw_json)
+        if sas_specific is not None:
+            result["sas_specific"] = sas_specific
+            if truncated:
                 result["truncated"] = True
         
-        # NVMe-specific logs (size-limited)
-        if "nvme_smart_health_information_log" in raw_json:
-            nvme_data = {
-                "health_log": raw_json.get("nvme_smart_health_information_log"),
-                "error_log": raw_json.get("nvme_error_log")
-            }
-            nvme_json = json.dumps(nvme_data)
-            if len(nvme_json.encode('utf-8')) <= MAX_JSON_SIZE_BYTES:
-                result["nvme_specific"] = nvme_data
-            else:
-                result["nvme_specific"] = {"truncated": True, "reason": "exceeded_size_limit"}
+        # NVMe-specific logs
+        nvme_specific, truncated = _extract_nvme_specific(raw_json)
+        if nvme_specific is not None:
+            result["nvme_specific"] = nvme_specific
+            if truncated:
                 result["truncated"] = True
         
         return jsonify(result), 200

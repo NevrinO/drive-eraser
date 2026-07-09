@@ -236,6 +236,7 @@ function _renderSkeletonLegacy(bayEntries) {
   }
 
   baysGrid.innerHTML = gridHtml;
+  baysGrid.style.display = 'block';
   applyDynamicStyles(baysGrid);
 }
 
@@ -412,7 +413,7 @@ function renderBaysByEnclosure(drives) {
   }
 
   baysGrid.innerHTML = gridHtml;
-  baysGrid.style.display = 'block';
+  baysGrid.style.display = 'grid';
   applyDynamicStyles(baysGrid);
 }
 
@@ -491,6 +492,7 @@ function renderBaysLegacy(drives) {
   }
 
   baysGrid.innerHTML = gridHtml;
+  baysGrid.style.display = 'grid';
   applyDynamicStyles(baysGrid);
 }
 

@@ -99,7 +99,8 @@ class TestScanPciControllers:
 
     def test_scan_with_cache(self):
         """Test that cache is used when enabled."""
-        from device_discovery import scan_pci_controllers, _PCI_CACHE
+        from device_discovery import scan_pci_controllers
+        from pci_controllers import _PCI_CACHE
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
@@ -161,7 +162,8 @@ class TestScanPciControllers:
 
     def test_cache_expiration(self):
         """Test that cache expires after TTL."""
-        from device_discovery import scan_pci_controllers, _PCI_CACHE_TTL, _PCI_CACHE
+        from device_discovery import scan_pci_controllers
+        from pci_controllers import _PCI_CACHE_TTL, _PCI_CACHE
         # Clear cache before test
         _PCI_CACHE['data'] = None
         _PCI_CACHE['timestamp'] = 0
@@ -181,32 +183,32 @@ class TestMapPciClassToType:
 
     def test_sata_controller(self):
         """Test SATA controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0106') == 'sata'
 
     def test_sas_controller(self):
         """Test SAS controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0107') == 'sas'
 
     def test_nvme_controller(self):
         """Test NVMe controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0108') == 'nvme'
 
     def test_raid_controller(self):
         """Test RAID controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0104') == 'raid'
 
     def test_scsi_controller(self):
         """Test SCSI controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('0100') == 'scsi'
 
     def test_unknown_controller(self):
         """Test unknown controller mapping."""
-        from device_discovery import _map_pci_class_to_type
+        from pci_controllers import _map_pci_class_to_type
         assert _map_pci_class_to_type('9999') == 'unknown'
 
 
@@ -313,7 +315,8 @@ class TestDiscoverControllersAndDevices:
 
     def test_handles_missing_controller(self):
         """Test that devices without controller are added to unknown."""
-        from device_discovery import discover_controllers_and_devices, _DISCOVERY_CACHE
+        from device_discovery import discover_controllers_and_devices
+        from pci_controllers import _DISCOVERY_CACHE
         # Clear cache before test
         _DISCOVERY_CACHE['data'] = None
         _DISCOVERY_CACHE['timestamp'] = 0
@@ -471,7 +474,8 @@ class TestGetMaxSlotFromEnclosure:
 
     def test_cache_usage(self):
         """Test that cache is used when enabled."""
-        from device_discovery import get_max_slot_from_enclosure, _ENCLOSURE_CACHE
+        from device_discovery import get_max_slot_from_enclosure
+        from enclosure_discovery import _ENCLOSURE_CACHE
         # Clear cache before test for isolation
         _ENCLOSURE_CACHE['data'] = None
         _ENCLOSURE_CACHE['timestamp'] = 0
@@ -525,7 +529,8 @@ class TestGetScsiHostSlotProjections:
 
     def test_filters_enclosure_devices(self):
         """Test that enclosure devices are filtered."""
-        from device_discovery import get_scsi_host_slot_projections, _SCSI_PROJECTIONS_CACHE
+        from device_discovery import get_scsi_host_slot_projections
+        from slot_mapping import _SCSI_PROJECTIONS_CACHE
         # Clear cache to ensure fresh data
         _SCSI_PROJECTIONS_CACHE['data'] = None
         _SCSI_PROJECTIONS_CACHE['timestamp'] = 0
@@ -562,7 +567,8 @@ class TestGetScsiHostSlotProjections:
 
     def test_detects_occupied_slots(self):
         """Test that occupied slots are detected."""
-        from device_discovery import get_scsi_host_slot_projections, _SCSI_PROJECTIONS_CACHE
+        from device_discovery import get_scsi_host_slot_projections
+        from slot_mapping import _SCSI_PROJECTIONS_CACHE
         # Clear cache to ensure fresh data
         _SCSI_PROJECTIONS_CACHE['data'] = None
         _SCSI_PROJECTIONS_CACHE['timestamp'] = 0

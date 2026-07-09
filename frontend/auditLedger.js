@@ -243,7 +243,7 @@ if (historyList) historyList.addEventListener("click", async (event) => {
     const act = certButton.getAttribute("data-action");
     
     if (act === "print") {
-      openPrintWindow(id);
+      openCertPrintWindow(id, false);
     } else {
       triggerCertDownload(id, act);
     }
@@ -258,7 +258,7 @@ if (historyList) historyList.addEventListener("click", async (event) => {
     const action = bulkCertButton.getAttribute("data-action");
     
     if (action === "print") {
-      openBulkPrintWindow(friendlyId);
+      openCertPrintWindow(friendlyId, true);
     } else {
       triggerBulkCertDownload(friendlyId);
     }
@@ -403,28 +403,34 @@ function triggerBulkCertDownload(friendlyId) {
   anchor.click();
 }
 
-async function openPrintWindow(friendlyId) {
+async function openCertPrintWindow(friendlyId, isBulk = false) {
   const printWindow = window.open("", "_blank");
   if (!printWindow) {
     alert("Popup blocked! Enable popups to allow certificate printing.");
     return;
   }
 
+  const title = isBulk ? "Loading Bulk Certificate..." : "Loading Certificate...";
+  const heading = isBulk ? "Retrieving bulk compliance records..." : "Retrieving compliance record...";
+  const bodyText = isBulk ? "Fetching the bulk HTML certificate layout from the station." : "Fetching the HTML certificate layout from the station.";
+  const errorTitle = isBulk ? "Error Retrieving Bulk Certificate" : "Error Retrieving Certificate";
+  const url = `/api/certificates/${encodeURIComponent(friendlyId)}?format=html${isBulk ? "&bulk=true" : ""}`;
+
   printWindow.document.documentElement.innerHTML = `
     <!doctype html>
     <html lang="en">
-    <head><title>Loading Certificate...</title>
+    <head><title>${title}</title>
     <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
     </head>
     <body>
-      <h2>Retrieving compliance record...</h2>
-      <p>Fetching the HTML certificate layout from the station.</p>
+      <h2>${heading}</h2>
+      <p>${bodyText}</p>
     </body>
     </html>
   `;
 
   try {
-    const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html`);
+    const response = await safeFetch(url);
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
@@ -437,53 +443,7 @@ async function openPrintWindow(friendlyId) {
     printWindow.document.documentElement.innerHTML = `
       <!doctype html>
       <html lang="en">
-      <head><title>Error Retreiving Certificate</title>
-      <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
-      </head>
-      <body class="print-error">
-        <h2>Retrieval failure occurred</h2>
-        <p class="error-detail">Error details: ${escapeHtml(err.message)}</p>
-      </body>
-      </html>
-    `;
-  }
-}
-
-async function openBulkPrintWindow(friendlyId) {
-  const printWindow = window.open("", "_blank");
-  if (!printWindow) {
-    alert("Popup blocked! Enable popups to allow certificate printing.");
-    return;
-  }
-
-  printWindow.document.documentElement.innerHTML = `
-    <!doctype html>
-    <html lang="en">
-    <head><title>Loading Bulk Certificate...</title>
-    <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
-    </head>
-    <body>
-      <h2>Retrieving bulk compliance records...</h2>
-      <p>Fetching the bulk HTML certificate layout from the station.</p>
-    </body>
-    </html>
-  `;
-
-  try {
-    const response = await safeFetch(`/api/certificates/${encodeURIComponent(friendlyId)}?format=html&bulk=true`);
-    if (!response.ok) throw new Error("HTTP " + response.status);
-    const htmlContent = await response.text();
-
-    // Inject <base> tag so relative CSS links resolve in the about:blank print window
-    const htmlWithBase = htmlContent.replace("<head>", `<head><base href="${window.location.origin}/">`);
-    printWindow.document.documentElement.innerHTML = htmlWithBase;
-    printWindow.focus();
-    printWindow.print();
-  } catch (err) {
-    printWindow.document.documentElement.innerHTML = `
-      <!doctype html>
-      <html lang="en">
-      <head><title>Error Retrieving Bulk Certificate</title>
+      <head><title>${errorTitle}</title>
       <link rel="stylesheet" href="${window.location.origin}/css/print-window.css">
       </head>
       <body class="print-error">

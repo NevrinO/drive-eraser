@@ -1,9 +1,9 @@
-# Enclosure routes: enclosure/slot/template CRUD and hardware topology
+# Enclosure routes: enclosure/slot CRUD and hardware topology
 # Extracted from admin_routes.py for modularity (fix-plan-G1)
 from flask import Blueprint, jsonify, request
 from app_config import logger, limiter
-from common import get_config_dir, load_bay_map, save_bay_map, BAY_MAP_LOCK, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA, TEMPLATE_SCHEMA
-from layout_templates import load_layout_templates, save_layout_templates, TEMPLATES_LOCK, build_traversal_positions, SUPPORTED_TRAVERSALS
+from common import get_config_dir, load_bay_map, save_bay_map, BAY_MAP_LOCK, ENCLOSURE_SCHEMA, SLOT_SCHEMA, SLOT_MAPPING_SCHEMA
+from layout_templates import load_layout_templates, build_traversal_positions, SUPPORTED_TRAVERSALS
 from device_discovery import (
     generate_master_slot_map,
     validate_pci_address,
@@ -15,7 +15,7 @@ from device_discovery import (
     invalidate_discovery_cache,
     get_enclosure_hardware_info
 )
-from routes._shared import require_admin_auth, is_valid_id, _validate_slot_metadata, MAX_ENCLOSURES, MAX_SLOTS_PER_ENCLOSURE, MAX_TEMPLATES
+from routes._shared import require_admin_auth, is_valid_id, _validate_slot_metadata, MAX_ENCLOSURES, MAX_SLOTS_PER_ENCLOSURE
 
 enclosure_bp = Blueprint('enclosure_routes', __name__)
 
@@ -734,138 +734,6 @@ def manage_slot_mapping(enclosure_id, slot_num, mapping_type):
             
         except Exception as e:
             logger.error(f"Error deleting slot mapping: {e}")
-            return jsonify({"error": str(e)}), 500
-
-
-@enclosure_bp.route("/api/admin/templates", methods=["GET", "POST"])
-@require_admin_auth
-@limiter.limit("30 per minute")
-def manage_templates():
-    """Handle template listing and creation."""
-    config_dir = get_config_dir()
-    
-    if request.method == "GET":
-        try:
-            templates_dict, _ = load_layout_templates(config_dir)
-            templates = list(templates_dict.values())
-            return jsonify({"templates": templates}), 200
-        except Exception as e:
-            logger.error(f"Error listing templates: {e}")
-            return jsonify({"error": str(e)}), 500
-    
-    else:  # POST - Create new template
-        try:
-            payload = request.get_json(silent=True) or {}
-            
-            # Validate required fields
-            required_fields = ["id", "name", "slot_count"]
-            for field in required_fields:
-                if field not in payload:
-                    return jsonify({"error": f"Missing required field: {field}"}), 400
-            
-            # Validate template ID format
-            if not is_valid_id(payload["id"]):
-                return jsonify({"error": f"Invalid template ID format: {payload['id']}. Only alphanumeric, hyphens, and underscores allowed"}), 400
-            
-            # Validate against schema
-            try:
-                from jsonschema import validate
-                validate(instance=payload, schema=TEMPLATE_SCHEMA)
-            except Exception as e:
-                return jsonify({"error": f"Template validation failed: {str(e)}"}), 400
-            
-            with TEMPLATES_LOCK:
-                templates_dict, _ = load_layout_templates(config_dir)
-                
-                # Enforce size limit for DoS prevention (Rule #5)
-                if len(templates_dict) >= MAX_TEMPLATES:
-                    return jsonify({"error": f"Maximum number of templates ({MAX_TEMPLATES}) reached"}), 400
-                
-                # Check for duplicate template ID
-                if payload["id"] in templates_dict:
-                    return jsonify({"error": f"Template ID already exists: {payload['id']}"}), 400
-                
-                templates_dict[payload["id"]] = payload
-                save_layout_templates(templates_dict, config_dir)
-            
-            logger.info(f"Created template: {payload['id']}")
-            return jsonify({"status": "success", "template": payload}), 201
-            
-        except Exception as e:
-            logger.error(f"Error creating template: {e}")
-            return jsonify({"error": str(e)}), 500
-
-
-@enclosure_bp.route("/api/admin/templates/<template_id>", methods=["PUT", "DELETE"])
-@require_admin_auth
-@limiter.limit("30 per minute")
-def manage_template(template_id):
-    """Handle template update and deletion."""
-    config_dir = get_config_dir()
-    
-    if request.method == "PUT":
-        try:
-            payload = request.get_json(silent=True) or {}
-            
-            with TEMPLATES_LOCK:
-                templates_dict, _ = load_layout_templates(config_dir)
-                
-                if template_id not in templates_dict:
-                    return jsonify({"error": f"Template not found: {template_id}"}), 404
-                
-                template = templates_dict[template_id]
-                
-                # Update allowed fields
-                updatable_fields = ["name", "vendor", "slot_count", "hybrid_slots", "traversal_preset", "default_role"]
-                for field in updatable_fields:
-                    if field in payload:
-                        template[field] = payload[field]
-                
-                # Validate against schema
-                try:
-                    from jsonschema import validate
-                    validate(instance=template, schema=TEMPLATE_SCHEMA)
-                except Exception as e:
-                    return jsonify({"error": f"Template validation failed: {str(e)}"}), 400
-                
-                templates_dict[template_id] = template
-                save_layout_templates(templates_dict, config_dir)
-            
-            logger.info(f"Updated template: {template_id}")
-            return jsonify({"status": "success", "template": template}), 200
-            
-        except Exception as e:
-            logger.error(f"Error updating template: {e}")
-            return jsonify({"error": str(e)}), 500
-    
-    elif request.method == "DELETE":
-        try:
-            # Acquire both locks in consistent order (BAY_MAP_LOCK → TEMPLATES_LOCK)
-            # to prevent two-phase lock race: enclosure can be created referencing
-            # this template between the check and delete if locks are released separately.
-            with BAY_MAP_LOCK:
-                with TEMPLATES_LOCK:
-                    # Check if template is in use by any enclosure
-                    bay_map = load_bay_map(config_dir)
-                    enclosures = bay_map.get("enclosures", {})
-                    for enc_id, enc_data in enclosures.items():
-                        if enc_data.get("template_id") == template_id:
-                            return jsonify({"error": f"Template is in use by enclosure: {enc_id}"}), 400
-
-                    # Delete from layout_templates.json
-                    templates_dict, _ = load_layout_templates(config_dir)
-
-                    if template_id not in templates_dict:
-                        return jsonify({"error": f"Template not found: {template_id}"}), 404
-
-                    del templates_dict[template_id]
-                    save_layout_templates(templates_dict, config_dir)
-            
-            logger.info(f"Deleted template: {template_id}")
-            return jsonify({"status": "success", "message": f"Template {template_id} deleted"}), 200
-            
-        except Exception as e:
-            logger.error(f"Error deleting template: {e}")
             return jsonify({"error": str(e)}), 500
 
 

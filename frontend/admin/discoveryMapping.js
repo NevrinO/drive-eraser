@@ -377,7 +377,8 @@
     return applySequentialMappingWithGrouping(filteredDevices, startBay, groupingStrategy, localBayMapCopy);
   }
 
-  function generateMappingPreview(discoveryState, localBayMapCopy, mappingPattern, mappingStartBay, mappingDeviceFilter, mappingPreview, applyMappingBtn, showMappingValidationError, hideMappingValidationError, setPreviewMessage, escapeHtml, mappingValidationError) {
+  function generateMappingPreview(opts) {
+    const { discoveryState, localBayMapCopy, mappingPattern, mappingStartBay, mappingDeviceFilter, mappingPreview, applyMappingBtn, showMappingValidationError, hideMappingValidationError, setPreviewMessage, escapeHtml, mappingValidationError } = opts;
     // Clear previous validation errors
     hideMappingValidationError();
     
@@ -474,7 +475,8 @@
     return mapping;
   }
 
-  async function applyMappingToBayConfig(localBayMapCopy, loadBayMappingConfig, closeDiscoveryModal, showMappingValidationError, hideMappingValidationError, safeFetch, renderBayMappingConfig, showUnsavedChangesIndicator) {
+  async function applyMappingToBayConfig(opts) {
+    const { localBayMapCopy, loadBayMappingConfig, closeDiscoveryModal, showMappingValidationError, hideMappingValidationError, safeFetch, renderBayMappingConfig, showUnsavedChangesIndicator } = opts;
     // Handle manual mapping mode - set currentMappingPreview from manualMappings
     if (mappingMode === 'manual') {
       if (Object.keys(manualMappings).length === 0) {

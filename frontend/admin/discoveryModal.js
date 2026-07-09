@@ -445,7 +445,7 @@ document.addEventListener('click', (e) => {
 if (previewMappingBtn) {
   previewMappingBtn.addEventListener("click", () => {
     const discoveryState = window.DiscoveryState.getDiscoveryState();
-    window.DiscoveryMapping.generateMappingPreview(
+    window.DiscoveryMapping.generateMappingPreview({
       discoveryState,
       localBayMapCopy,
       mappingPattern,
@@ -456,25 +456,25 @@ if (previewMappingBtn) {
       showMappingValidationError,
       hideMappingValidationError,
       setPreviewMessage,
-      window.escapeHtml,
+      escapeHtml: window.escapeHtml,
       mappingValidationError
-    );
+    });
   });
 }
 
 if (applyMappingBtn) {
   applyMappingBtn.addEventListener("click", async () => {
     try {
-      await window.DiscoveryMapping.applyMappingToBayConfig(
+      await window.DiscoveryMapping.applyMappingToBayConfig({
         localBayMapCopy,
         loadBayMappingConfig,
         closeDiscoveryModal,
         showMappingValidationError,
         hideMappingValidationError,
-        window.safeFetch,
+        safeFetch: window.safeFetch,
         renderBayMappingConfig,
         showUnsavedChangesIndicator
-      );
+      });
     } catch (err) {
       alert(`Error applying mapping: ${err.message}`);
     }
