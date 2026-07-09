@@ -1,5 +1,64 @@
 # Change Log
 
+## v1.1.1 - Production Release: Overwrite Verification, Lazy App Init, IP Allowlist & Code Quality Refactor
+- **Overwrite Verification**:
+  - Post-wipe write counter verification refactored with `write_counter_source` parameter — supports `disabled`, `gigabytes_processed`, and `seagate_cache_0x37` modes
+  - Seagate cache page 0x37 read support via `read_seagate_cache_writes()` — uses host-only write counter (blocks received from initiator) to avoid firmware-internal background activity drift
+  - Drive write cache flush after overwrite via `flush_drive_cache()` — SAS uses `sg_sync` (SCSI SYNCHRONIZE CACHE), SATA uses `hdparm -F` (ATA FLUSH CACHE EXT), NVMe is no-op (synchronous)
+  - `check_write_tolerance` now returns `True` for `disabled`/`gigabytes_processed` sources and uses dedicated `SEAGATE_CACHE_TOLERANCE` for Seagate cache mode
+  - `write_counter_source` propagated through marker status to verification pipeline
+- **Security & Access Control**:
+  - IP allowlist feature: `allowed_remote_ips` policy field with `_is_ip_allowed()` check in security gate
+  - Network access mode prompt in `install.sh` — choose localhost-only (127.0.0.1) or remote-allowed (0.0.0.0) at install time
+  - `bind_address` now configurable via install prompt instead of hardcoded to `0.0.0.0`
+  - IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`) now recognized as localhost in `is_localhost()`
+  - SATA security password now loaded from policy (`sata_security_password`) instead of hardcoded constant
+  - `MAX_CONTENT_LENGTH` (10MB) enforced on Flask app to prevent oversized requests
+  - Rate limit exceeded (429) now returns proper JSON response instead of being caught by generic 500 handler
+- **App Initialization Refactor**:
+  - `app_config.py` refactored to lazy initialization pattern via `init_app()` — prevents import-time side effects (duplicate logging handlers, policy.json dependency, Flask app creation at import time)
+  - `app` and `socketio` are `None` until `init_app()` is called; `limiter` created eagerly without app so `@limiter.limit` decorators work at import time
+  - SocketIO CORS set to `'*'` with documented rationale (LAN access; HTTP CORS still enforces policy-based origins; access control via IP allowlist + auth)
+  - Werkzeug request logging suppressed to WARNING level to reduce log noise
+- **Job Management Refactor**:
+  - `run_erase_job()` decomposed into focused helper functions: `_init_job()`, `_check_health_gate()`, `_capture_pre_wipe_state()`, `_prepare_erase_command()`
+  - Capacity bytes fallback now logs warning instead of silently using 100GB default
+  - SMART test background thread refactored with `_transition()` helper for consistent optimistic locking and logging
+- **SMART Test Runner Refactor**:
+  - In-progress detection extracted into dedicated functions: `_check_ata_in_progress()`, `_check_nvme_in_progress()`, `_check_scsi_in_progress()`
+  - SCSI self-test log parsing extracted to `_parse_scsi_self_test_entries()`
+  - Historical POH lookup now used in `run_smart_test()` for hour correction
+- **SMART Routes Refactor**:
+  - Self-test log parsing extracted to `_parse_ata_self_test_logs()`, `_parse_nvme_self_test_logs()`, `_parse_sas_self_test_logs()`
+  - Device statistics extraction extracted to `_extract_device_statistics()` with page count limits
+  - Size limits enforced: `MAX_SMART_ATTRIBUTES` (100), `MAX_SELF_TEST_LOGS` (50), `MAX_DEVICE_STATISTICS_PAGES` (10), `MAX_SMART_JSON_SIZE_BYTES` (100KB)
+- **Crypto Verification Improvements**:
+  - `_reset_interrupted()` added at start of each verification operation (Rule #101: global signal flags reset per-operation create cross-operation race)
+  - `_load_verification_policy()` helper with hardcoded fallbacks for all known keys
+  - DD read retry now uses `iflag=skip_bytes` with byte offset instead of block-based skip for accurate positioning
+  - Subprocess timeouts (60s) added to `blockdev --getsize64` and `dd` read operations
+  - Removed redundant `resolve_verify_command_path()` alias in favor of `get_command_path()`
+- **Bay Map Validation**:
+  - `LEGACY_BAY_MAP_SCHEMA` added for schema validation of both legacy and enclosure bay map formats
+  - Placeholder detection (`REPLACE_ME`) now traverses correct structure for each format (enclosure slots vs legacy bays)
+  - `load_policy()` uses `copy.deepcopy(DEFAULT_POLICY)` to prevent nested dict mutations
+- **Frontend Refactor**:
+  - `driveRendering.js`: Extracted generic `_renderGridByEnclosureHtml()` and `_renderGridLegacyHtml()` helpers, eliminating ~90 lines of duplicated grid rendering code
+  - `batchWipe.js`: Extracted `parseBatchEraseResponse()`, `handleBatchEraseError()`, `completeBatchWipe()` shared helpers, eliminating triplicated error handling
+  - Null safety on `healthGateWarningModal` backdrop query
+  - New `frontend/admin/traversalUtils.js` for shared traversal utilities
+- **Install/Update Scripts**:
+  - `sg_sync` and `sg_logs` command path resolution added to both `install.sh` and `update.sh`
+  - Sudoers entry updated to include `sg_sync` and `sg_logs` for cache flush and Seagate log page access
+  - `allowed_remote_ips` added to default policy.json generation
+- **New Files**:
+  - `scripts/read-all-markers.sh` — utility to read post-erase markers from all connected drives
+  - `docs/portable-iso-design.md` — design document for portable ISO boot image
+  - `frontend/admin/traversalUtils.js` — shared enclosure traversal utilities
+- **Testing**:
+  - New: `test_disk_ops.py` (189 lines)
+  - Expanded: `test_smart_test_runner.py` (+134 lines), `test_disk_utils.py` (+76 lines), `test_traversal_parity.py` (+104 lines), `test_crypto_verification.py` (refactored), `test_device_discovery*.py` (expanded)
+
 ## v1.1.0 - Production Release: Admin UI, Log Viewer, Documentation Overhaul & Critique Fixes
 - **Administration**:
   - System Configuration panel now exposes 7+ operational policy fields with validation (station ID, Slack webhook, discovery workers, max concurrent wipes, blockdev retry settings, health gate thresholds, zero-check parameters)

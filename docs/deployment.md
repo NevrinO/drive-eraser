@@ -150,10 +150,10 @@ Localhost (`127.0.0.1`, `::1`) always has full access regardless of this setting
 Run the build script from your project root (Windows/PowerShell):
 
 ```powershell
-.\scripts\build-release.ps1 -Version "v1.1.0"
+.\scripts\build-release.ps1 -Version "v1.1.1"
 ```
 
-This creates `drive-eraser-v1.1.0.zip` in the project root, excluding:
+This creates `drive-eraser-v1.1.1.zip` in the project root, excluding:
 - Development tools (.devin, .windsurf)
 - Git repository (.git)
 - Test files (tests/)
@@ -163,7 +163,7 @@ This creates `drive-eraser-v1.1.0.zip` in the project root, excluding:
 ### Create the GitHub Release
 
 ```powershell
-gh release create v1.1.0 drive-eraser-v1.1.0.zip --notes "Production release v1.1.0"
+gh release create v1.1.1 drive-eraser-v1.1.1.zip --notes "Production release v1.1.1"
 ```
 
 Replace the notes with your actual release notes describing changes.
@@ -174,17 +174,17 @@ On your Ubuntu server:
 
 ```bash
 # Download the release
-wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.1/drive-eraser-v1.1.1.zip
 
 # Extract to a staging directory (install.sh will copy to /opt/drive-eraser)
-unzip drive-eraser-v1.1.0.zip -d /tmp/drive-eraser-v1.1.0
+unzip drive-eraser-v1.1.1.zip -d /tmp/drive-eraser-v1.1.1
 
 # Run installation from the staging directory
-cd /tmp/drive-eraser-v1.1.0
+cd /tmp/drive-eraser-v1.1.1
 sudo bash scripts/install.sh
 
 # Clean up staging directory
-rm -rf /tmp/drive-eraser-v1.1.0
+rm -rf /tmp/drive-eraser-v1.1.1
 ```
 
 The install script copies application files to `/opt/drive-eraser/`, sets up the Python venv, configures sudo rules, creates config files with interactive prompts, and starts the systemd service.
@@ -194,7 +194,7 @@ The install script copies application files to `/opt/drive-eraser/`, sets up the
 Use semantic versioning:
 - `v1.0.0` — Initial production release
 - `v1.1.0` — Admin UI, log viewer, documentation overhaul, critique fixes
-- `v1.1.1` — Future bug fixes
+- `v1.1.1` — Overwrite verification, lazy app init, IP allowlist, code quality refactor
 - `v2.0.0` — Breaking changes
 
 ### Updating .productionignore
@@ -272,17 +272,17 @@ If you installed from a GitHub release zip (no git repo on server):
 
 ```bash
 # Download the new release
-wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.0/drive-eraser-v1.1.0.zip
+wget https://github.com/NevrinO/drive-eraser/releases/download/v1.1.1/drive-eraser-v1.1.1.zip
 
 # Extract to a staging directory
-unzip drive-eraser-v1.1.0.zip -d /tmp/drive-eraser-v1.1.0
+unzip drive-eraser-v1.1.1.zip -d /tmp/drive-eraser-v1.1.1
 
 # Run update from the staging directory
-cd /tmp/drive-eraser-v1.1.0
+cd /tmp/drive-eraser-v1.1.1
 sudo bash scripts/update.sh
 
 # Clean up
-rm -rf /tmp/drive-eraser-v1.1.0
+rm -rf /tmp/drive-eraser-v1.1.1
 ```
 
 The update script:
