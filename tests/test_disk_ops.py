@@ -1437,6 +1437,8 @@ class TestResolveViaSysfsAta:
         def mock_listdir(path):
             if path == scsi_device_base:
                 return ["1:0:0:0"]
+            if path.endswith("/device/block"):
+                return ["sda"]
             return []
 
         def mock_glob(pattern):
@@ -1469,6 +1471,8 @@ class TestResolveViaSysfsAta:
                 return ["ata1"]
             if path == scsi_device_base:
                 return ["1:0:0:0"]
+            if path.endswith("/device/block"):
+                return ["sda"]
             return []
 
         def mock_realpath(path):
