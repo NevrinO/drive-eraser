@@ -1,5 +1,6 @@
 # Shared utilities used by multiple route modules
 # Extracted from admin_routes.py for modularity (fix-plan-G1)
+import os
 import re
 import hmac
 import ipaddress
@@ -239,3 +240,73 @@ def require_admin_auth(f):
         
         return f(*args, **kwargs)
     return decorated_function
+
+
+_ENCLOSURE_METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
+
+
+def scan_enclosure_slots():
+    """Scan /sys/class/enclosure for SCSI Enclosure Services slot information.
+
+    Returns:
+        List of dicts with keys: enclosure_id, slot_id, slot_number, slot_path, block_devs.
+        block_devs is a sorted list of unique device node names (e.g. ["sda", "sdb"]).
+        slot_number is None if the slot_id has no digits or is out of range 0-9999.
+    """
+    enclosure_base = "/sys/class/enclosure"
+    entries = []
+
+    try:
+        enc_ids = os.listdir(enclosure_base)
+    except (OSError, IOError):
+        return entries
+
+    for enc_id in enc_ids:
+        enc_path = os.path.join(enclosure_base, enc_id)
+        try:
+            slot_ids = os.listdir(enc_path)
+        except (OSError, IOError):
+            continue
+
+        for slot_id in slot_ids:
+            if slot_id in _ENCLOSURE_METADATA_DIRS:
+                continue
+            slot_path = os.path.join(enc_path, slot_id)
+
+            # Extract slot number with validation
+            slot_num = None
+            digits = re.findall(r'\d+', slot_id)
+            if digits:
+                try:
+                    slot_num = int(digits[0])
+                    if slot_num < 0 or slot_num > 9999:
+                        slot_num = None
+                except (ValueError, IndexError):
+                    slot_num = None
+
+            # Find associated block device nodes
+            block_devs = []
+            dev_block_path = os.path.join(slot_path, "device", "block")
+            try:
+                for b in os.listdir(dev_block_path):
+                    block_devs.append(b)
+            except (OSError, IOError):
+                pass
+
+            dev_path = os.path.join(slot_path, "device")
+            try:
+                for name in os.listdir(dev_path):
+                    if name.startswith("sd") or name.startswith("nvme"):
+                        block_devs.append(name)
+            except (OSError, IOError):
+                pass
+
+            entries.append({
+                "enclosure_id": enc_id,
+                "slot_id": slot_id,
+                "slot_number": slot_num,
+                "slot_path": slot_path,
+                "block_devs": sorted(list(set(block_devs))),
+            })
+
+    return entries

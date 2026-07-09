@@ -290,7 +290,8 @@ async function fetchLogTail(relPath, lines) {
     if (!response.ok) return null;
     const data = await response.json();
     return data.content || "";
-  } catch {
+  } catch (e) {
+    console.warn('fetchLogTail failed:', e);
     return null;
   }
 }

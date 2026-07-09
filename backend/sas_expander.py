@@ -16,8 +16,20 @@ _SAS_EXPANDER_CACHE_TTL = 86400  # seconds (24 hours - SAS expander topology cha
 MAX_SAS_EXPANDER_CACHE_SIZE = 100  # Prevent unbounded growth
 _SAS_EXPANDER_CACHE_LOCK = threading.Lock()
 
+# Sentinel for cached negative results (distinguishes "not cached" from "cached None")
+_NO_EXPANDER = object()
+
 # Conservative fallback for SAS expander phy count when sysfs doesn't expose it
 _DEFAULT_SAS_PHY_COUNT = 10
+
+def _update_sas_expander_cache(pci_address: str, data):
+    """Update the SAS expander cache with size eviction. Caller must not hold the lock."""
+    with _SAS_EXPANDER_CACHE_LOCK:
+        if len(_SAS_EXPANDER_CACHE) >= MAX_SAS_EXPANDER_CACHE_SIZE:
+            oldest_keys = sorted(_SAS_EXPANDER_CACHE, key=lambda k: _SAS_EXPANDER_CACHE[k]['timestamp'])
+            for k in oldest_keys[:len(oldest_keys) - MAX_SAS_EXPANDER_CACHE_SIZE + 1]:
+                del _SAS_EXPANDER_CACHE[k]
+        _SAS_EXPANDER_CACHE[pci_address] = {'data': data, 'timestamp': time.time()}
 
 def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True) -> Optional[Dict]:
     """Detect if a SCSI host is connected to a SAS expander and extract expander information.
@@ -38,7 +50,9 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
             now = time.time()
             if pci_address in _SAS_EXPANDER_CACHE:
                 cached = _SAS_EXPANDER_CACHE[pci_address]
-                if cached['data'] is not None and (now - cached['timestamp']) < _SAS_EXPANDER_CACHE_TTL:
+                if (now - cached['timestamp']) < _SAS_EXPANDER_CACHE_TTL:
+                    if cached['data'] is _NO_EXPANDER:
+                        return None
                     return cached['data']
 
     # Walk up the sysfs tree to find sas_device directories
@@ -54,11 +68,14 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
     # Skip SAS expander detection for ATA/SATA hosts
     # ATA hosts have paths like /sys/devices/.../ata1/hostX
     if re.search(r'/ata\d+/host\d+', real_path):
+        if use_cache:
+            _update_sas_expander_cache(pci_address, _NO_EXPANDER)
         return None
     
     # Try to extract expander ID from existing device by-paths in /dev/disk/by-path
     # This is more reliable than sysfs traversal for some systems
     by_path_base = "/dev/disk/by-path"
+    by_path_entries = None
     try:
         by_path_entries = os.listdir(by_path_base)
         # Look for SAS expander patterns: pci-{pci_addr}-sas-exp{expander_id}-phy*
@@ -77,12 +94,9 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
     if expander_id:
         # Count phy ports by looking at by-path entries with this expander
         phy_count = 0
-        try:
-            by_path_entries = os.listdir(by_path_base)
+        if by_path_entries is not None:
             pattern = f"pci-{pci_address}-sas-exp{expander_id}-phy"
             phy_count = sum(1 for entry in by_path_entries if entry.startswith(pattern))
-        except (OSError, IOError):
-            pass
         
         if phy_count == 0:
             phy_count = get_max_slot_from_enclosure()
@@ -90,10 +104,13 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
         if phy_count == 0:
             phy_count = _DEFAULT_SAS_PHY_COUNT
         
-        return {
+        result = {
             'expander_id': expander_id,
             'phy_count': phy_count
         }
+        if use_cache:
+            _update_sas_expander_cache(pci_address, result)
+        return result
     
     # Fallback to sysfs traversal if by-path didn't work
     npath = real_path
@@ -125,6 +142,8 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
         npath = os.path.dirname(npath)
 
     if not expander_id:
+        if use_cache:
+            _update_sas_expander_cache(pci_address, _NO_EXPANDER)
         return None
 
     # If no phy count found in sas_device directories, fall back to enclosure slot count
@@ -140,14 +159,8 @@ def detect_sas_expander(host_path: str, pci_address: str, use_cache: bool = True
         'phy_count': total_phy_count
     }
 
-    # Update cache with successful result
     if use_cache:
-        with _SAS_EXPANDER_CACHE_LOCK:
-            if len(_SAS_EXPANDER_CACHE) >= MAX_SAS_EXPANDER_CACHE_SIZE:
-                oldest_keys = sorted(_SAS_EXPANDER_CACHE, key=lambda k: _SAS_EXPANDER_CACHE[k]['timestamp'])
-                for k in oldest_keys[:len(oldest_keys) - MAX_SAS_EXPANDER_CACHE_SIZE + 1]:
-                    del _SAS_EXPANDER_CACHE[k]
-            _SAS_EXPANDER_CACHE[pci_address] = {'data': result, 'timestamp': time.time()}
+        _update_sas_expander_cache(pci_address, result)
 
     return result
 
@@ -166,7 +179,7 @@ def get_parent_pci(real_path: str) -> Optional[str]:
         Last PCI address found in the path, or None if none present
     """
     matches = re.findall(
-        r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]',
+        r'[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(?:\.[0-9a-fA-F])?',
         real_path
     )
     return matches[-1] if matches else None

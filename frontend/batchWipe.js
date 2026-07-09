@@ -200,6 +200,7 @@ batchEraseForm.addEventListener("submit", async (event) => {
   });
 
   const submitBtn = document.getElementById("batchEraseSubmit");
+  if (!submitBtn) return;
   const originalBtnText = submitBtn.textContent;
   submitBtn.disabled = true;
   submitBtn.textContent = "Checking drives...";
@@ -502,7 +503,7 @@ if (healthGateCancelBtn || healthGateWarningClose) {
   if (healthGateWarningClose) healthGateWarningClose.addEventListener("click", cancelHandler);
 }
 
-const healthGateBackdrop = healthGateWarningModal.querySelector(".modal-backdrop");
+const healthGateBackdrop = healthGateWarningModal ? healthGateWarningModal.querySelector(".modal-backdrop") : null;
 if (healthGateBackdrop) {
   healthGateBackdrop.addEventListener("click", () => {
     pendingHealthGatePayload = null;

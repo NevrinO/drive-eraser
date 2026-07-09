@@ -8,7 +8,7 @@ from flask import Blueprint, jsonify, request
 from app_config import logger, limiter
 from common import get_config_dir, BAY_MAP_LOCK, save_bay_map, DRIVE_DATA_CACHE_TTL
 from layout_templates import normalize_bay_map_document, compose_bay_map_document, load_layout_templates, validate_layout_metadata
-from routes._shared import require_admin_auth
+from routes._shared import require_admin_auth, scan_enclosure_slots
 from disk_ops import get_os_by_path, invalidate_drive_cache
 from device_discovery import invalidate_master_slot_cache
 from smart_parsing import get_smart_identity
@@ -167,8 +167,8 @@ def get_unmapped_drives():
                     "capacity_bytes": smart.get("capacity_bytes"),
                     "is_os": is_os
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to enumerate unmapped drive {dev_node}: {e}")
         return jsonify(unmapped_devices), 200
     except Exception as e:
         logger.error(f"Error getting unmapped drives: {e}")
@@ -203,70 +203,27 @@ def auto_detect_bays():
         discovered_slots = {}
 
         # --- METHOD A: SCSI Enclosure Services (SES) /sys/class/enclosure scanning ---
-        enclosure_base = "/sys/class/enclosure"
-        METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
-
-        try:
-            enc_ids = os.listdir(enclosure_base)
-        except (OSError, IOError):
-            enc_ids = []
-
-        for enc_id in enc_ids:
-            enc_path = os.path.join(enclosure_base, enc_id)
-            try:
-                slot_ids = os.listdir(enc_path)
-            except (OSError, IOError):
+        for entry in scan_enclosure_slots():
+            slot_num = entry["slot_number"]
+            if slot_num is None:
                 continue
 
-            for slot_id in slot_ids:
-                if slot_id in METADATA_DIRS:
-                    continue
-                slot_path = os.path.join(enc_path, slot_id)
+            for sd_node in entry["block_devs"]:
+                real_dev = f"/dev/{sd_node}"
+                # Map Slot 0-7 directly to bay0-bay7
+                bay_id = f"bay{slot_num}"
 
-                block_devs = []
+                if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
+                    bay_id = f"bay{slot_num:02d}"
 
-                # Find associated block device nodes under slot path
-                dev_block_path = os.path.join(slot_path, "device", "block")
-                try:
-                    for b in os.listdir(dev_block_path):
-                        block_devs.append(b)
-                except (OSError, IOError):
-                    pass
+                by_path_link = None
+                for link_entry, node_path in path_to_dev.items():
+                    if os.path.realpath(node_path) == os.path.realpath(real_dev):
+                        by_path_link = link_entry
+                        break
 
-                dev_path = os.path.join(slot_path, "device")
-                try:
-                    for name in os.listdir(dev_path):
-                        if name.startswith("sd") or name.startswith("nvme"):
-                            block_devs.append(name)
-                except (OSError, IOError):
-                    pass
-
-                # Process found devices for this slot
-                for sd_node in sorted(list(set(block_devs))):
-                    real_dev = f"/dev/{sd_node}"
-                    digits = re.findall(r'\d+', slot_id)
-                    if digits:
-                        try:
-                            slot_num = int(digits[0])
-                            # Validate slot number is within reasonable bounds
-                            if slot_num < 0 or slot_num > 9999:
-                                continue
-                        except (ValueError, IndexError):
-                            continue
-                        # Map Slot 0-7 directly to bay0-bay7
-                        bay_id = f"bay{slot_num}"
-                        
-                        if bay_id not in bay_map and f"bay{slot_num:02d}" in bay_map:
-                            bay_id = f"bay{slot_num:02d}"
-                        
-                        by_path_link = None
-                        for link_entry, node_path in path_to_dev.items():
-                            if os.path.realpath(node_path) == os.path.realpath(real_dev):
-                                by_path_link = link_entry
-                                break
-                        
-                        if by_path_link:
-                            discovered_slots[bay_id] = by_path_link
+                if by_path_link:
+                    discovered_slots[bay_id] = by_path_link
 
         # --- METHOD B: SAS Transport Subsystem bay_identifier Fallback (For Passive Direct-Attach Backplanes) ---
         if not discovered_slots:

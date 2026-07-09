@@ -75,12 +75,22 @@ function initializeTemplateManagement() {
 
       try {
         const skipPositionsStr = templateSkipPositions.value.trim();
-        const skipBayNumbers = skipPositionsStr ? skipPositionsStr.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)) : [];
+        const skipRawTokens = skipPositionsStr ? skipPositionsStr.split(",").map(s => s.trim()) : [];
+        const skipInvalidTokens = skipRawTokens.filter(t => t !== "" && isNaN(parseInt(t, 10)));
+        if (skipInvalidTokens.length > 0) {
+          throw new Error(`Skip positions contains invalid non-numeric values: ${skipInvalidTokens.join(", ")}`);
+        }
+        const skipBayNumbers = skipRawTokens.map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         const cols = parseInt(templateCols.value, 10);
         const skipPositions = skipBayNumbers.length > 0 ? bayNumbersToRowCol(skipBayNumbers, cols) : [];
 
         const hybridSlotsStr = templateHybridSlots.value.trim();
-        const hybridBayNumbers = hybridSlotsStr ? hybridSlotsStr.split(",").map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)) : [];
+        const hybridRawTokens = hybridSlotsStr ? hybridSlotsStr.split(",").map(s => s.trim()) : [];
+        const hybridInvalidTokens = hybridRawTokens.filter(t => t !== "" && isNaN(parseInt(t, 10)));
+        if (hybridInvalidTokens.length > 0) {
+          throw new Error(`Hybrid slots contains invalid non-numeric values: ${hybridInvalidTokens.join(", ")}`);
+        }
+        const hybridBayNumbers = hybridRawTokens.map(s => parseInt(s, 10)).filter(n => !isNaN(n));
         
         // Validate hybrid_slots
         if (hybridBayNumbers.length > 0) {

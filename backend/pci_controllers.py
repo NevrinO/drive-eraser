@@ -178,7 +178,7 @@ def get_controller_for_device(device_path: str, controllers: Optional[List[Dict]
         # Path format: /sys/devices/pci0000:00/0000:00:1f.2/ata1/host0/target0:0:0/0:0:0:0/block/sda
         # Or for SCSI/RAID: /sys/devices/pci0000:00/0000:00:01.0/0000:01:00.0/host0/target0:0:0/0:0:0:0/block/sdX
         # Need to match the LAST PCI address (the actual controller), not the bridge
-        pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])', real_path)
+        pci_matches = re.findall(r'([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}(?:\.[0-9a-fA-F])?)', real_path)
         if not pci_matches:
             logging.debug(f"No PCI address found in sysfs path for {device_path}: {real_path}")
             return None
@@ -241,6 +241,11 @@ def discover_controllers_and_devices(use_cache: bool = True) -> Dict[str, List[D
     for device_name in block_device_names:
         # Skip partitions, device mapper, and loop devices
         if '-' in device_name or device_name.startswith('dm-') or device_name.startswith('loop'):
+            continue
+
+        # Explicit partition check via sysfs (catches sd* partitions like sda1, nvme partitions like nvme0n1p1)
+        partition_sysfs = f"/sys/class/block/{device_name}/partition"
+        if os.path.exists(partition_sysfs):
             continue
 
         device_path = f"/dev/{device_name}"

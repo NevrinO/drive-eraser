@@ -112,6 +112,8 @@ def get_drives():
         # Match drives to jobs and perform DB queries outside lock
         for d in drives:
             bay_name = d.get("bay")
+
+            # Pass 1: Find running/queued job for live status
             for job_snap in jobs_snapshot:
                 if str(job_snap.get("bay")).lower() == str(bay_name).lower():
                     if job_snap["status"] in {"running", "queued"}:
@@ -131,8 +133,10 @@ def get_drives():
                             d["capacity_str"] = format_capacity_bytes(job_snap["capacity_bytes"])
                         break
 
-                    # Phase 5: Include prior-visit data and snapshot IDs when drive is linked to a job
-                    if job_snap.get("serial"):
+            # Pass 2: Load prior-visit data and snapshot IDs from first completed job
+            for job_snap in jobs_snapshot:
+                if str(job_snap.get("bay")).lower() == str(bay_name).lower():
+                    if job_snap["status"] not in {"running", "queued"} and job_snap.get("serial"):
                         serial = job_snap["serial"]
                         prior_visit = load_prior_visit(serial)
                         if prior_visit:
@@ -155,6 +159,7 @@ def get_drives():
                                     d["has_post_wipe_snapshot"] = bool(row["post_wipe_smart_json"])
                         except Exception as e:
                             logger.warning(f"Failed to load snapshot IDs for job {job_snap['job_id']}: {e}")
+                        break
 
         # Merge ephemeral zero-check status for each drive
         try:

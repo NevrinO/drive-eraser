@@ -6,7 +6,7 @@ import copy
 from flask import Blueprint, jsonify, request
 from app_config import logger, limiter
 from common import get_config_dir, BAY_MAP_LOCK, save_bay_map
-from routes._shared import require_admin_auth
+from routes._shared import require_admin_auth, scan_enclosure_slots
 from layout_templates import normalize_bay_map_document, compose_bay_map_document
 from device_discovery import (
     discover_controllers_and_devices,
@@ -206,89 +206,39 @@ def discover_slots():
                     return jsonify({"error": f"Device count exceeds maximum limit of {MAX_DEVICES}"}), 400
         
         # Scan enclosure slots if available (SCSI Enclosure Services)
-        # Use try-except for atomic operations to avoid TOCTOU
-        enclosure_base = "/sys/class/enclosure"
-        METADATA_DIRS = {"components", "device", "id", "power", "subsystem", "uevent"}
-        
-        try:
-            enc_ids = os.listdir(enclosure_base)
-        except (OSError, IOError):
-            enc_ids = []
-        
-        for enc_id in enc_ids:
-            enc_path = os.path.join(enclosure_base, enc_id)
-            try:
-                slot_ids = os.listdir(enc_path)
-            except (OSError, IOError):
-                continue
-            
-            for slot_id in slot_ids:
-                if slot_id in METADATA_DIRS:
-                    continue
-                slot_path = os.path.join(enc_path, slot_id)
-            
-                # Extract slot number with validation
-                slot_num = None
-                digits = re.findall(r'\d+', slot_id)
-                if digits:
-                    try:
-                        slot_num = int(digits[0])
-                        # Validate slot number is within reasonable bounds
-                        if slot_num < 0 or slot_num > 9999:
-                            slot_num = None
-                    except (ValueError, IndexError):
-                        slot_num = None
-                
-                # Find associated device using try-except for atomic operations
-                slot_device = None
-                block_devs = []
-                dev_block_path = os.path.join(slot_path, "device", "block")
+        for entry in scan_enclosure_slots():
+            slot_device = None
+            for sd_node in entry["block_devs"]:
+                real_dev = f"/dev/{sd_node}"
+                if validate_device_path(real_dev):
+                    slot_device = real_dev
+                    break
+
+            slot_info = {
+                "enclosure_id": entry["enclosure_id"],
+                "slot_id": entry["slot_id"],
+                "slot_number": entry["slot_number"],
+                "device": slot_device
+            }
+
+            # Add SMART data if device present and requested
+            if slot_device and include_smart:
                 try:
-                    for b in os.listdir(dev_block_path):
-                        block_devs.append(b)
-                except (OSError, IOError):
-                    pass
-                
-                dev_path = os.path.join(slot_path, "device")
-                try:
-                    for name in os.listdir(dev_path):
-                        if name.startswith("sd") or name.startswith("nvme"):
-                            block_devs.append(name)
-                except (OSError, IOError):
-                    pass
-                
-                if block_devs:
-                    for sd_node in sorted(list(set(block_devs))):
-                        real_dev = f"/dev/{sd_node}"
-                        if validate_device_path(real_dev):
-                            slot_device = real_dev
-                            break
-                
-                slot_info = {
-                    "enclosure_id": enc_id,
-                    "slot_id": slot_id,
-                    "slot_number": slot_num,
-                    "device": slot_device
-                }
-                
-                # Add SMART data if device present and requested
-                if slot_device and include_smart:
-                    try:
-                        smart = get_smart_data(slot_device)
-                        slot_info["smart"] = {
-                            "model": smart.get("model"),
-                            "serial": smart.get("serial"),
-                            "capacity_str": smart.get("capacity_str")
-                        }
-                    except Exception as e:
-                        slot_info["smart"] = None
-                        slot_info["smart_error"] = str(e)
-                
-                result["enclosure_slots"].append(slot_info)
-                
-                # DoS protection: check slot limit
-                if len(result["enclosure_slots"]) > MAX_SLOTS:
-                    return jsonify({"error": f"Enclosure slot count exceeds maximum limit of {MAX_SLOTS}"}), 400
+                    smart = get_smart_data(slot_device)
+                    slot_info["smart"] = {
+                        "model": smart.get("model"),
+                        "serial": smart.get("serial"),
+                        "capacity_str": smart.get("capacity_str")
+                    }
+                except Exception as e:
+                    slot_info["smart"] = None
+                    slot_info["smart_error"] = str(e)
+
+            result["enclosure_slots"].append(slot_info)
+
+            # DoS protection: check slot limit
+            if len(result["enclosure_slots"]) > MAX_SLOTS:
+                return jsonify({"error": f"Enclosure slot count exceeds maximum limit of {MAX_SLOTS}"}), 400
         
         return jsonify(result), 200
     except Exception as e:

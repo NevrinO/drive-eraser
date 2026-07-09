@@ -3,6 +3,7 @@
 // These are pure rendering functions that use global escapeHtml and smartDeepDiveContent
 
 function renderSmartDetails(data, device, serial, interfaceType) {
+  if (typeof smartDeepDiveContent === 'undefined' || !smartDeepDiveContent) return;
   const isSas = interfaceType && interfaceType.toLowerCase() === 'sas';
   const isNvme = interfaceType && interfaceType.toLowerCase() === 'nvme';
 
@@ -655,6 +656,7 @@ function formatMinutes(minutes) {
 }
 
 function renderDeviceStatistics(deviceStats) {
+  if (!deviceStats || !Array.isArray(deviceStats)) return '';
   let html = '';
 
   deviceStats.forEach(page => {

@@ -191,6 +191,8 @@ def admin_triage_config():
     else:
         try:
             payload = request.get_json(silent=True) or {}
+            if not isinstance(payload, dict):
+                return jsonify({"error": "Payload must be a JSON object"}), 400
             current_policy = load_policy(config_dir)
             
             # Validate all threshold values are numeric and within reasonable ranges

@@ -74,7 +74,8 @@ def get_os_parent_device():
                     return resolve_leaf_parent(slaves[0])
 
         return resolve_leaf_parent(devname)
-    except Exception:
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"OS drive detection failed: {e}")
         return None
 
 

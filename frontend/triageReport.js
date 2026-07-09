@@ -142,9 +142,9 @@ function _sortDrives(drives) {
 // Export (client-side CSV and JSON)
 // ──────────────────────────────────────────────────────────────────────
 function _getFilteredDrives() {
-  const interfaceFilter = filterInterface.value;
-  const mediaTypeFilter = filterMediaType.value;
-  const recommendationFilter = filterRecommendation.value;
+  const interfaceFilter = filterInterface?.value || "all";
+  const mediaTypeFilter = filterMediaType?.value || "all";
+  const recommendationFilter = filterRecommendation?.value || "all";
 
   const STATUS_MAP = {
     "new": "NEW_STOCK",
@@ -338,7 +338,8 @@ function updateTriageDriveData(data) {
     if (recommendation) triageDrives[idx].recommendation = recommendation;
     if (marker !== undefined) triageDrives[idx].marker = marker;
     if (status) triageDrives[idx].status = status;
-    if (document.getElementById('triagePanel').classList.contains('active')) {
+    const triagePanel = document.getElementById('triagePanel');
+    if (triagePanel && triagePanel.classList.contains('active')) {
       renderTriageTable();
     }
   }

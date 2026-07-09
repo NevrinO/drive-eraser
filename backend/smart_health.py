@@ -54,7 +54,7 @@ def calculate_drive_health_score(interface_type, smart_data, thresholds=None):
         written_bytes = smart_data.get("data_written_bytes")
         if written_bytes is None:
             raw_written = smart_data.get("data_written_raw")
-            written_bytes = safe_int(raw_written, 0) * 512 if raw_written is not None else 0
+            written_bytes = safe_int(raw_written, 0) * (512000 if "nvme" in iface else 512) if raw_written is not None else 0
         else:
             written_bytes = safe_int(written_bytes, 0)
         capacity = safe_int(smart_data.get("capacity_bytes"), 0)

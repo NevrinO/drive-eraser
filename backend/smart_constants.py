@@ -56,7 +56,7 @@ def correct_self_test_log_hours(log_hours, current_poh, historical_poh):
                 # We know from database that drive was already over 65,535 when we first saw it
                 # Calculate rollovers based on current POH (use 65536 for accurate boundary)
                 rollover_count = int(current_poh // SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY)
-                corrected_hours = log_hours + (rollover_count * SMART_SELF_TEST_LOG_MAX_HOURS)
+                corrected_hours = log_hours + (rollover_count * SMART_SELF_TEST_LOG_ROLLOVER_BOUNDARY)
                 rollover_corrected = True
                 # Flag ambiguous if near rollover boundary (within 1000 hours)
                 # or if log hours differ significantly from expected corrected hours

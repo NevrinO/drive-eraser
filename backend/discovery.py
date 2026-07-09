@@ -287,7 +287,8 @@ def discover_drives(bay_map_path='/opt/drive-eraser/config/bay_map.json', runnin
     try:
         with open(bay_map_path, 'r', encoding='utf-8') as f:
             bay_map_doc = json.load(f)
-    except Exception:
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Failed to load bay map from {bay_map_path}: {e}")
         return []
 
     # Medium #34: Check for interruption after loading bay map

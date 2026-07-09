@@ -78,7 +78,7 @@ function resetDiscoveryPreview() {
     mappingPreview.innerHTML = '';
   }
   window.DiscoveryState.resetDiscoveryPreview();
-  undoMappingBtn.disabled = true;
+  if (undoMappingBtn) undoMappingBtn.disabled = true;
   hideMappingValidationError();
 }
 
@@ -391,9 +391,9 @@ function setGroupingMode(mode) {
   }
 }
 
-groupNoneBtn.addEventListener("click", () => setGroupingMode('none'));
-groupTypeBtn.addEventListener("click", () => setGroupingMode('type'));
-groupPciBtn.addEventListener("click", () => setGroupingMode('pci'));
+if (groupNoneBtn) groupNoneBtn.addEventListener("click", () => setGroupingMode('none'));
+if (groupTypeBtn) groupTypeBtn.addEventListener("click", () => setGroupingMode('type'));
+if (groupPciBtn) groupPciBtn.addEventListener("click", () => setGroupingMode('pci'));
 
 // Controller selection event listeners
 document.addEventListener('click', (e) => {
@@ -632,16 +632,16 @@ function renderManualMappingPreview() {
 }
 
 // Manual mapping event listeners (Task 4.5)
-patternModeBtn.addEventListener('click', () => {
+if (patternModeBtn) patternModeBtn.addEventListener('click', () => {
   window.DiscoveryMapping.setMappingMode('pattern', patternModeBtn, manualModeBtn, patternMappingControls, manualMappingControls, applyMappingBtn);
 });
-manualModeBtn.addEventListener('click', () => {
+if (manualModeBtn) manualModeBtn.addEventListener('click', () => {
   window.DiscoveryMapping.setMappingMode('manual', patternModeBtn, manualModeBtn, patternMappingControls, manualMappingControls, applyMappingBtn);
   renderAvailableDevices();
 });
-deviceSearchInput.addEventListener('input', () => renderAvailableDevices());
-manualDeviceFilter.addEventListener('change', () => renderAvailableDevices());
-addManualMappingBtn.addEventListener('click', () => {
+if (deviceSearchInput) deviceSearchInput.addEventListener('input', () => renderAvailableDevices());
+if (manualDeviceFilter) manualDeviceFilter.addEventListener('change', () => renderAvailableDevices());
+if (addManualMappingBtn) addManualMappingBtn.addEventListener('click', () => {
   const success = window.DiscoveryMapping.addManualMapping(manualBaySelect, showMappingValidationError, hideMappingValidationError);
   if (success) {
     updateSelectedDeviceInfo();
@@ -650,7 +650,7 @@ addManualMappingBtn.addEventListener('click', () => {
     applyMappingBtn.disabled = false;
   }
 });
-clearManualMappingsBtn.addEventListener('click', () => {
+if (clearManualMappingsBtn) clearManualMappingsBtn.addEventListener('click', () => {
   if (window.DiscoveryMapping.hasManualMappings()) {
     if (confirm('Are you sure you want to clear all manual mappings?')) {
       window.DiscoveryMapping.clearManualMappings();

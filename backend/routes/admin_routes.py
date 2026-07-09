@@ -20,6 +20,42 @@ from routes._shared import (
 admin_bp = Blueprint('admin_routes', __name__)
 
 
+def _apply_verify_result(verify_result, result, device, progress_fn=None,
+                         include_details=True, check_failed=True):
+    """Process a verification result dict and update the result dict in place.
+
+    Handles the common pattern: check ok → completed, else check
+    still_in_progress → in_progress (with optional progress polling),
+    failed → failed, else → error string.
+    """
+    result["verification_result"] = verify_result
+
+    if verify_result.get("ok"):
+        result["hardware_active"] = False
+        result["hardware_status"] = "completed"
+        return
+
+    error = verify_result.get("error", "")
+
+    if include_details:
+        details = verify_result.get("details", {})
+        result["raw_data"]["output"] = details.get("output", "")[:500]
+
+    if "still_in_progress" in error:
+        result["hardware_active"] = True
+        result["hardware_status"] = "in_progress"
+        if progress_fn:
+            progress = progress_fn(device)
+            if progress is not None:
+                result["progress_percent"] = round(progress, 2)
+    elif check_failed and "failed" in error:
+        result["hardware_active"] = False
+        result["hardware_status"] = "failed"
+    else:
+        result["hardware_active"] = False
+        result["hardware_status"] = f"error: {error}"
+
+
 def _check_drive_hardware_status(job):
     """Check actual hardware status of the drive. Returns dict with status info."""
     request_data = job.get("request", {})
@@ -84,55 +120,14 @@ def _check_drive_hardware_status(job):
         elif interface_type == "sata" and method in {"crypto", "block"}:
             # Check SATA sanitize status
             sata_result = verify_sata_sanitize(device, method)
-            result["verification_result"] = sata_result
-            
-            if sata_result.get("ok"):
-                result["hardware_active"] = False
-                result["hardware_status"] = "completed"
-            else:
-                error = sata_result.get("error", "")
-                details = sata_result.get("details", {})
-                result["raw_data"]["output"] = details.get("output", "")[:500]
-                
-                if "still_in_progress" in error:
-                    result["hardware_active"] = True
-                    result["hardware_status"] = "in_progress"
-                    # Try to get progress percentage
-                    progress = poll_sata_sanitize_progress(device)
-                    if progress is not None:
-                        result["progress_percent"] = round(progress, 2)
-                elif "failed" in error:
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "failed"
-                else:
-                    result["hardware_active"] = False
-                    result["hardware_status"] = f"error: {error}"
+            _apply_verify_result(sata_result, result, device,
+                                 progress_fn=poll_sata_sanitize_progress)
                     
         elif interface_type == "sas" and method == "block":
             # Check SAS sanitize status
             sas_result = verify_sas_block(device, method)
-            result["verification_result"] = sas_result
-            
-            if sas_result.get("ok"):
-                result["hardware_active"] = False
-                result["hardware_status"] = "completed"
-            else:
-                error = sas_result.get("error", "")
-                details = sas_result.get("details", {})
-                result["raw_data"]["output"] = details.get("output", "")[:500]
-                
-                if "still_in_progress" in error:
-                    result["hardware_active"] = True
-                    result["hardware_status"] = "in_progress"
-                    progress = poll_sas_sanitize_progress(device)
-                    if progress is not None:
-                        result["progress_percent"] = round(progress, 2)
-                elif "failed" in error:
-                    result["hardware_active"] = False
-                    result["hardware_status"] = "failed"
-                else:
-                    result["hardware_active"] = False
-                    result["hardware_status"] = f"error: {error}"
+            _apply_verify_result(sas_result, result, device,
+                                 progress_fn=poll_sas_sanitize_progress)
                     
         elif method == "overwrite":
             # Overwrite method - no hardware status, just check if process is running
@@ -150,19 +145,8 @@ def _check_drive_hardware_status(job):
         elif interface_type == "sata" and method in {"secure_erase", "enhanced_secure_erase"}:
             # SATA secure erase - use hdparm status
             sata_result = verify_sata_sanitize(device, method)
-            result["verification_result"] = sata_result
-            
-            if sata_result.get("ok"):
-                result["hardware_active"] = False
-                result["hardware_status"] = "completed"
-            else:
-                error = sata_result.get("error", "")
-                if "still_in_progress" in error:
-                    result["hardware_active"] = True
-                    result["hardware_status"] = "in_progress"
-                else:
-                    result["hardware_active"] = False
-                    result["hardware_status"] = f"error: {error}"
+            _apply_verify_result(sata_result, result, device,
+                                 include_details=False, check_failed=False)
         else:
             result["can_query"] = False
             result["reason"] = f"unsupported_combination: {interface_type}/{method}"

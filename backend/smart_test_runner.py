@@ -94,6 +94,45 @@ def run_smart_test(device, test_type, diagnostics=None):
         return {"error": f"Exception running test: {str(e)}", "status": "failed"}
 
 
+def _parse_scsi_self_test_entries(data):
+    """Parse scsi_self_test_N entries from smartctl JSON output.
+
+    Returns:
+        List of dicts with keys: code, result_str, result_value, hours, passed.
+        Sorted by key name (same order as smartctl output).
+    """
+    entries = []
+    for k in sorted(data.keys()):
+        if k.startswith("scsi_self_test_"):
+            test_data = data[k]
+            result_value = test_data.get("result", {}).get("value")
+            entries.append({
+                "code": test_data.get("code", {}).get("string", "unknown"),
+                "result_str": test_data.get("result", {}).get("string", "unknown"),
+                "result_value": result_value,
+                "hours": test_data.get("power_on_time", {}).get("hours"),
+                "passed": result_value == 0,
+            })
+    return entries
+
+
+def _scsi_in_progress_result(entry):
+    """Build an in-progress status dict from a parsed SCSI self-test entry."""
+    return {
+        "status": "in_progress",
+        "percentage": 50,
+        "self_test_log_table": None,
+        "latest_result": {
+            "type": entry["code"],
+            "status": entry["result_str"],
+            "passed": None,
+            "remaining": 0,
+            "lba": None,
+            "hours": entry["hours"]
+        }
+    }
+
+
 def get_smart_test_status(device, diagnostics=None):
     """Get the status of a running SMART self-test.
 
@@ -202,24 +241,9 @@ def get_smart_test_status(device, diagnostics=None):
                     "hours": None
                 }
             }
-        for k in sorted(data.keys()):
-            if k.startswith("scsi_self_test_"):
-                result_val = data[k].get("result", {}).get("value")
-                result_str = data[k].get("result", {}).get("string", "")
-                if result_val == 15 or "in progress" in result_str.lower():
-                    return {
-                        "status": "in_progress",
-                        "percentage": 50,
-                        "self_test_log_table": None,
-                        "latest_result": {
-                            "type": data[k].get("code", {}).get("string", "unknown"),
-                            "status": result_str,
-                            "passed": None,
-                            "remaining": 0,
-                            "lba": None,
-                            "hours": data[k].get("power_on_time", {}).get("hours")
-                        }
-                    }
+        for entry in _parse_scsi_self_test_entries(data):
+            if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
+                return _scsi_in_progress_result(entry)
 
         # Determine device type and process accordingly
         if table:
@@ -266,8 +290,8 @@ def get_smart_test_status(device, diagnostics=None):
                         logger.warning(f"Failed to get historical POH for {serial}: {e}")
 
                 corrected_hours, rollover_corrected, ambiguous = correct_self_test_log_hours(log_hours, current_poh, historical_poh)
-            except Exception:
-                # If we can't get current POH, use raw log hours
+            except Exception as e:
+                logger.warning(f"POH correction failed for {device_path}: {e}")
                 corrected_hours = log_hours
 
             # Calculate percentage complete
@@ -359,52 +383,32 @@ def get_smart_test_status(device, diagnostics=None):
             # Check for SCSI self-test results even without scsi_ie
             # SAS drives like Seagate report test results via scsi_self_test_N entries
             # without populating scsi_ie
-            for k in sorted(data.keys()):
-                if k.startswith("scsi_self_test_"):
-                    test_data = data[k]
-                    test_code = test_data.get("code", {}).get("string", "unknown")
-                    test_result = test_data.get("result", {}).get("string", "unknown")
-                    result_value = test_data.get("result", {}).get("value")
-                    test_hours = test_data.get("power_on_time", {}).get("hours")
-                    passed = result_value == 0
-
-                    if "in progress" in test_result.lower() or result_value == 15:
-                        return {
-                            "status": "in_progress",
-                            "percentage": 50,
-                            "self_test_log_table": None,
-                            "latest_result": {
-                                "type": test_code,
-                                "status": test_result,
-                                "passed": None,
-                                "remaining": 0,
-                                "lba": None,
-                                "hours": test_hours
-                            }
-                        }
+            for entry in _parse_scsi_self_test_entries(data):
+                if entry["result_value"] == 15 or "in progress" in entry["result_str"].lower():
+                    return _scsi_in_progress_result(entry)
+                else:
+                    result_str = entry["result_str"]
+                    if entry["result_value"] == 0:
+                        test_status = "completed"
+                    elif "failed" in result_str.lower() or "error" in result_str.lower():
+                        test_status = "failed"
+                    elif "aborted" in result_str.lower():
+                        test_status = "aborted"
                     else:
-                        # Return the first (most recent) completed test result
-                        if result_value == 0:
-                            test_status = "completed"
-                        elif "failed" in test_result.lower() or "error" in test_result.lower():
-                            test_status = "failed"
-                        elif "aborted" in test_result.lower():
-                            test_status = "aborted"
-                        else:
-                            test_status = "unknown"
-                        return {
-                            "status": test_status,
-                            "percentage": 100 if test_status == "completed" else 0,
-                            "self_test_log_table": None,
-                            "latest_result": {
-                                "type": test_code,
-                                "status": test_result,
-                                "passed": passed,
-                                "remaining": 0,
-                                "lba": None,
-                                "hours": test_hours
-                            }
+                        test_status = "unknown"
+                    return {
+                        "status": test_status,
+                        "percentage": 100 if test_status == "completed" else 0,
+                        "self_test_log_table": None,
+                        "latest_result": {
+                            "type": entry["code"],
+                            "status": result_str,
+                            "passed": entry["passed"],
+                            "remaining": 0,
+                            "lba": None,
+                            "hours": entry["hours"]
                         }
+                    }
             return {"status": "no_tests", "self_test_log_table": None, "latest_result": None}
     except json.JSONDecodeError:
         return {"error": "Failed to parse smartctl output", "status": "failed", "self_test_log_table": None}

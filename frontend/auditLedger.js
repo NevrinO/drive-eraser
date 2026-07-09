@@ -16,6 +16,9 @@ if (!historyList || !historyQuery || !historyStatusFilter || !historyRefreshButt
   console.error("Critical: One or more audit ledger elements not found in DOM");
 }
 
+// Guard: if critical elements are missing, skip registering event listeners to prevent TypeErrors
+const _auditLedgerReady = !!(historyList && historyQuery && historyStatusFilter && historyRefreshButton);
+
 // Bulk selection state
 let bulkSelectMode = false;
 const bulkSelectedJobs = new Set();
@@ -31,6 +34,7 @@ function clearBulkSelectionState() {
 }
 
 async function loadHistoryIndex() {
+  if (!_auditLedgerReady) return;
   const query = historyQuery.value.trim();
   const filter = historyStatusFilter.value;
   try {
@@ -212,7 +216,7 @@ function renderExpandedAuditRow(job) {
   `;
 }
 
-historyList.addEventListener("click", async (event) => {
+if (historyList) historyList.addEventListener("click", async (event) => {
   const checkbox = event.target.closest(".bulk-checkbox");
   if (checkbox && bulkSelectMode) {
     event.stopPropagation();
@@ -492,10 +496,12 @@ async function openBulkPrintWindow(friendlyId) {
 }
 
 let historyQueryTimer = null;
-historyQuery.addEventListener("input", () => {
-  clearTimeout(historyQueryTimer);
-  historyQueryTimer = setTimeout(loadHistoryIndex, 300);
-});
-historyStatusFilter.addEventListener("change", loadHistoryIndex);
-historyRefreshButton.addEventListener("click", loadHistoryIndex);
+if (historyQuery) {
+  historyQuery.addEventListener("input", () => {
+    clearTimeout(historyQueryTimer);
+    historyQueryTimer = setTimeout(loadHistoryIndex, 300);
+  });
+}
+if (historyStatusFilter) historyStatusFilter.addEventListener("change", loadHistoryIndex);
+if (historyRefreshButton) historyRefreshButton.addEventListener("click", loadHistoryIndex);
 // --- END OF FILE frontend/auditLedger.js ---
