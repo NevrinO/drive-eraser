@@ -95,12 +95,13 @@ except:
     smart_raw=$(smartctl -j -x "$dev" 2>/dev/null || true)
     if [ -n "$smart_raw" ]; then
         # Extract data_written_raw using same logic as smart_data_parsing.py
-        # No gigabytes_processed fallback — that field drifts and is unreliable
+        # Priority: Seagate 0x37 > gigabytes_processed (approximate) > None
         current=$(echo "$smart_raw" | python3 -c '
 import json, sys, subprocess
 try:
     data = json.load(sys.stdin)
     scsi_vendor = str(data.get("vendor", "") or "").upper()
+    scsi_log = data.get("scsi_error_counter_log", {})
     proto = data.get("device", {}).get("protocol", "")
     # Seagate SAS: use log page 0x37 Blocks received from initiator
     if scsi_vendor == "SEAGATE" and ("SCSI" in proto or "SAS" in proto):
@@ -116,7 +117,14 @@ try:
                         sys.exit(0)
         except Exception:
             pass
-        # No fallback — 0x37 failure means no reliable write counter
+    # Fall back to gigabytes_processed (approximate, drifts) for any SCSI drive
+    if "write" in scsi_log:
+        gb = scsi_log["write"].get("gigabytes_processed")
+        if gb is not None:
+            written_bytes = int(float(gb) * 10**9)
+            written_raw = int(written_bytes / 512)
+            print(written_raw)
+            sys.exit(0)
     nvme = data.get("nvme_smart_health_information_log", {})
     if nvme.get("data_units_written") is not None:
         print(nvme["data_units_written"])
@@ -132,10 +140,10 @@ except:
 ' 2>/dev/null || echo "")
 
         # Determine tolerance based on write_counter_source from marker
-        if [ "$stored_source" = "disabled" ]; then
+        if [ "$stored_source" = "disabled" ] || [ "$stored_source" = "gigabytes_processed" ]; then
             status_color="${YELLOW}"
             status_text="WRITE_CHECK_DISABLED"
-            diff_str="N/A (disabled)"
+            diff_str="N/A (approx)"
         elif [ -n "$current" ] && [ "$current" != "" ] && [ "$stored" != "?" ] && [ "$stored" != "None" ] && [ "$stored" != "" ]; then
             diff=$((current - stored))
             if [ "$stored_source" = "seagate_cache_0x37" ]; then

@@ -30,6 +30,10 @@ def safe_int(val, default=0):
     try: return int(val) if val is not None else default
     except (ValueError, TypeError): return default
 
+def safe_float(val, default=None):
+    try: return float(val) if val is not None else default
+    except (ValueError, TypeError): return default
+
 _MAX_JSON_SIZE = 65536
 # \Z (not $) anchors strictly at end-of-string; $ would also match just before a
 # trailing newline, allowing "/dev/sda\n" to pass the whitelist.
@@ -179,7 +183,7 @@ def format_capacity_bytes(num_bytes):
     return f"{round(num_bytes / (10**6))} MB"
 
 def check_write_tolerance(interface_type, current, stored, write_counter_source=None):
-    if write_counter_source == "disabled":
+    if write_counter_source in ("disabled", "gigabytes_processed"):
         return True
     if current is None or stored is None:
         return True

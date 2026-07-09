@@ -6,7 +6,7 @@ import os
 import logging
 import threading
 
-from disk_utils import get_command_path, safe_int, format_capacity_bytes, run_command, read_seagate_cache_writes, flush_drive_cache
+from disk_utils import get_command_path, safe_int, safe_float, format_capacity_bytes, run_command, read_seagate_cache_writes, flush_drive_cache
 from common import load_policy, get_config_dir
 from smart_utils import detect_interface_type, validate_device_path
 
@@ -194,9 +194,28 @@ def get_smart_data(device, diagnostics=None):
                 written_bytes = seagate_writes * 512
                 write_counter_source = "seagate_cache_0x37"
             else:
-                write_counter_source = "disabled"
+                # 0x37 unavailable — fall back to gigabytes_processed for
+                # health/SMART data, but mark as approximate (write check disabled)
+                gb_processed = scsi_log.get("write", {}).get("gigabytes_processed") if scsi_log else None
+                gb_val = safe_float(gb_processed)
+                if gb_val is not None:
+                    written_bytes = int(gb_val * 10**9)
+                    written_raw = int(written_bytes / 512)
+                    write_counter_source = "gigabytes_processed"
+                else:
+                    write_counter_source = "disabled"
         else:
-            write_counter_source = "disabled"
+            # Non-Seagate SAS: gigabytes_processed drifts from firmware
+            # background activity, so write detection is disabled. But we
+            # still populate data_written_raw/bytes for health scoring.
+            gb_processed = scsi_log.get("write", {}).get("gigabytes_processed") if scsi_log else None
+            gb_val = safe_float(gb_processed)
+            if gb_val is not None:
+                written_bytes = int(gb_val * 10**9)
+                written_raw = int(written_bytes / 512)
+                write_counter_source = "gigabytes_processed"
+            else:
+                write_counter_source = "disabled"
     elif devstat_written is not None:
         written_raw, written_bytes = devstat_written, devstat_written * 512
         write_counter_source = "sata_devstat"

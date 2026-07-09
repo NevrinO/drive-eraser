@@ -481,6 +481,11 @@ class TestCheckWriteTolerance:
         result = check_write_tolerance("sas", 5100, 1000)
         assert result is False
 
+    def test_gigabytes_processed_skips_check(self):
+        """gigabytes_processed source skips write check (drift-prone, approximate)."""
+        result = check_write_tolerance("sas", 999999, 0, write_counter_source="gigabytes_processed")
+        assert result is True
+
     def test_interface_type_case_insensitive(self):
         """Test that interface type is case-insensitive."""
         result = check_write_tolerance("NVME", 1004, 1000)

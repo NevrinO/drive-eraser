@@ -78,7 +78,12 @@ function formatTraffic(drive, type) {
   const k = 1024;
   const sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
   const i = Math.floor(Math.log(totalBytes) / Math.log(k));
-  return parseFloat((totalBytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  const formatted = parseFloat((totalBytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  // Prefix ~ for approximate (drift-prone) write counters
+  if (type === 'written' && smart.write_counter_source === 'gigabytes_processed') {
+    return '~' + formatted;
+  }
+  return formatted;
 }
 
 function formatPowerOnTime(hours) {
