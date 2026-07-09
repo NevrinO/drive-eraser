@@ -11,8 +11,8 @@ from device_discovery import (
     validate_device_path,
     validate_pci_address,
     scan_pci_controllers,
-    _map_pci_class_to_type
 )
+from pci_controllers import _map_pci_class_to_type
 
 
 class TestValidateDevicePath:
