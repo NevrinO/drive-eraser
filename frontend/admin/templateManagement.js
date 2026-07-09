@@ -376,7 +376,7 @@ async function loadTemplateList() {
       templateList.appendChild(item);
     });
   } catch (err) {
-    templateList.innerHTML = `<div class="template-error-msg">Failed to load templates: ${err.message}</div>`;
+    templateList.innerHTML = `<div class="template-error-msg">Failed to load templates: ${escapeHtml(err.message)}</div>`;
   }
 }
 
@@ -619,7 +619,7 @@ function renderTemplatePreviewGrid(template) {
 
   // Validate grid dimensions to prevent browser crash (CRITIQUE.md #3)
   if (rows < 1 || rows > 32 || cols < 1 || cols > 32) {
-    templatePreviewGrid.innerHTML = `<div class="template-preview-error">Invalid grid dimensions: ${rows} × ${cols}. Maximum is 32 × 32.</div>`;
+    templatePreviewGrid.innerHTML = `<div class="template-preview-error">Invalid grid dimensions: ${escapeHtml(rows)} × ${escapeHtml(cols)}. Maximum is 32 × 32.</div>`;
     return;
   }
 
@@ -817,11 +817,11 @@ function openTemplatePreview(template) {
   templatePreviewInfo.innerHTML = `
     <div class="template-info-grid">
       <div><strong>Vendor:</strong> ${escapeHtml(template.vendor || "Generic")}</div>
-      <div><strong>Bays:</strong> ${template.bay_count || 0}</div>
-      <div><strong>Grid:</strong> ${template.rows || 1} × ${template.cols || 1}</div>
+      <div><strong>Bays:</strong> ${escapeHtml(template.bay_count || 0)}</div>
+      <div><strong>Grid:</strong> ${escapeHtml(template.rows || 1)} × ${escapeHtml(template.cols || 1)}</div>
       <div><strong>Traversal:</strong> ${escapeHtml(template.traversal_preset || "top_left_down_then_across")}</div>
-      <div class="template-info-grid--full"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? skipBayNumbers.join(", ") : "None"}</div>
-      <div class="template-info-grid--full"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? template.hybrid_slots.join(", ") : "None"}</div>
+      <div class="template-info-grid--full"><strong>Skip Positions:</strong> ${skipBayNumbers.length > 0 ? escapeHtml(skipBayNumbers.join(", ")) : "None"}</div>
+      <div class="template-info-grid--full"><strong>Hybrid Slots:</strong> ${template.hybrid_slots && template.hybrid_slots.length > 0 ? escapeHtml(template.hybrid_slots.join(", ")) : "None"}</div>
     </div>
   `;
 

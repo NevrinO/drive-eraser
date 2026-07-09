@@ -289,20 +289,23 @@ async function pollSmartTestStatus(device, testType) {
       // Check if grace period has elapsed
       const gracePeriodElapsed = testStartedAt ? (Date.now() - testStartedAt) >= GRACE_PERIOD_MS : true;
 
+      // Shared helper: only trust completion/failure/abort status if we've seen
+      // the test running or enough time has elapsed (A-F6-15)
+      const canTrustCompletion = () => seenInProgress ? gracePeriodElapsed :
+        (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
+      const handleNotReady = (reason) => {
+        console.log(reason);
+        testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
+      };
+
       if (data.status === 'in_progress') {
         seenInProgress = true;
         const percentage = data.percentage || 0;
         if (progressBar) progressBar.style.width = `${percentage}%`;
         if (progressText) progressText.textContent = `${Math.round(percentage).toString().padStart(2, '0')}%`;
       } else if (data.status === 'completed') {
-        // Only accept completed status if we've seen in_progress first (confirmed test was running)
-        // or the estimated test duration has elapsed (test should have completed by now).
-        // Without this, stale log entries from previous tests show as completed immediately.
-        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
-          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
-        if (!canTrustCompletion) {
-          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring completed status from stale log entry');
-          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
+        if (!canTrustCompletion()) {
+          handleNotReady('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring completed status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -313,12 +316,8 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'failed') {
-        // Only accept failed status if we've seen in_progress first or estimated duration elapsed
-        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
-          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
-        if (!canTrustCompletion) {
-          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring failed status from stale log entry');
-          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
+        if (!canTrustCompletion()) {
+          handleNotReady('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring failed status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -328,12 +327,8 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'aborted') {
-        // Only accept aborted status if we've seen in_progress first or estimated duration elapsed
-        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
-          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
-        if (!canTrustCompletion) {
-          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring aborted status from stale log entry');
-          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
+        if (!canTrustCompletion()) {
+          handleNotReady('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring aborted status from stale log entry');
           return;
         }
         clearInterval(smartTestPollingInterval);
@@ -343,14 +338,8 @@ async function pollSmartTestStatus(device, testType) {
           <button type="button" class="btn btn--secondary" data-refresh-smart-details data-device="${escapeHtml(device)}">Refresh Data</button>
         `;
       } else if (data.status === 'no_tests' || data.status === 'unknown') {
-        // Only accept no_tests/unknown if we've seen in_progress first or estimated duration elapsed.
-        // Before the test registers in the drive's status register, smartctl returns no_tests
-        // because there's no active test in the status register and the log table may be empty.
-        const canTrustCompletion = seenInProgress ? gracePeriodElapsed :
-          (Date.now() - (testStartedAt || pollingStartTime)) >= estimatedDurationMs;
-        if (!canTrustCompletion) {
-          console.log('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
-          testStatusDiv.innerHTML = '<p class="status-ready">Test is running... waiting for drive to report progress.</p>';
+        if (!canTrustCompletion()) {
+          handleNotReady('Test not confirmed running (seenInProgress=false) and estimated duration not elapsed, ignoring no_tests/unknown status - test may not have registered yet');
           return;
         }
         clearInterval(smartTestPollingInterval);

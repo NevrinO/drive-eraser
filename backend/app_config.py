@@ -14,7 +14,7 @@ import hmac
 import hashlib
 import socket
 
-from common import get_logs_dir, get_config_dir, load_policy
+from common import get_logs_dir, get_config_dir, load_policy, PROJECT_ROOT
 
 class PollingFilter(logging.Filter):
     """
@@ -138,7 +138,6 @@ BULK_CERT_JOBS_LOCK = Lock()
 SMART_TEST_LOCKS = {}
 SMART_TEST_LOCKS_LOCK = Lock()
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FRONTEND_DIR = os.path.join(PROJECT_ROOT, "frontend")
 
 def get_local_ip():

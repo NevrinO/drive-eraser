@@ -483,7 +483,7 @@ if (applyMappingBtn) {
 
 // Sets the mapping preview panel to an error or warning message and shows it
 function setPreviewMessage(message, isWarning = false) {
-  mappingPreview.innerHTML = `<div class="${isWarning ? 'preview-message--warning' : 'preview-message--error'}">${message}</div>`;
+  mappingPreview.innerHTML = `<div class="${isWarning ? 'preview-message--warning' : 'preview-message--error'}">${escapeHtml(message)}</div>`;
   mappingPreview.classList.remove('hidden');
 }
 

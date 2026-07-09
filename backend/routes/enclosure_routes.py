@@ -20,6 +20,47 @@ from routes._shared import require_admin_auth, is_valid_id, _validate_slot_metad
 enclosure_bp = Blueprint('enclosure_routes', __name__)
 
 
+def _prepare_enclosure_slots(template_map, payload, starting_slot_number):
+    """Shared logic for slot_mappings and auto_map_slots branches.
+
+    Loads template, validates slot_count, converts starting_slot_number,
+    and builds traversal positions.
+
+    Returns:
+        (template, positions, starting_slot) on success, or
+        (error_response, None, None) on failure — where error_response is a
+        Flask jsonify tuple ready to return.
+    """
+    template = template_map[payload["template_id"]]
+    slot_count = template.get("slot_count", 0)
+    rows = template.get("rows", 1)
+    cols = template.get("cols", 1)
+    traversal_preset = template.get("traversal_preset", "top_left_down_then_across")
+
+    if slot_count <= 0:
+        return (jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400), None, None
+
+    if slot_count > MAX_SLOTS_PER_ENCLOSURE:
+        return (jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400), None, None
+
+    try:
+        starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
+        if starting_slot < 0 or starting_slot > 9999:
+            return (jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400), None, None
+    except (ValueError, TypeError):
+        return (jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400), None, None
+
+    if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
+        try:
+            positions = build_traversal_positions(rows, cols, traversal_preset, slot_count)
+        except ValueError as e:
+            return (jsonify({"error": f"Failed to build traversal positions: {str(e)}"}), 400), None, None
+    else:
+        positions = [(i, 0) for i in range(slot_count)]
+
+    return template, positions, starting_slot
+
+
 # ==================== Enclosure Management APIs ====================
 
 @enclosure_bp.route("/api/admin/hardware-enclosure-info", methods=["GET"])
@@ -168,41 +209,15 @@ def manage_enclosures():
                 # Check if frontend provided explicit slot mappings
                 slot_mappings = payload.get("slot_mappings")
                 if slot_mappings:
-                    # Use frontend-provided slot mappings with HW identifiers
-                    template = template_map[payload["template_id"]]
-                    slot_count = template.get("slot_count", 0)
-                    rows = template.get("rows", 1)
-                    cols = template.get("cols", 1)
-                    traversal_preset = template.get("traversal_preset", "top_left_down_then_across")
-
-                    if slot_count <= 0:
-                        return jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400
-
-                    # Enforce size limit for slots per enclosure (Rule #5)
-                    if slot_count > MAX_SLOTS_PER_ENCLOSURE:
-                        return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-
-                    # Safe numeric conversion for starting_slot_number (Rule #84)
-                    try:
-                        starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
-                        if starting_slot < 0 or starting_slot > 9999:
-                            return jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400
-                    except (ValueError, TypeError):
-                        return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
+                    result = _prepare_enclosure_slots(template_map, payload, starting_slot_number)
+                    if result[1] is None:
+                        return result[0]
+                    template, positions, starting_slot = result
 
                     # Validate slot_mappings entries
                     err = _validate_slot_metadata({}, {}, slot_mappings, default_role=template.get("default_role", "wipe"))
                     if err:
                         return jsonify({"error": err}), 400
-
-                    # Build traversal positions
-                    if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
-                        try:
-                            positions = build_traversal_positions(rows, cols, traversal_preset, slot_count)
-                        except ValueError as e:
-                            return jsonify({"error": f"Failed to build traversal positions: {str(e)}"}), 400
-                    else:
-                        positions = [(i, 0) for i in range(slot_count)]
 
                     # Build slots from frontend-provided mappings
                     for slot_index, (row, col) in enumerate(positions):
@@ -225,28 +240,11 @@ def manage_enclosures():
                         enclosure["slots"][slot_key] = slot_data
 
                 elif auto_map_slots:
-                    template = template_map[payload["template_id"]]
-                    slot_count = template.get("slot_count", 0)
+                    result = _prepare_enclosure_slots(template_map, payload, starting_slot_number)
+                    if result[1] is None:
+                        return result[0]
+                    template, positions, starting_slot = result
                     hybrid_slots = template.get("hybrid_slots", [])
-                    rows = template.get("rows", 1)
-                    cols = template.get("cols", 1)
-                    traversal_preset = template.get("traversal_preset", "top_left_down_then_across")
-
-                    if slot_count <= 0:
-                        return jsonify({"error": "Template has no slots defined (slot_count is 0). Use a template with at least 1 slot."}), 400
-
-                    # Enforce size limit for slots per enclosure (Rule #5)
-                    if slot_count > MAX_SLOTS_PER_ENCLOSURE:
-                        return jsonify({"error": f"Slot count ({slot_count}) exceeds maximum ({MAX_SLOTS_PER_ENCLOSURE})"}), 400
-
-                    # Generate slots based on template traversal order
-                    # Safe numeric conversion for starting_slot_number (Rule #84)
-                    try:
-                        starting_slot = int(starting_slot_number) if starting_slot_number is not None else 0
-                        if starting_slot < 0 or starting_slot > 9999:
-                            return jsonify({"error": "Starting slot number must be between 0 and 9999"}), 400
-                    except (ValueError, TypeError):
-                        return jsonify({"error": "Invalid starting_slot_number: must be a valid integer"}), 400
 
                     # Safe numeric conversion for nvme_start_slot (A-B3-9)
                     if nvme_start_slot is not None:
@@ -256,17 +254,6 @@ def manage_enclosures():
                                 return jsonify({"error": "nvme_start_slot must be between 0 and 9999"}), 400
                         except (ValueError, TypeError):
                             return jsonify({"error": "Invalid nvme_start_slot: must be a valid integer"}), 400
-
-                    # Build traversal positions if template has grid layout (rows/cols)
-                    # Otherwise use linear iteration for simple slot_count-only templates
-                    if rows > 0 and cols > 0 and traversal_preset in SUPPORTED_TRAVERSALS:
-                        try:
-                            positions = build_traversal_positions(rows, cols, traversal_preset, slot_count)
-                        except ValueError as e:
-                            return jsonify({"error": f"Failed to build traversal positions: {str(e)}"}), 400
-                    else:
-                        # Fallback to linear iteration for templates without grid layout
-                        positions = [(i, 0) for i in range(slot_count)]
 
                     for slot_index, (row, col) in enumerate(positions):
                         slot_key = str(slot_index)

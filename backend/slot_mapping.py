@@ -193,6 +193,12 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
     # Scan SAS direct-attached topology (no expander)
     # Pattern: pci-{pci_addr}-scsi-{host}:0:{slot}:0
+    # Pre-build set of sas_expander slots for O(1) duplicate check (A-B7-7)
+    sas_expander_slots = {
+        (entry['pci_controller'], entry['physical_slot_number'])
+        for entry in master_map
+        if entry.get('slot_type') == 'sas_expander'
+    }
     try:
         # Pattern for direct-attached SAS: pci-{pci_addr}-scsi-{host}:0:{slot}:{lun}
         # Use \Z for strict end-of-string (lesson #12) and flexible LUN (\d+) for multi-LUN devices
@@ -211,13 +217,7 @@ def generate_master_slot_map(force_refresh: bool = False) -> List[Dict]:
 
                 # Check if this is already covered by SAS expander detection
                 # (avoid duplicates when expander is present)
-                is_duplicate = False
-                for existing in master_map:
-                    if (existing['pci_controller'] == pci_addr and
-                        existing['slot_type'] == 'sas_expander' and
-                        existing['physical_slot_number'] == slot_num):
-                        is_duplicate = True
-                        break
+                is_duplicate = (pci_addr, slot_num) in sas_expander_slots
 
                 if not is_duplicate:
                     # Validate PCI address for defense-in-depth (lesson #9)

@@ -442,7 +442,7 @@ async function openPrintWindow(friendlyId) {
       </head>
       <body class="print-error">
         <h2>Retrieval failure occurred</h2>
-        <p class="error-detail">Error details: ${err.message}</p>
+        <p class="error-detail">Error details: ${escapeHtml(err.message)}</p>
       </body>
       </html>
     `;
@@ -488,7 +488,7 @@ async function openBulkPrintWindow(friendlyId) {
       </head>
       <body class="print-error">
         <h2>Retrieval failure occurred</h2>
-        <p class="error-detail">Error details: ${err.message}</p>
+        <p class="error-detail">Error details: ${escapeHtml(err.message)}</p>
       </body>
       </html>
     `;

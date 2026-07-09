@@ -456,7 +456,7 @@
       const device = mapping[bayId];
       return `
         <div class="discovery-preview-row">
-          <strong class="discovery-mapping-bay">${escapeHtml ? escapeHtml(bayId) : bayId}</strong> → ${escapeHtml ? escapeHtml(device.device_name) : device.device_name} (${escapeHtml ? escapeHtml(device.device_path) : device.device_path})
+          <strong class="discovery-mapping-bay">${escapeHtml(bayId)}</strong> → ${escapeHtml(device.device_name)} (${escapeHtml(device.device_path)})
         </div>
       `;
     }).join('');

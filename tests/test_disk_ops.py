@@ -1412,5 +1412,190 @@ class TestResolveViaSysfsScsiPhySearch:
             assert result is None
 
 
+class TestResolveViaSysfsAta:
+    r"""Test _resolve_via_sysfs_ata and _find_block_device_from_ata_port.
+
+    Covers:
+    - Primary path: direct ATA port lookup via hw_identifier
+    - Secondary fallback: scan all ATA ports matching PCI controller + port number
+    - PCI controller mismatch (should skip)
+    - ATA port number mismatch (should skip)
+    - Block device resolution from ATA port via SCSI host
+    - No match returns None
+    """
+
+    def test_primary_hw_identifier_direct_lookup(self):
+        """Primary path: hw_identifier='ata1' resolves directly via /sys/class/ata_port/ata1."""
+        from device_resolution import _resolve_via_sysfs_ata, _find_block_device_from_ata_port
+
+        ata_port_base = "/sys/class/ata_port"
+        scsi_device_base = "/sys/class/scsi_device"
+
+        def mock_isdir(path):
+            return path == os.path.join(ata_port_base, "ata1")
+
+        def mock_listdir(path):
+            if path == scsi_device_base:
+                return ["1:0:0:0"]
+            return []
+
+        def mock_glob(pattern):
+            if "ata1" in pattern and "host*" in pattern:
+                return ["/sys/class/ata_port/ata1/host1"]
+            return []
+
+        def mock_exists(path):
+            return path == "/dev/sda"
+
+        with patch('os.path.isdir', side_effect=mock_isdir), \
+             patch('os.listdir', side_effect=mock_listdir), \
+             patch('glob.glob', side_effect=mock_glob), \
+             patch('os.path.exists', side_effect=mock_exists):
+            result = _resolve_via_sysfs_ata("0000:00:1f.2", 1, hw_identifier="ata1")
+            assert result == "/dev/sda"
+
+    def test_primary_hw_identifier_not_found_falls_back(self):
+        """If hw_identifier dir doesn't exist, fall back to scanning all ATA ports."""
+        from device_resolution import _resolve_via_sysfs_ata
+
+        ata_port_base = "/sys/class/ata_port"
+        scsi_device_base = "/sys/class/scsi_device"
+
+        def mock_isdir(path):
+            return False  # hw_identifier dir doesn't exist
+
+        def mock_listdir(path):
+            if path == ata_port_base:
+                return ["ata1"]
+            if path == scsi_device_base:
+                return ["1:0:0:0"]
+            return []
+
+        def mock_realpath(path):
+            if path == os.path.join(ata_port_base, "ata1"):
+                return "/sys/devices/pci0000:00/0000:00:1f.2/ata1/host1"
+            return path
+
+        def mock_glob(pattern):
+            if "ata1" in pattern and "host*" in pattern:
+                return ["/sys/class/ata_port/ata1/host1"]
+            return []
+
+        def mock_exists(path):
+            return path == "/dev/sda"
+
+        with patch('os.path.isdir', side_effect=mock_isdir), \
+             patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath), \
+             patch('glob.glob', side_effect=mock_glob), \
+             patch('os.path.exists', side_effect=mock_exists):
+            result = _resolve_via_sysfs_ata("0000:00:1f.2", 1, hw_identifier="ata5")
+            assert result == "/dev/sda"
+
+    def test_secondary_scan_skips_wrong_pci(self):
+        """Secondary scan should skip ATA ports on a different PCI controller."""
+        from device_resolution import _resolve_via_sysfs_ata
+
+        ata_port_base = "/sys/class/ata_port"
+
+        def mock_isdir(path):
+            return False
+
+        def mock_listdir(path):
+            if path == ata_port_base:
+                return ["ata1"]
+            return []
+
+        def mock_realpath(path):
+            if path == os.path.join(ata_port_base, "ata1"):
+                return "/sys/devices/pci0000:00/0000:01:00.0/ata1/host2"
+            return path
+
+        with patch('os.path.isdir', side_effect=mock_isdir), \
+             patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath):
+            result = _resolve_via_sysfs_ata("0000:00:1f.2", 1)
+            assert result is None
+
+    def test_secondary_scan_skips_wrong_ata_port_number(self):
+        """Secondary scan should skip ATA ports with wrong port number."""
+        from device_resolution import _resolve_via_sysfs_ata
+
+        ata_port_base = "/sys/class/ata_port"
+
+        def mock_isdir(path):
+            return False
+
+        def mock_listdir(path):
+            if path == ata_port_base:
+                return ["ata5"]
+            return []
+
+        def mock_realpath(path):
+            if path == os.path.join(ata_port_base, "ata5"):
+                return "/sys/devices/pci0000:00/0000:00:1f.2/ata5/host3"
+            return path
+
+        with patch('os.path.isdir', side_effect=mock_isdir), \
+             patch('os.listdir', side_effect=mock_listdir), \
+             patch('os.path.realpath', side_effect=mock_realpath):
+            # Looking for ata1 but only ata5 exists on the right controller
+            result = _resolve_via_sysfs_ata("0000:00:1f.2", 1)
+            assert result is None
+
+    def test_no_ata_ports_returns_none(self):
+        """Should return None when /sys/class/ata_port is empty or missing."""
+        from device_resolution import _resolve_via_sysfs_ata
+
+        def mock_isdir(path):
+            return False
+
+        def mock_listdir(path):
+            raise OSError("mock: directory not found")
+
+        with patch('os.path.isdir', side_effect=mock_isdir), \
+             patch('os.listdir', side_effect=mock_listdir):
+            result = _resolve_via_sysfs_ata("0000:00:1f.2", 1)
+            assert result is None
+
+    def test_find_block_device_from_ata_port_resolves(self):
+        """_find_block_device_from_ata_port should find /dev/sdX via SCSI host."""
+        from device_resolution import _find_block_device_from_ata_port
+
+        scsi_device_base = "/sys/class/scsi_device"
+
+        def mock_listdir(path):
+            if path == scsi_device_base:
+                return ["1:0:0:0"]
+            if "block" in path:
+                return ["sda"]
+            return []
+
+        def mock_glob(pattern):
+            if "host*" in pattern:
+                return ["/sys/class/ata_port/ata1/host1"]
+            return []
+
+        def mock_exists(path):
+            return path == "/dev/sda"
+
+        with patch('os.listdir', side_effect=mock_listdir), \
+             patch('glob.glob', side_effect=mock_glob), \
+             patch('os.path.exists', side_effect=mock_exists):
+            result = _find_block_device_from_ata_port("/sys/class/ata_port/ata1", scsi_device_base)
+            assert result == "/dev/sda"
+
+    def test_find_block_device_no_scsi_devices(self):
+        """_find_block_device_from_ata_port returns None when no SCSI devices exist."""
+        from device_resolution import _find_block_device_from_ata_port
+
+        def mock_listdir(path):
+            raise OSError("mock: directory not found")
+
+        with patch('os.listdir', side_effect=mock_listdir):
+            result = _find_block_device_from_ata_port("/sys/class/ata_port/ata1", "/sys/class/scsi_device")
+            assert result is None
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

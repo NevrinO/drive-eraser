@@ -147,8 +147,6 @@ def resolve_command_path(command_name, candidates, env_var_name=None):
     resolved = shutil.which(command_name)
     return resolved if (resolved and os.path.exists(resolved) and os.access(resolved, os.X_OK)) else None
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 def load_command_path_overrides():
     config_path = os.path.join(get_config_dir(), "command_paths.json")
     if os.path.exists(config_path):

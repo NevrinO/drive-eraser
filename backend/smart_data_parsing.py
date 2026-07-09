@@ -59,6 +59,24 @@ def get_triage_thresholds():
     except Exception:
         return _DEFAULT_TRIAGE_THRESHOLDS.copy()
 
+def _make_empty_template(smart_polling=True):
+    """Create a SMART data template with all fields set to None/UNKNOWN.
+
+    Used as the early-return value when device validation or smartctl fails.
+    """
+    return {
+        "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
+        "wear_level": None, "reallocated_sectors": None, "pending_sectors": None, "power_on_hours": None,
+        "power_on_days": None, "temperature": None, "interface_errors": None, "data_written_raw": None,
+        "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
+        "rotation_rate": None,
+        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
+        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
+        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
+        "model_profile": None, "interface_type": None, "smart_polling": smart_polling,
+        "write_counter_source": None
+    }
+
 def get_smart_identity(device, diagnostics=None):
     """Get basic device identity information using smartctl -j -i (fast, ~0.5s per drive).
 
@@ -73,17 +91,7 @@ def get_smart_identity(device, diagnostics=None):
     Returns:
         Dict with basic device info and smart_polling: true flag
     """
-    empty_template = {
-        "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
-        "wear_level": None, "reallocated_sectors": None, "pending_sectors": None, "power_on_hours": None,
-        "power_on_days": None, "temperature": None, "interface_errors": None, "data_written_raw": None,
-        "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
-        "rotation_rate": None,
-        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
-        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
-        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "interface_type": None, "smart_polling": True
-    }
+    empty_template = _make_empty_template(smart_polling=True)
     if not validate_device_path(device):
         return empty_template
     smartctl_cmd = get_command_path("smartctl")
@@ -117,18 +125,7 @@ def get_smart_identity(device, diagnostics=None):
     }
 
 def get_smart_data(device, diagnostics=None):
-    empty_template = {
-        "status": "UNKNOWN", "model": None, "serial": None, "capacity_str": "-", "capacity_bytes": None,
-        "wear_level": None, "reallocated_sectors": None, "pending_sectors": None, "power_on_hours": None,
-        "power_on_days": None, "temperature": None, "interface_errors": None, "data_written_raw": None,
-        "data_written_bytes": None, "data_read_raw": None, "data_read_bytes": None, "reallocated_normalized": None, "reallocated_threshold": None, "raw": None,
-        "rotation_rate": None,
-        "sas_grown_defect_list": None, "sas_scan_status": None, "sas_non_medium_errors": None,
-        "sas_uncorrectable_read_errors": None, "sas_uncorrectable_write_errors": None, "sas_uncorrectable_verify_errors": None,
-        "sas_scan_event_count": None, "sas_scan_unique_lbas": None, "sas_sticky_lba_detected": None,
-        "model_profile": None, "interface_type": None, "smart_polling": False,
-        "write_counter_source": None
-    }
+    empty_template = _make_empty_template(smart_polling=False)
     if not validate_device_path(device):
         return empty_template
     smartctl_cmd = get_command_path("smartctl")

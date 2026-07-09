@@ -539,6 +539,91 @@ def _try_update_test_record(record_id, latest_test, device, new_status,
     return updated
 
 
+def _update_test_status_from_drive(device, device_path, status_result):
+    """Check database for an active SMART test record and update it based on live drive status.
+
+    Extracts the database status-transition logic from the endpoint so the
+    endpoint function stays readable. Mutates `status_result` in place to
+    add `started_at` when a matching DB record is found.
+    """
+    from database import get_smart_test_history
+    try:
+        recent_tests = get_smart_test_history(device=device_path, limit=1)
+        if not recent_tests:
+            return
+
+        latest_test = recent_tests[0]
+        test_status = latest_test.get("status")
+        record_id = latest_test.get("id")
+        started_at = latest_test.get("started_at")
+
+        # Include started_at in response for frontend grace period check
+        status_result["started_at"] = started_at
+
+        test_type = latest_test.get("test_type")
+
+        # Transition: DB "started" → "in_progress" when drive confirms test is running.
+        # This is critical: the drive's real-time status register (ata_smart_data.self_test.status)
+        # confirms the test is actually running. Once we see this, we can trust subsequent
+        # "completed"/"failed" from the log table. Without this transition, the DB stays "started"
+        # and we can't distinguish between the current test's completion and a previous test's
+        # stale log entry.
+        if test_status == "started" and status_result.get("status") == "in_progress":
+            if _try_update_test_record(record_id, latest_test, device, "in_progress"):
+                logger.debug(f"SMART test {device} confirmed in progress by drive status register")
+
+        # If database shows test running but drive shows completed, update database.
+        # Use should_trust_completion_status: when DB is "started" (never confirmed running),
+        # the "completed" is likely from a previous test's log entry — don't trust it until
+        # the estimated test duration has elapsed.
+        elif test_status in ("started", "in_progress") and status_result.get("status") == "completed":
+            if should_trust_completion_status(started_at, test_status, test_type):
+                # Determine pass/fail: prefer the reliable status.passed boolean
+                latest_result = status_result.get("latest_result", {})
+                drive_status = latest_result.get("status", "").lower()
+                passed = latest_result.get("passed")
+
+                if passed is True:
+                    result = "passed"
+                elif passed is False:
+                    result = "failed"
+                elif ("passed" in drive_status or "completed without error" in drive_status or "completed" in drive_status) and "failed" not in drive_status:
+                    result = "passed"
+                elif "failed" in drive_status or "error" in drive_status:
+                    result = "failed"
+                else:
+                    result = "unknown"
+
+                logger.debug(f"SMART test {device} completed with drive_status={drive_status}, passed={passed}, result={result}")
+                _try_update_test_record(record_id, latest_test, device, "completed",
+                                        result=result,
+                                        output_json=status_result.get("self_test_log_table"))
+        # If database shows test running but drive shows failed, update database
+        elif test_status in ("started", "in_progress") and status_result.get("status") == "failed":
+            if should_trust_completion_status(started_at, test_status, test_type):
+                logger.debug(f"SMART test {device} failed according to drive status")
+                _try_update_test_record(record_id, latest_test, device, "failed",
+                                        result="failed",
+                                        output_json=status_result.get("self_test_log_table"))
+        # If database shows test running but drive shows aborted, update database
+        elif test_status in ("started", "in_progress") and status_result.get("status") == "aborted":
+            if should_trust_completion_status(started_at, test_status, test_type):
+                logger.debug(f"SMART test {device} aborted according to drive status")
+                _try_update_test_record(record_id, latest_test, device, "failed",
+                                        result="aborted",
+                                        output_json=status_result.get("self_test_log_table"))
+        # If database shows test running but drive shows no_tests/unknown after grace period,
+        # the test is no longer running but we can't determine pass/fail. Mark as completed
+        # with unknown result so the card stops showing "running".
+        elif test_status in ("started", "in_progress") and status_result.get("status") in ("no_tests", "unknown"):
+            if should_trust_completion_status(started_at, test_status, test_type):
+                logger.debug(f"SMART test {device} no longer running (status={status_result.get('status')}), marking completed with unknown result")
+                _try_update_test_record(record_id, latest_test, device, "completed",
+                                        result="unknown")
+    except Exception as e:
+        logger.warning(f"Failed to update SMART test database record for {device}: {e}")
+
+
 @smart_bp.route("/api/admin/drives/<device>/smart-test-status")
 @require_admin_auth
 @limiter.limit("30 per minute")
@@ -557,89 +642,16 @@ def get_smart_test_status_endpoint(device):
         
         # Import smart_parsing function
         from smart_parsing import get_smart_test_status
-        from database import get_smart_test_history, update_smart_test_run
-        
+
         # Get test status from drive (live data)
         status_result = get_smart_test_status(device_path)
-        
+
         if "error" in status_result:
             return jsonify(status_result), 400
-        
+
         # Check database for active test record and update if completed
-        try:
-            recent_tests = get_smart_test_history(device=device_path, limit=1)
-            if recent_tests:
-                latest_test = recent_tests[0]
-                test_status = latest_test.get("status")
-                record_id = latest_test.get("id")
-                started_at = latest_test.get("started_at")
-                
-                # Include started_at in response for frontend grace period check
-                status_result["started_at"] = started_at
-                
-                test_type = latest_test.get("test_type")
-                
-                # Transition: DB "started" → "in_progress" when drive confirms test is running.
-                # This is critical: the drive's real-time status register (ata_smart_data.self_test.status)
-                # confirms the test is actually running. Once we see this, we can trust subsequent
-                # "completed"/"failed" from the log table. Without this transition, the DB stays "started"
-                # and we can't distinguish between the current test's completion and a previous test's
-                # stale log entry.
-                if test_status == "started" and status_result.get("status") == "in_progress":
-                    if _try_update_test_record(record_id, latest_test, device, "in_progress"):
-                        logger.debug(f"SMART test {device} confirmed in progress by drive status register")
-                
-                # If database shows test running but drive shows completed, update database.
-                # Use should_trust_completion_status: when DB is "started" (never confirmed running),
-                # the "completed" is likely from a previous test's log entry — don't trust it until
-                # the estimated test duration has elapsed.
-                elif test_status in ("started", "in_progress") and status_result.get("status") == "completed":
-                    if should_trust_completion_status(started_at, test_status, test_type):
-                        # Determine pass/fail: prefer the reliable status.passed boolean
-                        latest_result = status_result.get("latest_result", {})
-                        drive_status = latest_result.get("status", "").lower()
-                        passed = latest_result.get("passed")
-                        
-                        if passed is True:
-                            result = "passed"
-                        elif passed is False:
-                            result = "failed"
-                        elif ("passed" in drive_status or "completed without error" in drive_status or "completed" in drive_status) and "failed" not in drive_status:
-                            result = "passed"
-                        elif "failed" in drive_status or "error" in drive_status:
-                            result = "failed"
-                        else:
-                            result = "unknown"
-                        
-                        logger.debug(f"SMART test {device} completed with drive_status={drive_status}, passed={passed}, result={result}")
-                        _try_update_test_record(record_id, latest_test, device, "completed",
-                                                result=result,
-                                                output_json=status_result.get("self_test_log_table"))
-                # If database shows test running but drive shows failed, update database
-                elif test_status in ("started", "in_progress") and status_result.get("status") == "failed":
-                    if should_trust_completion_status(started_at, test_status, test_type):
-                        logger.debug(f"SMART test {device} failed according to drive status")
-                        _try_update_test_record(record_id, latest_test, device, "failed",
-                                                result="failed",
-                                                output_json=status_result.get("self_test_log_table"))
-                # If database shows test running but drive shows aborted, update database
-                elif test_status in ("started", "in_progress") and status_result.get("status") == "aborted":
-                    if should_trust_completion_status(started_at, test_status, test_type):
-                        logger.debug(f"SMART test {device} aborted according to drive status")
-                        _try_update_test_record(record_id, latest_test, device, "failed",
-                                                result="aborted",
-                                                output_json=status_result.get("self_test_log_table"))
-                # If database shows test running but drive shows no_tests/unknown after grace period,
-                # the test is no longer running but we can't determine pass/fail. Mark as completed
-                # with unknown result so the card stops showing "running".
-                elif test_status in ("started", "in_progress") and status_result.get("status") in ("no_tests", "unknown"):
-                    if should_trust_completion_status(started_at, test_status, test_type):
-                        logger.debug(f"SMART test {device} no longer running (status={status_result.get('status')}), marking completed with unknown result")
-                        _try_update_test_record(record_id, latest_test, device, "completed",
-                                                result="unknown")
-        except Exception as e:
-            logger.warning(f"Failed to update SMART test database record for {device}: {e}")
-        
+        _update_test_status_from_drive(device, device_path, status_result)
+
         return jsonify(status_result), 200
     except Exception as e:
         logger.error(f"SMART test status failed for {device}: {e}")

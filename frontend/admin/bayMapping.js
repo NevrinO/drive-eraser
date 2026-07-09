@@ -261,10 +261,11 @@ function renderBayConfigurationRow(bayId, bayConfig, unmappedDrives) {
     `;
 
     const primarySelect = container.querySelector(`#path-${bayId}`);
-    populatePathDropdown(primarySelect, unmappedDrives, bayConfig.by_path);
+    const primaryFilter = isU2 ? null : "sas_sata";
+    populatePathDropdown(primarySelect, unmappedDrives, bayConfig.by_path, primaryFilter);
 
     const nvmeSelect = container.querySelector(`#path-nvme-${bayId}`);
-    populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme);
+    populatePathDropdown(nvmeSelect, unmappedDrives, bayConfig.by_path_nvme, "nvme");
 
     const labelInput = container.querySelector(`#label-${bayId}`);
     labelInput.addEventListener("input", () => {
@@ -551,10 +552,7 @@ if (addBayBtn) {
   if (label === null) return;
 
   const cleanLabel = label.trim() || "Work Bay";
-  const typeSelection = prompt("Enter Interface Slot Type ('sas_sata' or 'u2' for hybrid NVMe):", "sas_sata");
-  if (typeSelection === null) return;
-
-  const cleanType = typeSelection.trim().toLowerCase() === "u2" ? "u2" : "sas_sata";
+  const cleanType = "sas_sata";
 
   const bayKeys = Object.keys(localBayMapCopy);
   let highestNum = -1;

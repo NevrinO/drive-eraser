@@ -136,6 +136,42 @@ async function renderBatchModalForm() {
   }
 }
 
+// Shared helpers for batch erase response handling (A-F6-2, A-F6-3)
+async function parseBatchEraseResponse(response) {
+  try {
+    return await response.json();
+  } catch (e) {
+    console.error("Failed to parse batch erase response JSON:", e);
+    alert("Failed to process server response");
+    return null;
+  }
+}
+
+function handleBatchEraseError(response, result, payload) {
+  if (response.ok) return false;
+  if (result && result.error_code === "pre_wipe_health_check_failed") {
+    const blockedDrives = result.blocked_drives || [];
+    const passingBays = result.passing_bays || [];
+    const isOverrideAvailable = result.override_available === true;
+    showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, payload);
+    return true;
+  }
+  alert(`Wipe Rejected: ${result?.error || "Unknown Error"}`);
+  return true;
+}
+
+function completeBatchWipe(successMessage) {
+  closeModal(batchWipeModal);
+  isBatchMode = false;
+  batchSelectToggleBtn.classList.remove("active");
+  batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
+  selectedBays.clear();
+  batchActionFooter.classList.add("hidden");
+  alert(successMessage);
+  loadDrives();
+  loadHistoryIndex();
+}
+
 batchEraseForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
@@ -211,43 +247,11 @@ batchEraseForm.addEventListener("submit", async (event) => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
-    let result;
-    try {
-      result = await response.json();
-    } catch (e) {
-      console.error("Failed to parse batch erase response JSON:", e);
-      alert("Failed to process server response");
-      return;
-    }
-    if (!response.ok) {
-      const error = result.error || "Unknown Error";
-      
-      // Check if error is from health gate (structured response)
-      if (result.error_code === "pre_wipe_health_check_failed") {
-        const blockedDrives = result.blocked_drives || [];
-        const passingBays = result.passing_bays || [];
-        const isOverrideAvailable = result.override_available === true;
-        
-        // Show health gate warning modal
-        showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, payload);
-        return;
-      }
-      
-      alert(`Wipe Rejected: ${error}`);
-      return;
-    }
+    const result = await parseBatchEraseResponse(response);
+    if (result === null) return;
+    if (handleBatchEraseError(response, result, payload)) return;
     
-    closeModal(batchWipeModal);
-    isBatchMode = false;
-    batchSelectToggleBtn.classList.remove("active");
-    batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
-    selectedBays.clear();
-    batchActionFooter.classList.add("hidden");
-    
-    alert("Sanitization batch successfully initiated.");
-    
-    loadDrives();
-    loadHistoryIndex();
+    completeBatchWipe("Sanitization batch successfully initiated.");
   } catch (err) {
     alert(`Failed to launch batch process: ${err.message}`);
   } finally {
@@ -369,37 +373,11 @@ if (healthGateOverrideBtn) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ...pendingHealthGatePayload, health_gate_override: true })
       });
-      let result;
-      try {
-        result = await response.json();
-      } catch (e) {
-        console.error("Failed to parse batch erase response JSON:", e);
-        alert("Failed to process server response");
-        return;
-      }
-      if (!response.ok) {
-        if (result.error_code === "pre_wipe_health_check_failed") {
-          const blockedDrives = result.blocked_drives || [];
-          const passingBays = result.passing_bays || [];
-          const isOverrideAvailable = result.override_available === true;
-          showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, pendingHealthGatePayload);
-          return;
-        }
-        alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
-        return;
-      }
+      const result = await parseBatchEraseResponse(response);
+      if (result === null) return;
+      if (handleBatchEraseError(response, result, pendingHealthGatePayload)) return;
       
-      closeModal(batchWipeModal);
-      isBatchMode = false;
-      batchSelectToggleBtn.classList.remove("active");
-      batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
-      selectedBays.clear();
-      batchActionFooter.classList.add("hidden");
-      
-      alert("Sanitization batch successfully initiated with health gate override.");
-      
-      loadDrives();
-      loadHistoryIndex();
+      completeBatchWipe("Sanitization batch successfully initiated with health gate override.");
     } catch (err) {
       alert(`Failed to launch batch process: ${err.message}`);
     } finally {
@@ -452,38 +430,11 @@ if (healthGateDropBtn) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(dropPayload)
       });
-      let result;
-      try {
-        result = await response.json();
-      } catch (e) {
-        console.error("Failed to parse batch erase response JSON:", e);
-        alert("Failed to process server response");
-        return;
-      }
-      if (!response.ok) {
-        // Could still have health gate failures if conditions changed
-        if (result.error_code === "pre_wipe_health_check_failed") {
-          const blockedDrives = result.blocked_drives || [];
-          const passingBays = result.passing_bays || [];
-          const isOverrideAvailable = result.override_available === true;
-          showHealthGateWarning(blockedDrives, passingBays, isOverrideAvailable, dropPayload);
-          return;
-        }
-        alert(`Wipe Rejected: ${result.error || "Unknown Error"}`);
-        return;
-      }
+      const result = await parseBatchEraseResponse(response);
+      if (result === null) return;
+      if (handleBatchEraseError(response, result, dropPayload)) return;
       
-      closeModal(batchWipeModal);
-      isBatchMode = false;
-      batchSelectToggleBtn.classList.remove("active");
-      batchSelectToggleBtn.textContent = "Sanitize Mode: OFF";
-      selectedBays.clear();
-      batchActionFooter.classList.add("hidden");
-      
-      alert(`Sanitization initiated for ${count} drive(s). Blocked drive(s) were skipped.`);
-      
-      loadDrives();
-      loadHistoryIndex();
+      completeBatchWipe(`Sanitization initiated for ${count} drive(s). Blocked drive(s) were skipped.`);
     } catch (err) {
       alert(`Failed to launch batch process: ${err.message}`);
     } finally {

@@ -195,29 +195,25 @@ async function loadSystemConfig() {
 }
 
 async function saveSystemConfig(formData) {
-  try {
-    const response = await safeFetch("/api/admin/policy", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(formData)
-    });
-    
-    if (!response.ok) {
-      let errorMessage = `HTTP ${response.status}`;
-      try {
-        const errorData = await response.json();
-        errorMessage = errorData.error || errorMessage;
-      } catch (e) {
-        // Response body is not JSON — use generic HTTP error
-      }
-      throw new Error(errorMessage);
+  const response = await safeFetch("/api/admin/policy", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(formData)
+  });
+
+  if (!response.ok) {
+    let errorMessage = `HTTP ${response.status}`;
+    try {
+      const errorData = await response.json();
+      errorMessage = errorData.error || errorMessage;
+    } catch (e) {
+      // Response body is not JSON — use generic HTTP error
     }
-    
-    const result = await response.json();
-    return result;
-  } catch (error) {
-    throw error;
+    throw new Error(errorMessage);
   }
+
+  const result = await response.json();
+  return result;
 }
 
 function showError(element, message) {

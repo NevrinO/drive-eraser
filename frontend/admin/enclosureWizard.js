@@ -20,12 +20,8 @@ async function ensureWizardDataLoaded() {
   return _wizardDataPromise;
 }
 
-// Open new enclosure wizard
-async function openNewEnclosureWizard() {
-  const modal = document.getElementById("enclosureWizardModal");
-  if (!modal) return;
-
-  // Ensure save button listener is attached (modal may not exist at module load)
+// Ensure save button listener is attached (modal may not exist at module load)
+function attachWizardSaveListener() {
   const saveBtn = document.getElementById("wizardSaveBtn");
   if (saveBtn && !saveBtn.dataset.enclosureListener) {
     saveBtn.addEventListener("click", () => {
@@ -37,6 +33,14 @@ async function openNewEnclosureWizard() {
     });
     saveBtn.dataset.enclosureListener = "true";
   }
+}
+
+// Open new enclosure wizard
+async function openNewEnclosureWizard() {
+  const modal = document.getElementById("enclosureWizardModal");
+  if (!modal) return;
+
+  attachWizardSaveListener();
 
   // Reset wizard to step 1
   currentWizardStep = 1;
@@ -255,7 +259,7 @@ async function renderConfiguration() {
             // Use NVMe device paths as fallback identifiers
             nvmeDrives.forEach(drive => {
               const selected = wizardData.nvme_starting_slot === drive.by_path ? 'selected' : '';
-              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${drive.model}]</option>`;
+              html += `<option value="${escapeHtml(drive.by_path)}" ${selected}>${escapeHtml(drive.by_path)} [${escapeHtml(drive.model)}]</option>`;
             });
             html += `<small class="wizard-form-hint">Using detected NVMe drives (no hot-plug slots found)</small>`;
           } else {
