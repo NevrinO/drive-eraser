@@ -118,7 +118,7 @@ def _process_single_drive_extended_smart(item, passphrase):
 
         # Update cache with full data
         _store_drive_payload(cache_key, payload)
-        logger.info(f"Background extended SMART collection completed for {dev_node}")
+        logger.debug(f"Background extended SMART collection completed for {dev_node}")
 
         # Broadcast WebSocket event with updated SMART data
         if _websocket_manager:
@@ -134,7 +134,7 @@ def _process_single_drive_extended_smart(item, passphrase):
                     'recommendation': payload.get('recommendation'),
                     'marker': payload.get('marker')
                 })
-                logger.info(f"Broadcasted SMART data update for {dev_node}")
+                logger.debug(f"Broadcasted SMART data update for {dev_node}")
             except Exception as e:
                 logger.warning(f"Failed to broadcast SMART data update for {dev_node}: {e}")
 

@@ -72,7 +72,7 @@ def should_trust_completion_status(started_at, db_status, test_type):
 # Lesson #91: Use specific patterns matching actual system naming conventions
 _SATA_DEVICE_RE = re.compile(r'^sd[a-z]+\Z')
 _NVME_DEVICE_RE = re.compile(r'^nvme[0-9]+(n[0-9]+)?(p[0-9]+)?\Z')
-MAX_DEVICES_FOR_BUNDLE = 50  # Rule #5: enforce size limits for DoS prevention
+MAX_DEVICES_FOR_BUNDLE = 100  # Rule #5: enforce size limits for DoS prevention
 
 _VALID_ROLES = frozenset({"wipe", "os", "reserved"})
 

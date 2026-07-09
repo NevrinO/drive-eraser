@@ -32,7 +32,8 @@ class PollingFilter(logging.Filter):
                 "GET /api/drives",
                 "GET /api/admin/metrics",
                 "GET /api/erase/history",
-                "GET /api/admin/enclosures"
+                "GET /api/admin/enclosures",
+                "/socket.io/"
             ])
             
             if is_poll_endpoint:
@@ -59,6 +60,8 @@ def setup_application_logging():
         
         root_logger = logging.getLogger()
         root_logger.setLevel(logging.INFO)
+        # Suppress routine per-request Werkzeug logging; only warnings/errors surface
+        logging.getLogger("werkzeug").setLevel(logging.WARNING)
         root_logger.addHandler(handler)
         
         console_handler = logging.StreamHandler(sys.stdout)

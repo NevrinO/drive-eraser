@@ -32,7 +32,7 @@ drive_bp = Blueprint('drive_routes', __name__)
 
 @drive_bp.route("/api/drives")
 @require_admin_auth
-@limiter.limit("60 per minute")
+@limiter.limit("120 per minute")
 def get_drives():
     try:
         config_dir = get_config_dir()

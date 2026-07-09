@@ -2,12 +2,14 @@
 # Main entry point for Drive Eraser Flask application
 # This file imports and registers all modular components
 
+import os
 import hmac
 import signal
 import threading
 import ipaddress
 from flask import jsonify
 from app_config import init_app, logger, get_config_dir, load_policy
+from flask_limiter.errors import RateLimitExceeded
 
 # Initialize Flask app, SocketIO, Limiter, CORS, and logging before importing app/socketio.
 # init_app() is idempotent — safe if already called (e.g., by conftest in tests).
@@ -121,6 +123,13 @@ def add_security_headers(response):
     csp_header = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self';"
     response.headers['Content-Security-Policy'] = csp_header
     return response
+
+# Specific error handler for rate limit exceeded — must be registered before
+# the generic Exception handler so 429s return properly instead of becoming 500s.
+@app.errorhandler(RateLimitExceeded)
+def handle_rate_limit_exceeded(e):
+    logger.info(f"Rate limit exceeded: {e.description}")
+    return jsonify({"error": "Rate limit exceeded", "detail": str(e.description)}), 429
 
 # Global error handler to ensure all errors return JSON instead of HTML
 @app.errorhandler(Exception)
@@ -478,7 +487,21 @@ def create_app():
     
     # Start udev event listener for real-time device discovery
     udev_listener.start_udev_listener()
-    
+
+    # Run a one-shot discovery on startup to pre-warm the drive cache.
+    # This ensures the first /api/drives call (when operator opens the page)
+    # is fast and that _auto_enqueue_zero_checks runs once during startup.
+    # The 30s zero-check delay still prevents premature enrollment.
+    def _startup_discovery():
+        try:
+            bay_map_path = os.path.join(config_dir, "bay_map.json")
+            disk_ops.discover_drives(bay_map_path)
+            logger.info("Startup discovery completed")
+        except Exception as e:
+            logger.warning(f"Startup discovery failed (non-fatal): {e}")
+
+    threading.Thread(target=_startup_discovery, daemon=True, name="startup-discovery").start()
+
     # Start SMART test status background thread
     start_smart_test_update_thread()
     
