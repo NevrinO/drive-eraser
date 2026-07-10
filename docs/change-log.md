@@ -58,6 +58,12 @@
 - **Testing**:
   - New: `test_disk_ops.py` (189 lines)
   - Expanded: `test_smart_test_runner.py` (+134 lines), `test_disk_utils.py` (+76 lines), `test_traversal_parity.py` (+104 lines), `test_crypto_verification.py` (refactored), `test_device_discovery*.py` (expanded)
+- **Certificate CSS Fix**:
+  - Certificate CSS inlined as `<style>` block in HTML templates instead of external `<link>` — fixes broken formatting when certificates are downloaded/opened locally or printed
+  - Print window waits for `onload` before calling `print()` so base64 logo images are fully rendered
+- **Layout Templates**:
+  - Dell R440 10-bay template updated with `hybrid_slots` and `skip_positions` fields
+  - New Supermicro JBOD 24-bay template (`bottom_left_up_then_across` traversal)
 
 ## v1.1.0 - Production Release: Admin UI, Log Viewer, Documentation Overhaul & Critique Fixes
 - **Administration**:
