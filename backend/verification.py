@@ -34,6 +34,8 @@ from crypto_verification import (
     capture_before_state,
     verify_crypto_probe,
     verify_crypto_hash_comparison,
+    _run_blockdev_getsize64,
+    _load_verification_policy,
 )
 
 def resolve_verify_command_path(command_name):
@@ -51,16 +53,44 @@ def run_verification_command(command, text=True):
     return {"ok": result.returncode == 0, "stdout": stdout.strip(), "stderr": stderr.strip(), "return_code": result.returncode, "output_bytes": output_bytes}
 
 def verify_overwrite(device):
+    """Verify overwrite by reading the first 1MB and last 1MB of the drive, checking for non-zero data.
+
+    This is the primary verification for the overwrite method. It checks the two most critical
+    regions: the start (partition table, VBR, filesystem metadata) and the end (backup GPT,
+    end-of-drive residual data). The secondary verification (verify_sampled_zero_check)
+    performs deeper sampling across the full LBA range.
+    """
     if not validate_device_path(device):
         return {"ok": False, "status": "verification_error", "error": "invalid_device_path", "details": {"method": "overwrite"}}
     dd_cmd = resolve_verify_command_path("dd")
     if not dd_cmd:
         return {"ok": False, "status": "verification_error", "error": "dd_not_available_for_verification", "details": {"method": "overwrite"}}
 
-    sample_blocks = [0, 1024, 4096]
+    READ_SIZE = 1024 * 1024  # 1MB
+    SECTOR_ALIGN = 512
+
+    vpolicy = _load_verification_policy()
+    retries = vpolicy["blockdev_post_wipe_retries"]
+    retry_delay = vpolicy["blockdev_post_wipe_retry_delay"]
+    cap_result = _run_blockdev_getsize64(device, retries, retry_delay)
+    if cap_result["error"]:
+        return {"ok": False, "status": "verification_error", "error": cap_result["error"], "details": {"method": "overwrite", "blockdev_error": cap_result["details"]}}
+    capacity = cap_result["capacity"]
+
+    if capacity <= 0:
+        return {"ok": False, "status": "verification_error", "error": "invalid_capacity", "details": {"method": "overwrite", "capacity": capacity}}
+
+    if capacity <= READ_SIZE * 2:
+        zones = [(0, capacity, "full")]
+    else:
+        last_offset = capacity - READ_SIZE
+        last_offset = (last_offset // SECTOR_ALIGN) * SECTOR_ALIGN
+        last_read_size = min(READ_SIZE, capacity - last_offset)
+        zones = [(0, READ_SIZE, "start"), (last_offset, last_read_size, "end")]
+
     checked_samples = []
-    for block_offset in sample_blocks:
-        command = [dd_cmd, f"if={device}", "bs=4096", f"skip={block_offset}", "count=1", "iflag=direct", "status=none"]
+    for offset, read_size, zone_name in zones:
+        command = [dd_cmd, f"if={device}", "bs=1M", f"skip={offset}", f"count={read_size}", "iflag=skip_bytes,count_bytes,direct", "status=none"]
         result = run_verification_command(command, text=False)
         if not result.get("ok"):
             return {
@@ -69,24 +99,26 @@ def verify_overwrite(device):
                 "error": "overwrite_sample_read_failed",
                 "details": {
                     "method": "overwrite",
-                    "block_offset": block_offset,
+                    "zone": zone_name,
+                    "offset": offset,
+                    "read_size": read_size,
                     "stderr": result.get("stderr", ""),
                     "return_code": result.get("return_code"),
                 },
             }
         sample_data = result.get("output_bytes") or b""
         if not sample_data:
-            return {"ok": False, "status": "verification_error", "error": "overwrite_sample_empty", "details": {"method": "overwrite", "block_offset": block_offset}}
+            return {"ok": False, "status": "verification_error", "error": "overwrite_sample_empty", "details": {"method": "overwrite", "zone": zone_name, "offset": offset}}
         if any(sample_data):
             return {
                 "ok": False,
                 "status": "verification_failed",
                 "error": "overwrite_nonzero_sample",
-                "details": {"method": "overwrite", "block_offset": block_offset, "sample_size": len(sample_data)},
+                "details": {"method": "overwrite", "zone": zone_name, "offset": offset, "sample_size": len(sample_data)},
             }
-        checked_samples.append({"block_offset": block_offset, "sample_size": len(sample_data)})
+        checked_samples.append({"zone": zone_name, "offset": offset, "sample_size": len(sample_data)})
 
-    return {"ok": True, "status": "verified", "error": None, "details": {"mode": "sampled_zero_check", "method": "overwrite", "samples": checked_samples}}
+    return {"ok": True, "status": "verified", "error": None, "details": {"mode": "first_last_1mb_zero_check", "method": "overwrite", "samples": checked_samples, "capacity": capacity}}
 
 def parse_numeric_field(output, field_name):
     # Match hex or decimal numbers, using word boundary to prevent partial matches

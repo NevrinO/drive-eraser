@@ -435,10 +435,14 @@ async function openCertPrintWindow(friendlyId, isBulk = false) {
     const htmlContent = await response.text();
 
     // CSS is inlined in the certificate HTML, so no <base> tag or external stylesheet needed.
-    // Wait for the load event before printing so images (base64 logo) are decoded and rendered.
-    printWindow.document.documentElement.innerHTML = htmlContent;
+    // Use document.write() (not innerHTML) so the browser parses the HTML properly.
+    // Use setTimeout instead of onload — document.close() fires the load event
+    // before onload can be registered, so onload would never fire.
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
     printWindow.focus();
-    printWindow.onload = () => printWindow.print();
+    setTimeout(() => printWindow.print(), 300);
   } catch (err) {
     printWindow.document.documentElement.innerHTML = `
       <!doctype html>

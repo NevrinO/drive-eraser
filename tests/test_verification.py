@@ -121,13 +121,17 @@ class TestVerifyOverwrite:
     @patch('verification.validate_device_path')
     @patch('verification.resolve_verify_command_path')
     @patch('verification.run_verification_command')
-    def test_successful_verification(self, mock_run_cmd, mock_resolve, mock_validate):
+    @patch('verification._run_blockdev_getsize64')
+    @patch('verification._load_verification_policy')
+    def test_successful_verification(self, mock_policy, mock_cap, mock_run_cmd, mock_resolve, mock_validate):
         """Test successful overwrite verification."""
         mock_validate.return_value = True
         mock_resolve.return_value = "/bin/dd"
+        mock_policy.return_value = {"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}
+        mock_cap.return_value = {"capacity": 1000000000000, "error": None}
         mock_run_cmd.return_value = {
             "ok": True,
-            "output_bytes": b"\x00\x00\x00\x00"  # All zeros
+            "output_bytes": b"\x00" * 4096  # All zeros
         }
         result = verify_overwrite("/dev/sda")
         assert result["ok"] is True
@@ -136,10 +140,14 @@ class TestVerifyOverwrite:
     @patch('verification.validate_device_path')
     @patch('verification.resolve_verify_command_path')
     @patch('verification.run_verification_command')
-    def test_nonzero_sample_fails(self, mock_run_cmd, mock_resolve, mock_validate):
+    @patch('verification._run_blockdev_getsize64')
+    @patch('verification._load_verification_policy')
+    def test_nonzero_sample_fails(self, mock_policy, mock_cap, mock_run_cmd, mock_resolve, mock_validate):
         """Test that nonzero samples cause verification failure."""
         mock_validate.return_value = True
         mock_resolve.return_value = "/bin/dd"
+        mock_policy.return_value = {"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}
+        mock_cap.return_value = {"capacity": 1000000000000, "error": None}
         mock_run_cmd.return_value = {
             "ok": True,
             "output_bytes": b"\x00\x01\x00\x00"  # Contains nonzero
@@ -152,10 +160,14 @@ class TestVerifyOverwrite:
     @patch('verification.validate_device_path')
     @patch('verification.resolve_verify_command_path')
     @patch('verification.run_verification_command')
-    def test_sample_read_failure(self, mock_run_cmd, mock_resolve, mock_validate):
+    @patch('verification._run_blockdev_getsize64')
+    @patch('verification._load_verification_policy')
+    def test_sample_read_failure(self, mock_policy, mock_cap, mock_run_cmd, mock_resolve, mock_validate):
         """Test that sample read failure is handled."""
         mock_validate.return_value = True
         mock_resolve.return_value = "/bin/dd"
+        mock_policy.return_value = {"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}
+        mock_cap.return_value = {"capacity": 1000000000000, "error": None}
         mock_run_cmd.return_value = {
             "ok": False,
             "stderr": "Read error"

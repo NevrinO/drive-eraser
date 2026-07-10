@@ -97,56 +97,64 @@ class TestVerifyOverwrite:
         from verification import verify_overwrite
         with patch('verification.validate_device_path', return_value=True):
             with patch('verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
-                with patch('verification.run_verification_command') as mock_run:
-                    mock_run.return_value = {
-                        "ok": True,
-                        "output_bytes": b'\x00' * 4096
-                    }
-                    result = verify_overwrite("/dev/sda")
-                    assert result["ok"] is True
-                    assert result["status"] == "verified"
+                with patch('verification._load_verification_policy', return_value={"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}):
+                    with patch('verification._run_blockdev_getsize64', return_value={"capacity": 1000000000000, "error": None}):
+                        with patch('verification.run_verification_command') as mock_run:
+                            mock_run.return_value = {
+                                "ok": True,
+                                "output_bytes": b'\x00' * 4096
+                            }
+                            result = verify_overwrite("/dev/sda")
+                            assert result["ok"] is True
+                            assert result["status"] == "verified"
 
     def test_non_zero_data_detected(self):
         """Test that non-zero data is detected."""
         from verification import verify_overwrite
         with patch('verification.validate_device_path', return_value=True):
             with patch('verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
-                with patch('verification.run_verification_command') as mock_run:
-                    mock_run.return_value = {
-                        "ok": True,
-                        "output_bytes": b'\x00\x01' + b'\x00' * 4094
-                    }
-                    result = verify_overwrite("/dev/sda")
-                    assert result["ok"] is False
-                    assert result["error"] == "overwrite_nonzero_sample"
+                with patch('verification._load_verification_policy', return_value={"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}):
+                    with patch('verification._run_blockdev_getsize64', return_value={"capacity": 1000000000000, "error": None}):
+                        with patch('verification.run_verification_command') as mock_run:
+                            mock_run.return_value = {
+                                "ok": True,
+                                "output_bytes": b'\x00\x01' + b'\x00' * 4094
+                            }
+                            result = verify_overwrite("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "overwrite_nonzero_sample"
 
     def test_sample_read_failure(self):
         """Test that sample read failure is handled."""
         from verification import verify_overwrite
         with patch('verification.validate_device_path', return_value=True):
             with patch('verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
-                with patch('verification.run_verification_command') as mock_run:
-                    mock_run.return_value = {
-                        "ok": False,
-                        "stderr": "read error"
-                    }
-                    result = verify_overwrite("/dev/sda")
-                    assert result["ok"] is False
-                    assert result["error"] == "overwrite_sample_read_failed"
+                with patch('verification._load_verification_policy', return_value={"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}):
+                    with patch('verification._run_blockdev_getsize64', return_value={"capacity": 1000000000000, "error": None}):
+                        with patch('verification.run_verification_command') as mock_run:
+                            mock_run.return_value = {
+                                "ok": False,
+                                "stderr": "read error"
+                            }
+                            result = verify_overwrite("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "overwrite_sample_read_failed"
 
     def test_empty_sample(self):
         """Test that empty sample is handled."""
         from verification import verify_overwrite
         with patch('verification.validate_device_path', return_value=True):
             with patch('verification.resolve_verify_command_path', return_value='/usr/bin/dd'):
-                with patch('verification.run_verification_command') as mock_run:
-                    mock_run.return_value = {
-                        "ok": True,
-                        "output_bytes": b""
-                    }
-                    result = verify_overwrite("/dev/sda")
-                    assert result["ok"] is False
-                    assert result["error"] == "overwrite_sample_empty"
+                with patch('verification._load_verification_policy', return_value={"blockdev_post_wipe_retries": 3, "blockdev_post_wipe_retry_delay": 5}):
+                    with patch('verification._run_blockdev_getsize64', return_value={"capacity": 1000000000000, "error": None}):
+                        with patch('verification.run_verification_command') as mock_run:
+                            mock_run.return_value = {
+                                "ok": True,
+                                "output_bytes": b""
+                            }
+                            result = verify_overwrite("/dev/sda")
+                            assert result["ok"] is False
+                            assert result["error"] == "overwrite_sample_empty"
 
 
 class TestParseNumericField:
