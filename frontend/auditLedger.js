@@ -434,11 +434,11 @@ async function openCertPrintWindow(friendlyId, isBulk = false) {
     if (!response.ok) throw new Error("HTTP " + response.status);
     const htmlContent = await response.text();
 
-    // Inject <base> tag so relative CSS links resolve in the about:blank print window
-    const htmlWithBase = htmlContent.replace("<head>", `<head><base href="${window.location.origin}/">`);
-    printWindow.document.documentElement.innerHTML = htmlWithBase;
+    // CSS is inlined in the certificate HTML, so no <base> tag or external stylesheet needed.
+    // Wait for the load event before printing so images (base64 logo) are decoded and rendered.
+    printWindow.document.documentElement.innerHTML = htmlContent;
     printWindow.focus();
-    printWindow.print();
+    printWindow.onload = () => printWindow.print();
   } catch (err) {
     printWindow.document.documentElement.innerHTML = `
       <!doctype html>

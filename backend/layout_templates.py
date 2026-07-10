@@ -26,18 +26,31 @@ DEFAULT_TEMPLATES = {
         "rows": 1,
         "cols": 4,
         "bay_count": 4,
-        "slot_count": 4,
-        "traversal_preset": "top_left_down_then_across"
+        "traversal_preset": "top_left_down_then_across",
+        "slot_count": 4
     },
     "dell_r440_10bay": {
         "id": "dell_r440_10bay",
         "name": "Dell R440 10-Bay (2.5\")",
         "vendor": "Dell",
+        "bay_count": 10,
         "rows": 2,
         "cols": 5,
-        "bay_count": 10,
-        "slot_count": 10,
-        "traversal_preset": "top_left_down_then_across"
+        "traversal_preset": "top_left_down_then_across",
+        "skip_positions": [],
+        "hybrid_slots": [6, 7, 8, 9],
+        "slot_count": 10
+    },
+    "supermicro-jbod": {
+        "id": "supermicro-jbod",
+        "name": "Supermicro JBOD",
+        "vendor": "supermicro",
+        "bay_count": 24,
+        "rows": 6,
+        "cols": 4,
+        "traversal_preset": "bottom_left_up_then_across",
+        "skip_positions": [],
+        "slot_count": 24
     }
 }
 

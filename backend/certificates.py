@@ -22,8 +22,37 @@ from verification import get_software_versions
 # The signature integrity is verified by recomputing the HMAC with the known passphrase and comparing
 # it to the stored signature value. This is a simple integrity check, not a PKI chain validation.
 
-# Certificate CSS has been externalized to frontend/css/certificate.css
-# Certificate HTML templates reference it via <link rel="stylesheet" href="/css/certificate.css">
+# IMPORTANT: Certificate CSS is inlined as a <style> block in the HTML templates below.
+# It must NOT be replaced with an external <link> tag. External CSS links break when:
+#   1. HTML is downloaded and opened locally (the /css/certificate.css path doesn't resolve)
+#   2. Print windows call print() before the external stylesheet finishes loading
+# Inlining the CSS ensures formatting works in all contexts: browser, download, and print.
+# The source of truth for these styles is _CERTIFICATE_CSS below; frontend/css/certificate.css
+# is kept for reference but is NOT loaded by the certificate HTML.
+_CERTIFICATE_CSS = """body { font-family: Arial, sans-serif; margin: 32px; color: #111; line-height: 1; }
+.header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.header-left { flex: 1; }
+.header-right { flex: 0 0 auto; }
+.header .meta { color: #555; margin-bottom: 0; font-family: monospace; font-size: 1.1rem; }
+.section { margin-bottom: 20px; }
+table { border-collapse: collapse; width: 100%; margin-top: 10px; }
+th, td { border: 1px solid #ccc; padding: 4px; text-align: left; vertical-align: top; }
+th { width: 240px; background: #f8fafc; color: #334155; }
+pre { white-space: pre-wrap; margin: 0; font-family: monospace; font-size: 12px; }
+.status-ok { color: #16a34a; font-weight: 700; text-transform: uppercase; }
+.status-fail { color: #dc2626; font-weight: 700; text-transform: uppercase; }
+.certificate-container { page-break-after: always; }
+.certificate-container:last-child { page-break-after: auto; }
+h1 { margin: 0; }
+h1.cert-title-ok { color: #1e3a8a; }
+h1.cert-title-fail { color: #dc2626; }
+.cert-logo { max-height: 75px; max-width: 500px; }
+@media print {
+  body { margin: 0; }
+  .certificate-container { page-break-after: always; }
+  .certificate-container:last-child { page-break-after: auto; }
+}
+"""
 
 def get_custom_logo_base64():
     """Load and convert custom logo to base64 data URI if it exists."""
@@ -234,6 +263,7 @@ def _apply_common_template_replacements(content, certificate, custom_logo=None):
         custom_logo = get_custom_logo_base64()
     logo_img = f'<img src="{custom_logo}" alt="Logo" class="cert-logo">' if custom_logo else ""
 
+    content = content.replace("{{CERTIFICATE_CSS}}", _CERTIFICATE_CSS)
     content = content.replace("{{TITLE}}", _esc(title))
     content = content.replace("{{TITLE_CLASS}}", _esc(title_class))
     content = content.replace("{{LOGO_IMG}}", logo_img)
@@ -277,7 +307,7 @@ def build_certificate_html(certificate):
 <head>
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
-<link rel="stylesheet" href="/css/certificate.css">
+<style>{{CERTIFICATE_CSS}}</style>
 </head>
 <body>
 <div class="certificate-container">
@@ -364,7 +394,7 @@ def build_bulk_certificate_html(certificates):
 <head>
 <meta charset="utf-8">
 <title>Bulk Certificates</title>
-<link rel="stylesheet" href="/css/certificate.css">
+<style>{{CERTIFICATE_CSS}}</style>
 </head>
 <body>
 {{CERTIFICATE_BODIES}}
@@ -372,7 +402,8 @@ def build_bulk_certificate_html(certificates):
 </html>
 """
     
-    content = bulk_template.replace("{{CERTIFICATE_BODIES}}", "\n".join(cert_htmls))
+    content = bulk_template.replace("{{CERTIFICATE_CSS}}", _CERTIFICATE_CSS)
+    content = content.replace("{{CERTIFICATE_BODIES}}", "\n".join(cert_htmls))
     return content
 
 def build_bulk_single_certificate_html(certificate, custom_logo=None):
@@ -391,7 +422,7 @@ def build_bulk_single_certificate_html(certificate, custom_logo=None):
 <head>
 <meta charset="utf-8">
 <title>{{TITLE}}</title>
-<link rel="stylesheet" href="/css/certificate.css">
+<style>{{CERTIFICATE_CSS}}</style>
 </head>
 <body>
 <div class="certificate-container">
